@@ -25,6 +25,19 @@ const (
 	DefaultGroupName  = "nft"
 )
 
+// safeGo starts a goroutine with panic recovery so a background crash does
+// not bring down the whole daemon.
+func safeGo(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("daemon: goroutine panic: %v", r)
+			}
+		}()
+		fn()
+	}()
+}
+
 // Config wires the daemon's external dependencies. Fields not set are
 // filled from the Default* constants by New so a zero-value Config
 // "just works" in production.
@@ -226,10 +239,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	srv := &http.Server{Handler: d.Handler()}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(l) }()
+	safeGo(func() { serveErr <- srv.Serve(l) })
 
-	go d.probeFirewallEnvironment()
-	go d.refreshLoop(ctx)
+	safeGo(d.probeFirewallEnvironment)
+	safeGo(func() { d.refreshLoop(ctx) })
 
 	if d.connectURL != "" {
 		dl := NewDialer(DialerConfig{
@@ -252,7 +265,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			},
 		})
 		d.dialer.Store(dl)
-		go dl.Run(ctx)
+		safeGo(func() { dl.Run(ctx) })
 	}
 
 	var shutdownErr error

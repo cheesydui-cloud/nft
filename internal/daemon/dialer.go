@@ -245,7 +245,7 @@ func (d *Dialer) Run(ctx context.Context) {
 			return
 		default:
 		}
-		helloAcked, err := d.runOnce(ctx)
+		helloAcked, err := d.runOnceSafe(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("dialer: connection ended: %v", err)
 		}
@@ -270,6 +270,18 @@ func (d *Dialer) Run(ctx context.Context) {
 			backoff = dialerBackoffMax
 		}
 	}
+}
+
+// runOnceSafe wraps runOnce with panic recovery so a single panic in a
+// session does not kill the whole Dialer reconnect loop.
+func (d *Dialer) runOnceSafe(ctx context.Context) (helloAcked bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("dialer: session panic: %v", r)
+			err = fmt.Errorf("session panic: %v", r)
+		}
+	}()
+	return d.runOnce(ctx)
 }
 
 // runOnce dials, performs hello + optional register, then enters the
@@ -366,7 +378,9 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	}
 
 	d.connected.Store(true)
+	connDone := make(chan struct{})
 	defer func() {
+		close(connDone)
 		d.connected.Store(false)
 		// Wake any in-flight command waiters so they don't hang until their
 		// own ctx times out; a fresher session can't deliver an ack tagged
@@ -389,6 +403,12 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	readCh := make(chan wsproto.Envelope, 4)
 	errCh := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("dialer: reader panic: %v", r)
+				errCh <- fmt.Errorf("reader panic: %v", r)
+			}
+		}()
 		for {
 			env, err := readOne(ctx, ws, dialerReadTimeout)
 			if err != nil {
@@ -419,25 +439,11 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
 					continue
 				}
-				ok := true
-				errMsg := ""
-				warning := ""
-				if d.cfg.OnApply != nil {
-					w, err := d.cfg.OnApply(ctx, ar.Rev, ar.Rules)
-					warning = w
-					if err != nil {
-						ok = false
-						errMsg = err.Error()
-					}
-				}
-				ap, err := json.Marshal(wsproto.ApplyAck{Rev: ar.Rev, OK: ok, Error: errMsg, Warning: warning})
-				if err != nil {
-					log.Printf("dialer: marshal %s: %v", wsproto.TypeApplyAck, err)
-					continue
-				}
-				if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeApplyAck, ID: env.ID, Payload: ap}); err != nil {
-					return helloAcked, err
-				}
+				// ApplyRuleset may take seconds (nft writes, DNS resolve,
+				// port binds). Run it concurrently so the main loop keeps
+				// sending pings; otherwise a long apply causes the server's
+				// read timeout to fire and the connection drops before ack.
+				go d.handleApplyRuleset(ctx, connDone, env.ID, ar.Rev, ar.Rules)
 			case wsproto.TypeUpgrade:
 				var u wsproto.Upgrade
 				if err := json.Unmarshal(env.Payload, &u); err != nil {
@@ -556,6 +562,43 @@ func writeOne(ctx context.Context, ws *websocket.Conn, env wsproto.Envelope) err
 	wctx, cancel := context.WithTimeout(ctx, dialerWriteTimeout)
 	defer cancel()
 	return ws.Write(wctx, websocket.MessageText, b)
+}
+
+func (d *Dialer) handleApplyRuleset(ctx context.Context, connDone chan struct{}, id, rev string, rules []nft.Rule) {
+	var payload json.RawMessage
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("dialer: panic during apply_ruleset: %v", r)
+			payload, _ = json.Marshal(wsproto.ApplyAck{Rev: rev, OK: false, Error: fmt.Sprintf("internal error: %v", r)})
+			d.sendApplyAck(connDone, id, payload)
+		}
+	}()
+
+	ok := true
+	errMsg := ""
+	warning := ""
+	if d.cfg.OnApply != nil {
+		w, err := d.cfg.OnApply(ctx, rev, rules)
+		warning = w
+		if err != nil {
+			ok = false
+			errMsg = err.Error()
+		}
+	}
+	payload, _ = json.Marshal(wsproto.ApplyAck{Rev: rev, OK: ok, Error: errMsg, Warning: warning})
+	d.sendApplyAck(connDone, id, payload)
+}
+
+func (d *Dialer) sendApplyAck(connDone chan struct{}, id string, payload json.RawMessage) {
+	select {
+	case d.cmdCh <- wsproto.Envelope{Type: wsproto.TypeApplyAck, ID: id, Payload: payload}:
+	case <-connDone:
+		log.Printf("dialer: dropping apply_ack for %s, connection gone", id)
+	case <-d.stop:
+		log.Printf("dialer: dropping apply_ack for %s, dialer stopped", id)
+	case <-time.After(5 * time.Second):
+		log.Printf("dialer: apply_ack for %s could not be queued, dropping", id)
+	}
 }
 
 func jitter(d time.Duration) time.Duration {
