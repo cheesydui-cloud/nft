@@ -589,11 +589,14 @@ function ExitQuotaForm({ userId, exit, onDone }) {
 }
 
 function ExitExpiresForm({ userId, host, port, exit, onDone }) {
-  const [val, setVal] = useState(() => {
-    if (!exit || !exit.expires_at || exit.expires_at <= 0) return ''
-    const d = new Date(exit.expires_at * 1000)
+  const fmtDateInput = (ts) => {
+    if (!ts || ts <= 0) return ''
+    const d = new Date(ts * 1000)
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
-  })
+  }
+  const [val, setVal] = useState(fmtDateInput(exit?.expires_at))
+  // Sync val when exit prop arrives asynchronously (exits loads after mount)
+  useEffect(() => { setVal(fmtDateInput(exit?.expires_at)) }, [exit?.expires_at])
   const [saving, setSaving] = useState(false)
   const toast = useToast()
   const submit = async (e) => {
