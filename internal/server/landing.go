@@ -231,7 +231,12 @@ func (s *Server) apiMyLandingNodes(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		s.syncLandingExits(u, nodes)
 	} else {
-		stale = true
+		// Only mark stale when the user actually has a source to resolve from.
+		// Users with only repo-imported exits (no sub URL or URIs) should not
+		// see a "refresh failed" banner.
+		if hasLandingSource(u) {
+			stale = true
+		}
 		if exits, err := db.PresentLandingExitsForUser(s.DB, u.ID); err == nil {
 			nodes = make([]landing.Node, 0, len(exits))
 			for _, e := range exits {
