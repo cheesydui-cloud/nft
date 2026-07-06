@@ -18,14 +18,6 @@ const probeLimit = createLimiter(6)
 
 const exitOf = (r) => (r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : '')
 
-const renderLandingExpiry = (r) => {
-  if (!landingExpiry) return null
-  const ts = landingExpiry.get(exitOf(r))
-  if (!ts || ts <= 0) return null
-  const expired = isExpired(ts)
-  return <Badge color={expired ? 'red' : 'amber'} className="ml-1 whitespace-nowrap">{fmtDate(ts)}{expired ? ' 已过期' : ''}</Badge>
-}
-
 /* Geometric triangles render as plain text glyphs; the arrow characters
    (↑↓↕) get emoji-styled on some platforms, which breaks column alignment. */
 function SortArrow({ dir }) {
@@ -42,6 +34,14 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
   const isMobile = useIsMobile()
   const [sort, setSort] = useState({ col: null, dir: null })
   const { copyFmt } = useCopyFmt()
+
+  const renderLandingExpiry = (r) => {
+    if (!landingExpiry) return null
+    const ts = landingExpiry.get(exitOf(r))
+    if (!ts || ts <= 0) return null
+    const expired = isExpired(ts)
+    return <Badge color={expired ? 'red' : 'amber'} className="ml-1 whitespace-nowrap">{fmtDate(ts)}{expired ? ' 已过期' : ''}</Badge>
+  }
 
   const cycleSort = (col) => {
     setSort(s => {
