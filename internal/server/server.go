@@ -30,6 +30,7 @@ type Server struct {
 	stopExpiry      chan struct{}
 	stopCycle       chan struct{}
 	stopLandingSync chan struct{}
+	stopLandingExpiry chan struct{}
 }
 
 func New(d *sql.DB) (*Server, error) {
@@ -38,7 +39,7 @@ func New(d *sql.DB) (*Server, error) {
 	}
 	hub := NewHub(d)
 	disp := &Dispatcher{DB: d, Hub: hub}
-	s := &Server{DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(), loginLimiter: newLoginLimiter(), stopExpiry: make(chan struct{}), stopCycle: make(chan struct{}), stopLandingSync: make(chan struct{})}
+	s := &Server{DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(), loginLimiter: newLoginLimiter(), stopExpiry: make(chan struct{}), stopCycle: make(chan struct{}), stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{})}
 	hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
 		s.enforcePerNodeQuota(userID, nodeID)
 		s.enforceUserQuota(userID)
@@ -48,6 +49,7 @@ func New(d *sql.DB) (*Server, error) {
 	go s.expiryEnforcer()
 	go s.cycleResetEnforcer()
 	go s.landingSyncEnforcer()
+	go s.landingExpiryEnforcer()
 	return s, nil
 }
 
@@ -149,6 +151,35 @@ func (s *Server) landingSyncEnforcer() {
 			return
 		case <-ticker.C:
 			s.landingSyncPass(false)
+		}
+	}
+}
+
+// landingExpiryEnforcer periodically scans for landing exits whose expires_at
+// has passed and disables them (present=0), then re-dispatches affected nodes
+// so rules using those exits are removed from the kernel.
+func (s *Server) landingExpiryEnforcer() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopLandingExpiry:
+			return
+		case <-ticker.C:
+			expired, err := db.ExpiredLandingExits(s.DB)
+			if err != nil {
+				log.Printf("landing-expiry: query: %v", err)
+				continue
+			}
+			for _, k := range expired {
+				if _, err := s.DB.Exec(`UPDATE user_landing_exits SET present=0, updated_at=? WHERE user_id=? AND host=? AND port=?`,
+					time.Now().Unix(), k.UserID, k.Host, k.Port); err != nil {
+					log.Printf("landing-expiry: disable %d/%s:%d: %v", k.UserID, k.Host, k.Port, err)
+					continue
+				}
+				log.Printf("landing-expiry: disabled expired exit user=%d %s:%d", k.UserID, k.Host, k.Port)
+				s.redispatchUserExit(k.UserID, k.Host, k.Port)
+			}
 		}
 	}
 }
@@ -502,6 +533,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/users/{id}/landing-exits/reset", s.apiResetLandingExitTraffic)
 			r.Post("/users/{id}/landing-exits/delete", s.apiDeleteLandingExit)
 			r.Post("/users/{id}/landing-exits/rename", s.apiRenameLandingExit)
+			r.Post("/users/{id}/landing-exits/expires", s.apiSetLandingExitExpires)
 
 			r.Get("/users", s.apiListUsers)
 			r.Patch("/users/{id}/profile", s.apiUpdateUserProfile)

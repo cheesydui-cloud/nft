@@ -139,7 +139,7 @@ export default function UserDetail() {
         {rules.length ? (
           <TableBox>
           <table className="tbl">
-            <thead><tr><th>ID</th><th>名称</th><th>节点</th><th>协议</th><th>入口</th><th>出口</th><th className="text-right">流量</th></tr></thead>
+            <thead><tr><th>ID</th><th>名称</th><th>节点</th><th>协议</th><th>入口</th><th>出口</th><th className="text-right">真实用量</th><th className="text-right">显示用量(×{user.billing_rate ?? 1})</th></tr></thead>
             <tbody>
               {rules.map(r => (
                 <tr key={r.id}>
@@ -152,6 +152,7 @@ export default function UserDetail() {
                   <td className="font-mono text-xs"><SensText blurred={blurred}>{r.entry_listen_port ? `:${r.entry_listen_port}` : '--'}</SensText></td>
                   <td className="font-mono text-xs"><SensText blurred={blurred}>{r.exit_host ? `${r.exit_host}:${r.exit_port}` : '--'}</SensText></td>
                   <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.total_bytes || 0)}</td>
+                  <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.total_bytes || 0) * (user.billing_rate ?? 1)))}</td>
                 </tr>
               ))}
             </tbody>
@@ -453,7 +454,7 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
               <thead><tr>
                 <th className="w-8"><input type="checkbox" className="accent-blue-600"
                   checked={preview.length > 0 && sel.size === preview.length} onChange={toggleSelAll} /></th>
-                <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th className="text-right">用途</th></tr></thead>
+                <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th></tr></thead>
               <tbody>
                 {preview.map((n, i) => {
                   const st = roleOf(n)
@@ -478,6 +479,9 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
                             </button>
                           </>
                         ) : <span className="text-ink-mut">—</span>}
+                      </td>
+                      <td>
+                        <ExitExpiresForm userId={userId} host={n.host} port={n.port} exit={exitByAddr[`${n.host}:${n.port}`]} onDone={loadExits} />
                       </td>
                       <td className="text-right">
                         <AdminRoleToggle state={st} onChange={bit => handleSetRole(n, bit)} />
@@ -504,6 +508,9 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
                               className="ml-2 px-2 py-0.5 text-[11px] font-semibold rounded-md border transition-colors bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700">
                               重置
                             </button>
+                      </td>
+                      <td>
+                        <ExitExpiresForm userId={userId} host={ex.host} port={ex.port} exit={ex} onDone={loadExits} />
                       </td>
                       <td className="text-right">
                         <button onClick={() => deleteExit(ex)} className="text-red-600 text-xs font-semibold">删除</button>
@@ -539,6 +546,41 @@ function ExitQuotaForm({ userId, exit, onDone }) {
         onChange={e => setGb(e.target.value)} style={{ width: 80 }} title="0 = 不限" />
       <span className="text-xs text-ink-mut">GB</span>
       <button type="submit" className="btn-secondary text-xs">设限额</button>
+    </form>
+  )
+}
+
+function ExitExpiresForm({ userId, host, port, exit, onDone }) {
+  const [val, setVal] = useState(() => {
+    if (!exit || !exit.expires_at || exit.expires_at <= 0) return ''
+    const d = new Date(exit.expires_at * 1000)
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+  })
+  const [saving, setSaving] = useState(false)
+  const toast = useToast()
+  const submit = async (e) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      let ts = 0
+      if (val) {
+        ts = Math.floor(new Date(val + 'T00:00:00').getTime() / 1000)
+        if (isNaN(ts)) { toast('日期无效', 'error'); setSaving(false); return }
+      }
+      await api.post(`/users/${userId}/landing-exits/expires`, { host, port, expires_at: ts })
+      toast(ts ? '已设置' : '已清除')
+      onDone()
+    } catch (err) { toast(err.message, 'error') } finally { setSaving(false) }
+  }
+  const expired = exit && exit.expires_at > 0 && exit.expires_at <= Math.floor(Date.now() / 1000)
+  return (
+    <form onSubmit={submit} className="inline-flex items-center gap-1">
+      <input className="input-field font-mono text-[12px]" type="date" value={val} onChange={e => setVal(e.target.value)} style={{ width: 140 }} />
+      <button type="submit" disabled={saving} className="btn-secondary text-[11px]">{saving ? '…' : '设'}</button>
+      {expired && <Badge color="red">已过期</Badge>}
+      {!expired && exit && exit.expires_at > 0 && (
+        <button type="button" onClick={() => { setVal(''); submit({ preventDefault: () => {} }) }} className="text-[11px] text-ink-mut hover:text-red-600">清除</button>
+      )}
     </form>
   )
 }

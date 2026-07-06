@@ -22,6 +22,7 @@ type LandingExit struct {
 	QuotaBytes   int64  `json:"quota_bytes"`
 	UsedBytes    int64  `json:"used_bytes"`
 	UpdatedAt    int64  `json:"updated_at"`
+	ExpiresAt    int64  `json:"expires_at"`
 }
 
 // LandingExitInput is a deduplicated landing node destined for the
@@ -150,12 +151,12 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 	return flipped, true, nil
 }
 
-const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at`
+const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at, expires_at`
 
 func scanLandingExit(r rowScanner) (*LandingExit, error) {
 	e := &LandingExit{}
 	var present int
-	if err := r.Scan(&e.UserID, &e.Host, &e.Port, &e.Name, &e.NameOverride, &e.Protocol, &e.URI, &present, &e.QuotaBytes, &e.UsedBytes, &e.UpdatedAt); err != nil {
+	if err := r.Scan(&e.UserID, &e.Host, &e.Port, &e.Name, &e.NameOverride, &e.Protocol, &e.URI, &present, &e.QuotaBytes, &e.UsedBytes, &e.UpdatedAt, &e.ExpiresAt); err != nil {
 		return nil, err
 	}
 	e.Present = present == 1
@@ -309,6 +310,26 @@ func ExitsExceedingQuota(d *sql.DB, userID int64) ([]LandingExitKey, error) {
 	return out, rows.Err()
 }
 
+// ExpiredLandingExits returns present exits whose expires_at is non-zero
+// and in the past. These should be auto-disabled.
+func ExpiredLandingExits(d *sql.DB) ([]UserExitKey, error) {
+	rows, err := d.Query(`SELECT user_id, host, port FROM user_landing_exits
+		WHERE present=1 AND expires_at > 0 AND expires_at <= strftime('%s','now')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserExitKey
+	for rows.Next() {
+		var k UserExitKey
+		if err := rows.Scan(&k.UserID, &k.Host, &k.Port); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 // NodesForUserExit returns the distinct physical hop nodes of the user's rules
 // that exit to host:port. Composite entries are already expanded into physical
 // hops in rule_hops; composite virtual nodes have no agent connection and must
@@ -334,4 +355,20 @@ func SetUserLandingExitName(d *sql.DB, userID int64, host string, port int, name
 	_, err = d.Exec(`UPDATE user_landing_exits SET name_override=?, updated_at=? WHERE user_id=? AND host=? AND port=?`,
 		name, now(), userID, host, port)
 	return err == nil, err
+}
+
+// SetUserLandingExitExpires sets (or clears, with expiresAt==0) the expiry
+// timestamp for one landing exit. 0 = never expire.
+func SetUserLandingExitExpires(d *sql.DB, userID int64, host string, port int, expiresAt int64) (updated bool, err error) {
+	found, _, err := exitRowPresent(d, userID, host, port)
+	if err != nil || !found {
+		return false, err
+	}
+	r, err := d.Exec(`UPDATE user_landing_exits SET expires_at=?, updated_at=? WHERE user_id=? AND host=? AND port=?`,
+		expiresAt, now(), userID, host, port)
+	if err != nil {
+		return false, err
+	}
+	n, _ := r.RowsAffected()
+	return n > 0, nil
 }

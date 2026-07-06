@@ -57,7 +57,16 @@ export default function MyRules() {
 
   if (loading) return <Layout><Loading /></Layout>
 
-  const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [] } = data || {}
+  const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [], billing_rate } = data || {}
+
+  // Build expiry lookup from server landing nodes (includes expires_at)
+  const landingExpiry = useMemo(() => {
+    const m = new Map()
+    ;(serverLanding || []).forEach(n => {
+      if (n.expires_at > 0) m.set(`${n.host}:${n.port}`, n.expires_at)
+    })
+    return m
+  }, [serverLanding])
 
   // Filter server-assigned nodes by global role table — only landing-marked ones
   // appear in the exit picker (unconfigured/direct ones are excluded).
@@ -124,7 +133,7 @@ export default function MyRules() {
           <TableScroll>
             <RulesTable variant="my" rules={filtered} nodeMap={node_by_id} blurred={blurred}
               onDelete={deleteRule} onCopy={copyRule} onRowClick={r => navigate(`/my/rules/${r.id}`)}
-              probeAllTrigger={probeAllTrigger} />
+              probeAllTrigger={probeAllTrigger} displayRate={billing_rate ?? 1} landingExpiry={landingExpiry} />
           </TableScroll>
         )}
       </Panel>

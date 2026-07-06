@@ -232,7 +232,7 @@ function genPassword(len = 16) {
   crypto.getRandomValues(arr)
   return [...arr].map(n => chars[n % chars.length]).join('')
 }
-const emptyForm = () => ({ username: '', password: '', role: 'user', max_forwards: '100', traffic_quota_gb: '0', expires_at: todayStr(), landing_sub_url: '', admin_note: '' })
+const emptyForm = () => ({ username: '', password: '', role: 'user', max_forwards: '100', traffic_quota_gb: '0', expires_at: todayStr(), landing_sub_url: '', admin_note: '', billing_rate: '1' })
 
 function CreateUserModal({ open, onClose, onDone }) {
   const [form, setForm] = useState(emptyForm)
@@ -283,6 +283,7 @@ function CreateUserModal({ open, onClose, onDone }) {
           expires_at: form.expires_at || undefined,
           landing_sub_url: form.landing_sub_url.trim() || undefined,
           admin_note: form.admin_note.trim() || undefined,
+          billing_rate: Math.max(0, Number(form.billing_rate) || 1),
         } : {}),
       })
       toast(copied ? '用户已创建，登录信息已复制' : '用户已创建（复制失败，请手动记录密码）')
@@ -310,6 +311,11 @@ function CreateUserModal({ open, onClose, onDone }) {
               <input className="input-field font-mono" type="number" min="1" value={form.max_forwards} onChange={e => set('max_forwards', e.target.value)} style={{ maxWidth: 160 }} />
               <label className="fl">流量配额 <span className="text-ink-mut font-normal text-xs">(GB，0 = 不限)</span></label>
               <input className="input-field font-mono" type="number" min="0" step="0.1" value={form.traffic_quota_gb} onChange={e => set('traffic_quota_gb', e.target.value)} style={{ maxWidth: 160 }} />
+              <label className="fl">显示倍率 <span className="text-ink-mut font-normal text-xs">(用户已用量按此倍数显示)</span></label>
+              <div className="flex items-center gap-1.5">
+                <input className="input-field font-mono" type="number" min="0" step="0.1" value={form.billing_rate} onChange={e => set('billing_rate', e.target.value)} style={{ maxWidth: 120 }} title="1.0 = 原值显示，>1 放大显示" />
+                <span className="text-xs text-ink-mut">×</span>
+              </div>
               <label className="fl">到期时间</label>
               <div className="flex items-center gap-2 flex-wrap">
                 <input className="input-field font-mono" type="date" value={form.expires_at} onChange={e => set('expires_at', e.target.value)} style={{ maxWidth: 200 }} />

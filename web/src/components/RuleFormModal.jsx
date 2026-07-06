@@ -29,11 +29,15 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   useEffect(() => {
     if (!open) return
     const seed = { ...EMPTY, ...(initial || {}) }
-    // A landing exit whose node no longer resolves falls back to custom so its
-    // host:port stays editable instead of showing an empty picker.
+    // A landing exit whose node no longer resolves stays in landing mode
+    // so the picker shows empty and the user can re-select.
     if (seed.exit_kind === 'landing' && landingEnabled &&
         !landingNodes.some(n => `${n.host}:${n.port}` === seed.exit)) {
-      seed.exit_kind = 'custom'
+      // keep as landing — the picker will show empty
+    }
+    // When landing is enabled, force default to landing (no custom option)
+    if (landingEnabled && seed.exit_kind === 'custom') {
+      seed.exit_kind = 'landing'
     }
     setForm(seed)
   }, [open])
@@ -252,7 +256,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             <>
               <label className="fl">出口类型</label>
               <div className="inline-flex gap-1 p-1 rounded-[10px] border border-line bg-surface w-fit">
-                {[['custom', '自定义'], ['landing', '出口节点']].map(([k, lbl]) => (
+                {[['landing', '出口节点']].map(([k, lbl]) => (
                   <button key={k} type="button" onClick={() => set('exit_kind', k)}
                     className={`px-5 py-[9px] rounded-[7px] text-[14px] font-semibold transition-colors ${form.exit_kind === k ? 'bg-blue-600 text-white' : 'text-ink-soft hover:text-ink'}`}>
                     {lbl}

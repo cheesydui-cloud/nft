@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, ProtoBadge, SensText, CopyText, Tooltip, ExitKindBadge, Spinner, NodeTypeIcon } from './ui'
 import { useCopyFmt } from './Layout'
-import { fmtBytes } from '../lib/fmt'
+import { fmtBytes, fmtDate, isExpired } from '../lib/fmt'
 import { uriToClashYaml } from '../lib/yaml-convert'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -18,6 +18,14 @@ const probeLimit = createLimiter(6)
 
 const exitOf = (r) => (r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : '')
 
+const renderLandingExpiry = (r) => {
+  if (!landingExpiry) return null
+  const ts = landingExpiry.get(exitOf(r))
+  if (!ts || ts <= 0) return null
+  const expired = isExpired(ts)
+  return <Badge color={expired ? 'red' : 'amber'} className="ml-1 whitespace-nowrap">{fmtDate(ts)}{expired ? ' 已过期' : ''}</Badge>
+}
+
 /* Geometric triangles render as plain text glyphs; the arrow characters
    (↑↓↕) get emoji-styled on some platforms, which breaks column alignment. */
 function SortArrow({ dir }) {
@@ -29,7 +37,7 @@ function SortArrow({ dir }) {
   )
 }
 
-export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, onEdit, onCopy, onRowClick, probeAllTrigger }) {
+export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, onEdit, onCopy, onRowClick, probeAllTrigger, displayRate = 1, landingExpiry }) {
   const isAdmin = variant === 'admin'
   const isMobile = useIsMobile()
   const [sort, setSort] = useState({ col: null, dir: null })
@@ -120,7 +128,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                   })()}
                   {(() => {
                     const exitLabel = !isAdmin && r.exit_kind === 'landing' && r.landing_name
-                      ? <span className="font-sans">{r.landing_name}</span>
+                      ? <span className="font-sans">{r.landing_name}{renderLandingExpiry(r)}</span>
                       : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>
                     const proxyRow = (uri, tag) => {
                       const yaml = copyFmt === 'yaml' ? uriToClashYaml(uri) : null
@@ -154,7 +162,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                     : r.comment
                   : <span className="text-ink-mut">-</span>}
               </td>
-              <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.total_bytes || 0)}</td>
+              <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</td>
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
@@ -194,14 +202,14 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               </span>
               {isAdmin && r.owner_name && <><span className="text-ink-mut">·</span><span>{r.owner_name}</span></>}
               <span className="text-ink-mut">·</span>
-              <span className="font-mono text-ink-mut">{fmtBytes(r.total_bytes || 0)}</span>
+              <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</span>
             </div>
             <div className="text-xs text-ink-mut truncate">
               <span className="font-sans">{r.entry ? (r.entry_listen_port ? `${node?.name || `#${r.node_id}`}:${r.entry_listen_port}` : (node?.name || `#${r.node_id}`)) : '--'}</span>
               <span className="mx-1.5">→</span>
               <span className="text-ink-soft font-mono">
                 {!isAdmin && r.exit_kind === 'landing' && r.landing_name
-                  ? <span className="font-sans">{r.landing_name}</span>
+                  ? <span className="font-sans">{r.landing_name}{renderLandingExpiry(r)}</span>
                   : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>}
               </span>
             </div>

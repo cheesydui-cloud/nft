@@ -205,6 +205,7 @@ type myLandingNodeView struct {
 	QuotaBytes int64 `json:"quota_bytes"`
 	UsedBytes  int64 `json:"used_bytes"`
 	Exceeded   bool  `json:"exceeded"`
+	ExpiresAt  int64 `json:"expires_at"`
 }
 
 // apiMyLandingNodes returns the current user's landing nodes for the
@@ -241,6 +242,7 @@ func (s *Server) apiMyLandingNodes(w http.ResponseWriter, r *http.Request) {
 			v.QuotaBytes = e.QuotaBytes
 			v.UsedBytes = e.UsedBytes
 			v.Exceeded = e.QuotaBytes > 0 && e.UsedBytes >= e.QuotaBytes
+			v.ExpiresAt = e.ExpiresAt
 			// An admin rename must reach the client the user actually
 			// imports, not just this list — rewrite the URI's display name
 			// too. A URI the rewriter can't handle is served unchanged so
@@ -387,6 +389,38 @@ func (s *Server) apiDeleteLandingExit(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "user.delete_exit", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+// apiSetLandingExitExpires sets (or clears) the expiry timestamp on one exit.
+// 0 or empty string = never expire.
+func (s *Server) apiSetLandingExitExpires(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		Host      string `json:"host"`
+		Port      int    `json:"port"`
+		ExpiresAt int64  `json:"expires_at"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	updated, err := db.SetUserLandingExitExpires(s.DB, id, body.Host, body.Port, body.ExpiresAt)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !updated {
+		jsonErr(w, http.StatusNotFound, "出口不存在")
+		return
+	}
+	db.WriteAudit(s.DB, u.ID, "user.set_exit_expires", strconv.FormatInt(id, 10),
+		fmt.Sprintf("%s:%d expires=%d", body.Host, body.Port, body.ExpiresAt))
 	jsonOK(w, map[string]any{"ok": true})
 }
 

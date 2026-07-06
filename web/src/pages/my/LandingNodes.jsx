@@ -5,7 +5,7 @@ import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
 import { Loading, Empty, CopyText, SensText, Badge } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, TableScroll } from '../../components/page'
 import { parseURIs, mergeLanding, loadLocalURIs, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
-import { fmtTrafficGB } from '../../lib/fmt'
+import { fmtTrafficGB, fmtDate, isExpired } from '../../lib/fmt'
 
 /* Landing-nodes nav: lists the nodes available to the user — the admin-assigned
    ones (resolved server-side from a subscription and/or URIs) plus the user's
@@ -83,7 +83,7 @@ export default function MyLandingNodes() {
           <Empty title="无匹配节点" desc="试试别的关键词。" />
         ) : (
           <table className="tbl">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>已用/总量</th><th>来源</th><th className="text-right">操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>已用/总量</th><th>到期时间</th><th>来源</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map((n, i) => (
                 <tr key={i}>
@@ -98,6 +98,19 @@ export default function MyLandingNodes() {
                         <>
                           {fmtTrafficGB(ex.used_bytes, ex.quota_bytes)}
                           {ex.exceeded && <Badge color="red">已超额</Badge>}
+                        </>
+                      )
+                    })()}
+                  </td>
+                  <td className="text-xs">
+                    {(() => {
+                      const ex = ledger.get(`${n.host}:${n.port}`)
+                      if (!ex || !ex.expires_at || ex.expires_at <= 0) return <span className="text-ink-mut">—</span>
+                      const expired = isExpired(ex.expires_at)
+                      return (
+                        <>
+                          {fmtDate(ex.expires_at)}
+                          {expired && <Badge color="red" className="ml-1">已过期</Badge>}
                         </>
                       )
                     })()}
