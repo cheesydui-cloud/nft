@@ -142,7 +142,7 @@ export default function MyRuleDetail() {
               <span><Badge color="blue">×{rule.rate_multiplier ?? 1}</Badge></span>
             </>}
             <span className="text-ink-soft font-semibold">流量</span>
-            <span className="font-mono text-ink-mut">{fmtBytes(rule.total_bytes || 0)}</span>
+            <span className="font-mono text-ink-mut">{fmtBytes(Math.round((rule.total_bytes || 0) * (user?.billing_rate ?? 1)))}</span>
             {rule.comment && <>
               <span className="text-ink-soft font-semibold">备注</span>
               <span className="text-ink-soft">{rule.comment}</span>

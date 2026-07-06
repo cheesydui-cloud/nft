@@ -130,7 +130,7 @@ export function Layout({ children }) {
                   <SideLink to="/" icon={<IconDashboard />} end>概览</SideLink>
                 </NavGroup>
                 <NavGroup label="资源">
-                  <SideLink to="/nodes" icon={<IconNodes />}>节点</SideLink>
+                  <SideLink to="/nodes" icon={<IconNodes />}>中转站</SideLink>
                   <SideLink to="/node-repo" icon={<IconRepo />}>节点池</SideLink>
                   <SideLink to="/rules" icon={<IconForwards />}>规则</SideLink>
                   <SideLink to="/users" icon={<IconUserGroup />}>用户</SideLink>

@@ -160,7 +160,7 @@ export default function NodeList() {
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="节点" count={nodes.length} unit="个节点" />
+      <PageHeader title="中转站" count={nodes.length} unit="个" />
 
       {/* Node list */}
       <Panel fill>
