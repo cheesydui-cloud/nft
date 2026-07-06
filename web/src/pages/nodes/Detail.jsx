@@ -150,12 +150,29 @@ export default function NodeDetail() {
   const proxyPrefix = useGhProxy && ghProxy.trim()
     ? (ghProxy.trim().endsWith('/') ? ghProxy.trim() : ghProxy.trim() + '/')
     : ''
+  // Normalize panel_url: ensure protocol prefix, detect insecure scheme for --insecure flag.
+  let normalizedPanelUrl = (panel_url || '').trim()
+  let needsInsecure = false
+  if (!normalizedPanelUrl) {
+    // Fallback to current browser origin if panel_url is not configured.
+    normalizedPanelUrl = window.location.origin
+  }
+  if (!normalizedPanelUrl.startsWith('http://') && !normalizedPanelUrl.startsWith('https://')) {
+    // User entered bare IP:port or hostname — default to http.
+    normalizedPanelUrl = 'http://' + normalizedPanelUrl
+  }
+  if (normalizedPanelUrl.startsWith('http://') && !normalizedPanelUrl.startsWith('https://')) {
+    needsInsecure = true
+  }
+
   const portRangePart = node.port_range && node.port_range !== '10001-20000'
     ? ` \\\n  --port-range ${node.port_range}`
     : ''
   const relayHostPart = cmdRelayHost.trim() ? ` \\\n  --relay-host ${cmdRelayHost.trim()}` : ''
   const relayHostV6Part = cmdRelayHostV6.trim() ? ` \\\n  --relay-host-v6 ${cmdRelayHostV6.trim()}` : ''
-  const installCmd = `curl -fsSL ${proxyPrefix}https://raw.githubusercontent.com/cheesydui-cloud/nft/main/install.sh | bash -s agent \\\n  --panel-url ${panel_url} \\\n  --token ${node.secret}${portRangePart}${relayHostPart}${relayHostV6Part}${proxyPrefix ? ` \\\n  --gh-proxy ${proxyPrefix}` : ''}`
+  const insecurePart = needsInsecure ? ' \\\n  --insecure' : ''
+  const ghProxyPart = proxyPrefix ? ` \\\n  --gh-proxy ${proxyPrefix}` : ''
+  const installCmd = `curl -fsSL ${proxyPrefix}https://raw.githubusercontent.com/cheesydui-cloud/nft/main/install.sh | bash -s agent \\\n  --panel-url ${normalizedPanelUrl} \\\n  --token ${node.secret}${portRangePart}${relayHostPart}${relayHostV6Part}${insecurePart}${ghProxyPart}`
 
   return (
     <Layout>
