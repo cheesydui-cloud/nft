@@ -13,6 +13,9 @@ export default function Announcements() {
   const toast = useToast()
   const confirm = useConfirm()
 
+  const userMap = {}
+  users.forEach(u => { userMap[u.id] = u.username })
+
   const load = () => {
     setLoading(true)
     Promise.all([
@@ -28,6 +31,19 @@ export default function Announcements() {
   const deleteAnn = async (ann) => {
     if (!(await confirm({ title: '删除公告', message: `确认删除公告「${ann.title}」？`, confirmText: '删除', danger: true }))) return
     try { await api.del(`/announcements/${ann.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
+  }
+
+  // Parse target display text
+  const targetText = (a) => {
+    if (a.target_user_ids) {
+      try {
+        const ids = JSON.parse(a.target_user_ids)
+        if (Array.isArray(ids) && ids.length > 0) {
+          return ids.map(id => userMap[id] || `用户#${id}`).join(', ')
+        }
+      } catch {}
+    }
+    return a.target_user_id === 0 ? '所有用户' : (userMap[a.target_user_id] || `用户#${a.target_user_id}`)
   }
 
   if (loading) return <Layout><Loading /></Layout>
@@ -51,15 +67,15 @@ export default function Announcements() {
             <thead><tr><th>标题</th><th>内容</th><th>推送对象</th><th>创建时间</th><th>到期时间</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {list.map(a => {
-                const target = a.target_user_id === 0 ? '所有用户' : users.find(u => u.id === a.target_user_id)?.username || `用户#${a.target_user_id}`
+                const isAll = !a.target_user_ids && a.target_user_id === 0
                 return (
                   <tr key={a.id}>
                     <td className="font-semibold">{a.title}</td>
                     <td className="text-xs text-ink-soft max-w-[300px] truncate">{a.content}</td>
                     <td>
-                      {a.target_user_id === 0
+                      {isAll
                         ? <Badge color="green">所有用户</Badge>
-                        : <Badge color="blue">{target}</Badge>}
+                        : <Badge color="blue">{targetText(a)}</Badge>}
                     </td>
                     <td className="text-xs text-ink-mut">{fmtDate(a.created_at)}</td>
                     <td className="text-xs text-ink-mut">
@@ -94,16 +110,26 @@ export default function Announcements() {
 function AnnouncementForm({ users, onClose, onDone }) {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
-  const [targetMode, setTargetMode] = useState('all') // 'all' or 'user'
-  const [targetUserId, setTargetUserId] = useState('')
+  const [targetMode, setTargetMode] = useState('all') // 'all' or 'select'
+  const [selectedIds, setSelectedIds] = useState([])
+  const [search, setSearch] = useState('')
   const [hasExpiry, setHasExpiry] = useState(false)
   const [expiryDate, setExpiryDate] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const toast = useToast()
 
+  const toggleUser = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const filteredUsers = search.trim()
+    ? users.filter(u => u.username.toLowerCase().includes(search.trim().toLowerCase()))
+    : users
+
   const submit = async (e) => {
     e.preventDefault()
     if (!title.trim() || !content.trim()) { toast('标题和内容不能为空', 'error'); return }
+    if (targetMode === 'select' && selectedIds.length === 0) { toast('请至少选择一个用户', 'error'); return }
     setSubmitting(true)
     try {
       let expiresAt = 0
@@ -113,7 +139,8 @@ function AnnouncementForm({ users, onClose, onDone }) {
       const body = {
         title: title.trim(),
         content: content.trim(),
-        target_user_id: targetMode === 'all' ? 0 : Number(targetUserId),
+        target_user_id: targetMode === 'all' ? 0 : 0,
+        target_user_ids: targetMode === 'select' ? selectedIds : [],
         expires_at: expiresAt,
       }
       await api.post('/announcements', body)
@@ -128,8 +155,8 @@ function AnnouncementForm({ users, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-line-soft">
+      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-line-soft sticky top-0 bg-surface z-10">
           <h3 className="text-[16px] font-bold">发布公告</h3>
         </div>
         <form onSubmit={submit} className="px-6 py-5 space-y-4">
@@ -149,15 +176,26 @@ function AnnouncementForm({ users, onClose, onDone }) {
                 所有用户
               </label>
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" checked={targetMode === 'user'} onChange={() => setTargetMode('user')} />
-                指定用户
+                <input type="radio" checked={targetMode === 'select'} onChange={() => setTargetMode('select')} />
+                多选用户
               </label>
+              {targetMode === 'select' && selectedIds.length > 0 && (
+                <span className="text-xs text-blue-600 font-semibold">已选 {selectedIds.length} 人</span>
+              )}
             </div>
-            {targetMode === 'user' && (
-              <select className="input-field" value={targetUserId} onChange={e => setTargetUserId(e.target.value)}>
-                <option value="">选择用户…</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-              </select>
+            {targetMode === 'select' && (
+              <div className="border border-line rounded-lg p-3 max-h-[200px] overflow-y-auto">
+                <input className="input-field mb-2" placeholder="搜索用户名…" value={search} onChange={e => setSearch(e.target.value)} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  {filteredUsers.map(u => (
+                    <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer py-1 px-1.5 rounded hover:bg-raised transition-colors">
+                      <input type="checkbox" checked={selectedIds.includes(u.id)} onChange={() => toggleUser(u.id)} />
+                      <span className="truncate">{u.username}</span>
+                    </label>
+                  ))}
+                </div>
+                {filteredUsers.length === 0 && <div className="text-xs text-ink-mut text-center py-2">无匹配用户</div>}
+              </div>
             )}
           </div>
           <div>

@@ -22,13 +22,14 @@ func (s *Server) apiListAnnouncements(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiCreateAnnouncement creates a new announcement.
-// Body: { title, content, target_user_id (0=all), expires_at (0=never) }
+// Body: { title, content, target_user_id (0=all), target_user_ids ([1,3,5]), expires_at (0=never) }
 func (s *Server) apiCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title        string `json:"title"`
-		Content      string `json:"content"`
-		TargetUserID int64  `json:"target_user_id"`
-		ExpiresAt    int64  `json:"expires_at"`
+		Title         string  `json:"title"`
+		Content       string  `json:"content"`
+		TargetUserID  int64   `json:"target_user_id"`
+		TargetUserIDs []int64 `json:"target_user_ids"`
+		ExpiresAt     int64   `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -38,7 +39,13 @@ func (s *Server) apiCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "title and content are required")
 		return
 	}
-	a, err := db.CreateAnnouncement(s.DB, body.Title, body.Content, body.TargetUserID, body.ExpiresAt)
+	// Serialize target_user_ids to JSON string if provided
+	var targetUserIDs string
+	if len(body.TargetUserIDs) > 0 {
+		b, _ := json.Marshal(body.TargetUserIDs)
+		targetUserIDs = string(b)
+	}
+	a, err := db.CreateAnnouncement(s.DB, body.Title, body.Content, body.TargetUserID, body.ExpiresAt, targetUserIDs)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return

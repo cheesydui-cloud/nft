@@ -73,3 +73,15 @@ export function isExpired(unix) {
   if (!unix) return false
   return unix < Math.floor(Date.now() / 1000)
 }
+
+/** Returns CSS color class for an expiry timestamp:
+ *  - expired or <=3 days: red
+ *  - >3 days: green
+ *  - no expiry: default (empty string) */
+export function expiryColorClass(unix) {
+  if (!unix || unix <= 0) return ''
+  const now = Math.floor(Date.now() / 1000)
+  if (unix <= now) return 'text-red-600 dark:text-red-400'
+  const daysLeft = (unix - now) / 86400
+  return daysLeft > 3 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+}

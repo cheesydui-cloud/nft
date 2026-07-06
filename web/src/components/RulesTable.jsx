@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, ProtoBadge, SensText, CopyText, Tooltip, ExitKindBadge, Spinner, NodeTypeIcon } from './ui'
 import { useCopyFmt } from './Layout'
-import { fmtBytes, fmtDate, isExpired } from '../lib/fmt'
+import { fmtBytes, fmtDate, isExpired, expiryColorClass } from '../lib/fmt'
 import { uriToClashYaml } from '../lib/yaml-convert'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -40,7 +40,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
     const ts = landingExpiry.get(exitOf(r))
     if (!ts || ts <= 0) return null
     const expired = isExpired(ts)
-    return <Badge color={expired ? 'red' : 'amber'} className="ml-1 whitespace-nowrap">{fmtDate(ts)}{expired ? ' 已过期' : ''}</Badge>
+    return <Badge color={expired ? 'red' : 'amber'} className="ml-1 whitespace-nowrap"><span className={expiryColorClass(ts)}>{fmtDate(ts)}</span>{expired ? ' 已过期' : ''}</Badge>
   }
 
   const cycleSort = (col) => {

@@ -190,7 +190,7 @@ export function Layout({ children }) {
                 </div>
               </div>
               <div className="flex gap-2">
-                <NavLink to="/change-password" className="flex-1 text-center text-[12.5px] text-[#aeb6c2] py-2 rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] hover:text-[#cdd6e2] transition-colors">修改密码</NavLink>
+                <NavLink to="/change-password" className="flex-1 text-center text-[12.5px] text-[#aeb6c2] py-2 rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] hover:text-[#cdd6e2] transition-colors">账户设置</NavLink>
                 <button onClick={handleLogout} className="flex-1 text-center text-[12.5px] text-[#aeb6c2] py-2 rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] hover:text-[#cdd6e2] transition-colors">退出登录</button>
                 {isAdmin && <a href={REPO_URL} target="_blank" rel="noopener noreferrer" title="GitHub 项目主页"
                   className="flex-none w-[34px] grid place-items-center rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] text-[#aeb6c2] hover:text-[#cdd6e2] transition-colors">

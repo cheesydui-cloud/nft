@@ -38,7 +38,6 @@ export default function Login() {
           </div>
           <div>
             <div className="text-[16px] font-bold">{panelName || 'nft'}</div>
-            <div className="text-[12px] text-ink-mut mt-0.5">转发管理面板</div>
           </div>
         </div>
 

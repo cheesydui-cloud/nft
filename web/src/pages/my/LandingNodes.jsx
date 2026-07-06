@@ -5,7 +5,7 @@ import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
 import { Loading, Empty, CopyText, SensText, Badge } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, TableScroll } from '../../components/page'
 import { parseURIs, mergeLanding, loadLocalURIs, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
-import { fmtTrafficGB, fmtDate, isExpired } from '../../lib/fmt'
+import { fmtTrafficGB, fmtDate, isExpired, expiryColorClass } from '../../lib/fmt'
 
 /* Landing-nodes nav: lists the nodes available to the user — the admin-assigned
    ones (resolved server-side from a subscription and/or URIs) plus the user's
@@ -97,7 +97,7 @@ export default function MyLandingNodes() {
                       const expired = isExpired(ex.expires_at)
                       return (
                         <>
-                          {fmtDate(ex.expires_at)}
+                          <span className={expiryColorClass(ex.expires_at)}>{fmtDate(ex.expires_at)}</span>
                           {expired && <Badge color="red" className="ml-1">已过期</Badge>}
                         </>
                       )

@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import { Modal, Select, ProbeButton, nodeStack, NodeTypeIcon } from './ui'
 import { useToast } from './Layout'
 import { tryParseURI } from '../lib/landing'
+import { fmtDate } from '../lib/fmt'
 
 const EMPTY = { node_id: '', name: '', proto: 'tcp', exit: '', exit_kind: 'custom', entry_port: '', comment: '', mode: 'kernel', via_node_ids: [] }
 
@@ -116,7 +117,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // from the picker. The value stays host:port (the rule's exit target).
   const landingOptions = (landingNodes || []).map(n => ({
     value: `${n.host}:${n.port}`,
-    label: `${n.protocol ? `[${n.protocol}] ` : ''}${n.name || '(未命名)'}`,
+    label: `${n.protocol ? `[${n.protocol}] ` : ''}${n.name || '(未命名)'}${n.expires_at > 0 ? ` · ${fmtDate(n.expires_at)}` : ''}`,
   }))
 
   // Cascaded middle-layer picker: chain[i]'s candidates are the binding
@@ -238,7 +239,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                 <label className="fl">{composite ? '出口段模式' : '转发模式'}</label>
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <Select value={form.mode || 'kernel'} onChange={v => set('mode', v)} style={{ width: 160 }}
-                    options={[{ value: 'kernel', label: 'kernel' }, { value: 'userspace', label: 'userspace' }]} />
+                    options={[{ value: 'kernel', label: '内核态' }, { value: 'userspace', label: '用户态' }]} />
                   <span className="text-xs text-ink-mut">
                     {composite
                       ? '仅作用于最后一跳 → 目标。线路稳定、低丢包时用内核态（性能更好）；跨境或网络不稳定、丢包高时用用户态（更抗抖动）。用户态仅 TCP，UDP 自动走内核态'
@@ -254,37 +255,15 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
 
           {landingEnabled ? (
             <>
-              <label className="fl">出口类型</label>
-              <div className="inline-flex gap-1 p-1 rounded-[10px] border border-line bg-surface w-fit">
-                {[['landing', '出口节点']].map(([k, lbl]) => (
-                  <button key={k} type="button" onClick={() => set('exit_kind', k)}
-                    className={`px-5 py-[9px] rounded-[7px] text-[14px] font-semibold transition-colors ${form.exit_kind === k ? 'bg-blue-600 text-white' : 'text-ink-soft hover:text-ink'}`}>
-                    {lbl}
-                  </button>
-                ))}
+              <label className="fl">出口节点</label>
+              <div className="flex items-center gap-3">
+                {landingOptions.length ? (
+                  <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择出口节点 --" searchable options={landingOptions} className="flex-1" />
+                ) : (
+                  <div className="text-xs text-ink-mut">尚无可用出口节点，请在概览页添加代理 URI 或联系管理员。</div>
+                )}
+                {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
               </div>
-
-              {form.exit_kind === 'landing' ? (
-                <>
-                  <label className="fl">出口节点</label>
-                  <div className="flex items-center gap-3">
-                    {landingOptions.length ? (
-                      <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择出口节点 --" searchable options={landingOptions} className="flex-1" />
-                    ) : (
-                      <div className="text-xs text-ink-mut">尚无可用出口节点，请在概览页添加代理 URI 或联系管理员。</div>
-                    )}
-                    {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <label className="fl">出口地址</label>
-                  <div className="flex items-center gap-3">
-                    <input className="input-field font-mono flex-1" value={form.exit} onChange={e => set('exit', e.target.value)} onBlur={handleExitBlur} required placeholder="host:port 或代理 URI" />
-                    {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
-                  </div>
-                </>
-              )}
             </>
           ) : (
             <>

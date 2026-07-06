@@ -9,7 +9,7 @@ import {
   landingIndex, splitEndpoint, rewriteEndpoint, mergeLanding,
 } from '../lib/landing'
 import { uriToClashYaml } from '../lib/yaml-convert'
-import { fmtDate, isExpired } from '../lib/fmt'
+import { fmtDate, isExpired, expiryColorClass } from '../lib/fmt'
 
 export default function Proxies() {
   const [rules, setRules] = useState(null)
@@ -150,7 +150,7 @@ export default function Proxies() {
                         const expired = isExpired(ts)
                         return (
                           <>
-                            {fmtDate(ts)}
+                            <span className={expiryColorClass(ts)}>{fmtDate(ts)}</span>
                             {expired && <Badge color="red" className="ml-1">已过期</Badge>}
                           </>
                         )

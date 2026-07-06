@@ -105,6 +105,12 @@ export default function MyDashboard() {
               <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">规则配额</div>
               <div className="text-[14.5px]"><span className="font-mono">{rules.length}</span> <span className="text-ink-mut">/</span> <span className="font-mono">{user.max_forwards}</span></div>
             </div>
+            {show_rate && (
+              <div className="flex items-center gap-4 py-3 border-b border-line-soft">
+                <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">倍率</div>
+                <div className="text-[14.5px] font-mono">×{user.billing_rate ?? 1}</div>
+              </div>
+            )}
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
               <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">流量</div>
               <div className="text-[14.5px] font-mono">
