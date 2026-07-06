@@ -83,25 +83,13 @@ export default function MyLandingNodes() {
           <Empty title="无匹配节点" desc="试试别的关键词。" />
         ) : (
           <table className="tbl">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>已用/总量</th><th>到期时间</th><th>来源</th><th className="text-right">操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>到期时间</th><th>来源</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map((n, i) => (
                 <tr key={i}>
                   <td className="font-semibold">{n.name || '(未命名)'}</td>
                   <td className="font-mono text-xs text-ink-soft">{n.protocol}</td>
                   <td className="font-mono text-xs"><SensText blurred={blurred}>{n.host}:{n.port}</SensText></td>
-                  <td className="font-mono text-xs">
-                    {(() => {
-                      const ex = ledger.get(`${n.host}:${n.port}`)
-                      if (!ex) return '—'
-                      return (
-                        <>
-                          {fmtTrafficGB(ex.used_bytes, ex.quota_bytes)}
-                          {ex.exceeded && <Badge color="red">已超额</Badge>}
-                        </>
-                      )
-                    })()}
-                  </td>
                   <td className="text-xs">
                     {(() => {
                       const ex = ledger.get(`${n.host}:${n.port}`)
@@ -117,7 +105,7 @@ export default function MyLandingNodes() {
                   </td>
                   <td>{n.source === 'local' ? <Badge color="blue">本地</Badge> : <Badge color="gray">分配</Badge>}</td>
                   <td className="text-right">
-                    <CopyText text={n.uri}><span className="text-blue-600 font-sans text-xs font-semibold">复制节点</span></CopyText>
+                    <CopyText text={`${n.host}:${n.port}`}><span className="text-blue-600 font-sans text-xs font-semibold">复制</span></CopyText>
                   </td>
                 </tr>
               ))}

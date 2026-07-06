@@ -145,6 +145,7 @@ export function Layout({ children }) {
                   {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
                 </NavGroup>
                 <NavGroup label="系统">
+                  <SideLink to="/announcements" icon={<IconMegaphone />}>公告管理</SideLink>
                   <SideLink to="/settings" icon={<IconSettings />}>系统设置</SideLink>
                 </NavGroup>
               </>
@@ -173,10 +174,10 @@ export function Layout({ children }) {
                 <button onClick={handleLogout} title="退出登录" className="w-[34px] h-[34px] rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] text-[#aeb6c2] hover:text-[#cdd6e2] transition-colors grid place-items-center">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 </button>
-                <a href={REPO_URL} target="_blank" rel="noopener noreferrer" title="GitHub 项目主页"
+                {isAdmin && <a href={REPO_URL} target="_blank" rel="noopener noreferrer" title="GitHub 项目主页"
                   className="w-[34px] h-[34px] rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] text-[#aeb6c2] hover:text-[#cdd6e2] transition-colors grid place-items-center">
                   <IconGitHub />
-                </a>
+                </a>}
               </div>
             ) : (<>
               <div className="flex items-center gap-[11px] px-2 py-1.5 mb-3.5">
@@ -191,10 +192,10 @@ export function Layout({ children }) {
               <div className="flex gap-2">
                 <NavLink to="/change-password" className="flex-1 text-center text-[12.5px] text-[#aeb6c2] py-2 rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] hover:text-[#cdd6e2] transition-colors">修改密码</NavLink>
                 <button onClick={handleLogout} className="flex-1 text-center text-[12.5px] text-[#aeb6c2] py-2 rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] hover:text-[#cdd6e2] transition-colors">退出登录</button>
-                <a href={REPO_URL} target="_blank" rel="noopener noreferrer" title="GitHub 项目主页"
+                {isAdmin && <a href={REPO_URL} target="_blank" rel="noopener noreferrer" title="GitHub 项目主页"
                   className="flex-none w-[34px] grid place-items-center rounded-lg bg-[#15181f] border border-[#232730] hover:bg-[#161d27] text-[#aeb6c2] hover:text-[#cdd6e2] transition-colors">
                   <IconGitHub />
-                </a>
+                </a>}
               </div>
             </>)}
             {/* Collapse toggle — desktop only */}
@@ -327,4 +328,8 @@ function IconProxy() {
 }
 function IconSettings() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+}
+function IconMegaphone() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>
+</svg>
 }

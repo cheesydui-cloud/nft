@@ -542,6 +542,11 @@ func (s *Server) Router() http.Handler {
 			r.Post("/users/{id}/reset-password", s.apiResetUserPassword)
 			r.Delete("/users/{id}", s.apiDeleteUser)
 			r.Post("/grants/batch-apply", s.apiBatchApplyGrants)
+
+		// Announcements
+		r.Get("/announcements", s.apiListAnnouncements)
+		r.Post("/announcements", s.apiCreateAnnouncement)
+		r.Delete("/announcements/{id}", s.apiDeleteAnnouncement)
 		})
 
 		// User routes
@@ -550,6 +555,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/my", s.apiMyDashboard)
 			r.Post("/my/username", s.apiChangeUsername)
 			r.Get("/my/landing-nodes", s.apiMyLandingNodes)
+		r.Get("/my/announcements", s.apiMyAnnouncements)
 			r.Get("/my/rules", s.apiMyListRules)
 			r.Get("/my/rules/{id}", s.apiMyGetRule)
 			r.Post("/my/rules", s.apiMyCreateRule)

@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import { pct, fmtTrafficGB, fmtDate, isExpired, nullStr } from '../../lib/fmt'
-import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { Layout, useToast } from '../../components/Layout'
 import { Loading, Empty, Badge, NodeTypeBadge, useConfirm } from '../../components/ui'
-import { copyToClipboard } from '../../lib/clipboard'
-import { ProxyURIEditor } from '../../components/ProxyURIEditor'
 import { TableBox } from '../../components/page'
 
 export default function MyDashboard() {
@@ -15,7 +12,6 @@ export default function MyDashboard() {
   const [tab, setTab] = useState('single')
   const [editingUsername, setEditingUsername] = useState(false)
   const [newUsername, setNewUsername] = useState('')
-  const speeds = useSpeed()
   const isMobile = useIsMobile()
   const toast = useToast()
   const confirm = useConfirm()
@@ -133,10 +129,8 @@ export default function MyDashboard() {
           </div>
         </div>
 
-        {/* My proxy URIs (browser-local) — desktop only */}
-        <div className="hidden md:block">
-          <ProxyURIEditor username={user.username} />
-        </div>
+        {/* Announcement area */}
+        <AnnouncementArea />
       </div>
 
       {/* Granted nodes */}
@@ -158,7 +152,7 @@ export default function MyDashboard() {
           {/* Desktop table */}
           {!isMobile && <TableBox>
           <table className="tbl">
-            <thead><tr><th>节点</th><th>类型</th>{show_rate && <th>倍率</th>}<th>状态</th><th>速度</th><th>已用流量</th><th>限速</th><th>本节点上限</th></tr></thead>
+            <thead><tr><th>节点</th><th>类型</th>{show_rate && <th>倍率</th>}<th>状态</th><th>限速</th><th>本节点上限</th></tr></thead>
             <tbody>
               {tabNodes.map((n, i) => {
                 const g = grantByNode[n.id]
@@ -176,18 +170,6 @@ export default function MyDashboard() {
                     <td><NodeTypeBadge type={n.node_type} /></td>
                     {show_rate && <td><Badge color="blue">×{n.rate_multiplier ?? 1}</Badge>{n.unidirectional && <Badge color="amber" className="ml-1">单向</Badge>}</td>}
                     <td><NodeOnline node={n} /></td>
-                    <td className="font-mono text-xs whitespace-nowrap">
-                      {speeds[n.id] ? (
-                        <>
-                          <span className="text-emerald-600">↑{fmtSpeed(speeds[n.id].up)}</span>
-                          {' '}
-                          <span className="text-blue-600">↓{fmtSpeed(speeds[n.id].down)}</span>
-                        </>
-                      ) : (
-                        <span className="text-ink-mut">--</span>
-                      )}
-                    </td>
-                    <td className="font-mono text-xs">{fmtTrafficGB(Math.round((g?.traffic_used_bytes || 0) * (user.billing_rate ?? 1)), g?.traffic_quota_bytes)}</td>
                     <td className="font-mono text-xs">{g?.rate_limit_mbytes > 0 ? `${g.rate_limit_mbytes} MB/s` : '不限'}</td>
                     <td className="font-mono">{g?.max_forwards ?? '--'}</td>
                   </tr>
@@ -213,13 +195,6 @@ export default function MyDashboard() {
                     <NodeTypeBadge type={n.node_type} />
                     {show_rate && <Badge color="blue">×{n.rate_multiplier ?? 1}</Badge>}
                     {n.unidirectional && <Badge color="amber">单向</Badge>}
-                    {speeds[n.id] && <>
-                      <span className="text-ink-mut">·</span>
-                      <span className="font-mono text-emerald-600">↑{fmtSpeed(speeds[n.id].up)}</span>
-                      <span className="font-mono text-blue-600">↓{fmtSpeed(speeds[n.id].down)}</span>
-                    </>}
-                    <span className="text-ink-mut">·</span>
-                    <span className="font-mono">{fmtTrafficGB(Math.round((g?.traffic_used_bytes || 0) * (user.billing_rate ?? 1)), g?.traffic_quota_bytes)}</span>
                     {g?.rate_limit_mbytes > 0 && <>
                       <span className="text-ink-mut">·</span>
                       <span className="font-mono">{g.rate_limit_mbytes} MB/s</span>
@@ -242,4 +217,40 @@ export default function MyDashboard() {
 function NodeOnline({ node }) {
   if (node.disabled) return <Badge color="amber">禁用</Badge>
   return node.online === 1 ? <Badge color="green">在线</Badge> : <Badge color="gray">离线</Badge>
+}
+
+// AnnouncementArea shows admin-published notices on the user dashboard.
+function AnnouncementArea() {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get('/my/announcements').then(d => setItems(d?.announcements || [])).catch(console.error).finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <div className="card flex flex-col">
+      <div className="px-6 py-[22px] flex-1 flex flex-col">
+        <h3 className="text-[16px] font-bold mb-5">公告</h3>
+        {loading ? (
+          <div className="text-sm text-ink-mut py-8 text-center">加载中…</div>
+        ) : items.length === 0 ? (
+          <div className="text-sm text-ink-mut py-8 text-center">暂无公告</div>
+        ) : (
+          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 280 }}>
+            {items.map(a => (
+              <div key={a.id} className="border-b border-line-soft pb-3 last:border-0 last:pb-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-semibold text-[14px]">{a.title}</span>
+                  {a.target_user_id > 0 && <Badge color="blue">私信</Badge>}
+                </div>
+                <div className="text-[13px] text-ink-soft whitespace-pre-wrap">{a.content}</div>
+                <div className="text-[11px] text-ink-mut mt-1">{fmtDate(a.created_at)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

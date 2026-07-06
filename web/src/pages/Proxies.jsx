@@ -9,6 +9,7 @@ import {
   landingIndex, splitEndpoint, rewriteEndpoint, mergeLanding,
 } from '../lib/landing'
 import { uriToClashYaml } from '../lib/yaml-convert'
+import { fmtDate, isExpired } from '../lib/fmt'
 
 export default function Proxies() {
   const [rules, setRules] = useState(null)
@@ -73,6 +74,12 @@ export default function Proxies() {
   const directProxies = [...directManual, ...directSub]
   const allProxies = [...directProxies.map(n => ({ ...n, kind: 'direct' })), ...relayProxies.map(n => ({ ...n, kind: 'relay' }))]
 
+  // Build expiry lookup from server landing nodes
+  const expiryMap = new Map()
+  serverNodes.forEach(n => {
+    if (n.expires_at > 0) expiryMap.set(`${n.host}:${n.port}`, n.expires_at)
+  })
+
   const tabbed = tab === 'all' ? allProxies : allProxies.filter(n => n.kind === (tab === 'relay' ? 'relay' : 'direct'))
   const q = search.trim().toLowerCase()
   const filtered = !q ? tabbed : tabbed.filter(n =>
@@ -120,7 +127,7 @@ export default function Proxies() {
           <Empty title="无匹配" desc="试试别的关键词。" />
         ) : (
           <table className="tbl">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>类型</th><th className="text-right">操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>到期时间</th><th>类型</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map((n, i) => {
                 const text = copyText(n)
@@ -135,6 +142,19 @@ export default function Proxies() {
                       <SensText blurred={blurred}>
                         {n.kind === 'relay' ? `${splitEndpoint(n.relay)?.host || n.host}:${splitEndpoint(n.relay)?.port || n.port}` : `${n.host}:${n.port}`}
                       </SensText>
+                    </td>
+                    <td className="text-xs">
+                      {(() => {
+                        const ts = expiryMap.get(`${n.host}:${n.port}`)
+                        if (!ts || ts <= 0) return <span className="text-ink-mut">—</span>
+                        const expired = isExpired(ts)
+                        return (
+                          <>
+                            {fmtDate(ts)}
+                            {expired && <Badge color="red" className="ml-1">已过期</Badge>}
+                          </>
+                        )
+                      })()}
                     </td>
                     <td>
                       {n.kind === 'relay'
