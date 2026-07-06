@@ -374,7 +374,7 @@ func (s *Server) apiDeleteLandingExit(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	status, err := db.DeleteUserLandingExit(s.DB, id, body.Host, body.Port)
+	status, wasPresent, err := db.DeleteUserLandingExit(s.DB, id, body.Host, body.Port, true)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -383,13 +383,15 @@ func (s *Server) apiDeleteLandingExit(w http.ResponseWriter, r *http.Request) {
 	case "notfound":
 		jsonErr(w, http.StatusNotFound, "出口不存在")
 		return
-	case "present":
-		jsonErr(w, http.StatusConflict, "在册出口由同步维护，不可删除")
-		return
+	}
+	// If a present row was deleted, re-dispatch rules pointed at it so the
+	// data plane drops the forward.
+	if wasPresent {
+		go s.redispatchUserExit(id, body.Host, body.Port)
 	}
 	db.WriteAudit(s.DB, u.ID, "user.delete_exit", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))
-	jsonOK(w, map[string]any{"ok": true})
+	jsonOK(w, map[string]any{"ok": true, "deleted": body.Host + ":" + strconv.Itoa(body.Port)})
 }
 
 // apiSetLandingExitExpires sets (or clears) the expiry timestamp on one exit.

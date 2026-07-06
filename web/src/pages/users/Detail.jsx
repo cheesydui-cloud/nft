@@ -436,10 +436,10 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
   // Quota cells stay visible on rows with an active ledger even without the
   // landing mark: the backend enforces per-exit quotas regardless of role
   // marks, so an enforcing quota must never be hidden by unmarking a node.
-  const showQuotaFor = (n, st) => {
+  const showQuotaFor = (n) => {
     const ex = exitByAddr[`${n.host}:${n.port}`]
     if (!ex) return null
-    return (st & ROLE_LANDING) || ex.quota_bytes > 0 || ex.used_bytes > 0 ? ex : null
+    return ex.present ? ex : null
   }
 
   return (
@@ -489,11 +489,11 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
               <thead><tr>
                 <th className="w-8"><input type="checkbox" className="accent-blue-600"
                   checked={preview.length > 0 && sel.size === preview.length} onChange={toggleSelAll} /></th>
-                <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th></tr></thead>
+                <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th><th className="text-right">操作</th></tr></thead>
               <tbody>
                 {preview.map((n, i) => {
                   const st = roleOf(n)
-                  const ex = showQuotaFor(n, st)
+                  const ex = showQuotaFor(n)
                   const exceeded = ex && ex.quota_bytes > 0 && ex.used_bytes >= ex.quota_bytes
                   return (
                     <tr key={i}>
@@ -520,6 +520,9 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
                       </td>
                       <td className="text-right">
                         <AdminRoleToggle state={st} onChange={bit => handleSetRole(n, bit)} />
+                      </td>
+                      <td className="text-right">
+                        <button onClick={() => deleteExit({ host: n.host, port: n.port })} className="text-red-600 text-xs font-semibold">删除</button>
                       </td>
                     </tr>
                   )

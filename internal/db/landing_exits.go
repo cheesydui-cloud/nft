@@ -341,23 +341,24 @@ func ResetUserLandingExitTraffic(d *sql.DB, userID int64, host string, port int)
 	return err == nil, present, err
 }
 
-// DeleteUserLandingExit removes a residual (present=0) row. In-set rows are
-// managed by sync and refuse deletion.
-func DeleteUserLandingExit(d *sql.DB, userID int64, host string, port int) (string, error) {
+// DeleteUserLandingExit removes a residual (present=0) row by default.
+// When force=true it also deletes present=1 rows — used by admin delete so
+// manually imported/repo nodes can be removed. Returns (status, wasPresent, error).
+func DeleteUserLandingExit(d *sql.DB, userID int64, host string, port int, force bool) (string, bool, error) {
 	found, present, err := exitRowPresent(d, userID, host, port)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !found {
-		return "notfound", nil
+		return "notfound", false, nil
 	}
-	if present {
-		return "present", nil
+	if present && !force {
+		return "present", true, nil
 	}
 	if _, err := d.Exec(`DELETE FROM user_landing_exits WHERE user_id=? AND host=? AND port=?`, userID, host, port); err != nil {
-		return "", err
+		return "", present, err
 	}
-	return "deleted", nil
+	return "deleted", present, nil
 }
 
 // ExitsExceedingQuota returns the user's present exits whose ledger reached
