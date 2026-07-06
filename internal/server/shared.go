@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -11,6 +12,20 @@ import (
 	"nft/internal/landing"
 	"nft/internal/resolver"
 )
+
+// safeGo runs fn in a goroutine with panic recovery, so an unexpected panic
+// in a background task (redispatch, hub, backup, etc.) logs instead of
+// crashing the whole process.
+func safeGo(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("goroutine panic: %v", r)
+			}
+		}()
+		fn()
+	}()
+}
 
 // ruleView is the per-rule row the list/detail API renders.
 type ruleView struct {

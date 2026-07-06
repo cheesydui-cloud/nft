@@ -138,7 +138,7 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-dispatch rules pointed at flipped exits (present changed → push-exclusion may change)
 	for _, k := range flipped {
-		go s.redispatchUserExit(uid, k.Host, k.Port)
+		safeGo(func() { s.redispatchUserExit(uid, k.Host, k.Port) })
 	}
 	// Carry over expires_at from repo entries to user landing exits.
 	for _, e := range entries {

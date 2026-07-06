@@ -79,15 +79,10 @@ func TestAPILandingExitQuotaLifecycle(t *testing.T) {
 		t.Fatalf("reset did not zero: %+v", exits[0])
 	}
 
-	// delete refuses present rows, accepts residual ones
-	if rec = adminPost(t, s, admin, "/api/users/"+itoa(uid)+"/landing-exits/delete",
-		map[string]any{"host": "1.2.3.4", "port": 443}); rec.Code != http.StatusConflict {
-		t.Fatalf("delete present: %d", rec.Code)
-	}
-	db.SyncUserLandingExits(d, uid, nil, "", "")
+	// delete now allows present rows (admin force delete)
 	if rec = adminPost(t, s, admin, "/api/users/"+itoa(uid)+"/landing-exits/delete",
 		map[string]any{"host": "1.2.3.4", "port": 443}); rec.Code != http.StatusOK {
-		t.Fatalf("delete residual: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("delete present: %d %s", rec.Code, rec.Body.String())
 	}
 	if exits, _ = db.ListUserLandingExits(d, uid); len(exits) != 0 {
 		t.Fatalf("row should be gone, got %+v", exits)

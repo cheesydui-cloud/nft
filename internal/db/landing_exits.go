@@ -190,6 +190,10 @@ func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) (
 		}
 		existing[k] = rowState{present: present == 1, overQuota: quota > 0 && used >= quota}
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
 
 	nowTs := now()

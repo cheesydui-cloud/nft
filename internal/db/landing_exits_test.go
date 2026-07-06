@@ -151,15 +151,15 @@ func TestExitQuotaHelpers(t *testing.T) {
 		t.Fatal("reset should clear the overrun")
 	}
 
-	// delete is restricted to residual rows
-	if st, _ := DeleteUserLandingExit(d, uid, "a.com", 443); st != "present" {
+	// delete is restricted to residual rows (force=false refuses present=1)
+	if st, _, _ := DeleteUserLandingExit(d, uid, "a.com", 443, false); st != "present" {
 		t.Fatalf("present row must refuse delete, got %q", st)
 	}
 	SyncUserLandingExits(d, uid, nil, "", "")
-	if st, _ := DeleteUserLandingExit(d, uid, "a.com", 443); st != "deleted" {
+	if st, _, _ := DeleteUserLandingExit(d, uid, "a.com", 443, false); st != "deleted" {
 		t.Fatalf("residual row should delete, got %q", st)
 	}
-	if st, _ := DeleteUserLandingExit(d, uid, "a.com", 443); st != "notfound" {
+	if st, _, _ := DeleteUserLandingExit(d, uid, "a.com", 443, false); st != "notfound" {
 		t.Fatalf("gone row is notfound, got %q", st)
 	}
 }

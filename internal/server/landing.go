@@ -86,11 +86,11 @@ func (s *Server) syncLandingExits(u *db.User, nodes []landing.Node) {
 	if !synced || len(flipped) == 0 {
 		return
 	}
-	go func() {
+	safeGo(func() {
 		for _, k := range flipped {
 			s.redispatchUserExit(u.ID, k.Host, k.Port)
 		}
-	}()
+	})
 }
 
 // redispatchUserExit re-pushes every node carrying rules that exit to the
@@ -169,6 +169,10 @@ func (s *Server) apiSetUserLanding(w http.ResponseWriter, r *http.Request) {
 	// Return a fresh preview so the admin sees what the source resolved to,
 	// and materialize it while the resolution is known-good.
 	target, _ := db.GetUserByID(s.DB, id)
+	if target == nil {
+		jsonErr(w, http.StatusNotFound, "用户不存在")
+		return
+	}
 	if nodes, ok := s.resolveLandingExits(target, true); ok {
 		s.syncLandingExits(target, nodes)
 	}
@@ -326,7 +330,7 @@ func (s *Server) apiSetLandingExitQuota(w http.ResponseWriter, r *http.Request) 
 	// A lowered quota may start excluding immediately; a raised/cleared one
 	// lifts the exclusion. Residual rows sit outside the exclusion — no push.
 	if present {
-		go s.redispatchUserExit(id, body.Host, body.Port)
+		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.set_exit_quota", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d bytes=%d", body.Host, body.Port, body.QuotaBytes))
@@ -355,7 +359,7 @@ func (s *Server) apiResetLandingExitTraffic(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if present {
-		go s.redispatchUserExit(id, body.Host, body.Port)
+		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.reset_exit_traffic", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))
@@ -387,7 +391,7 @@ func (s *Server) apiDeleteLandingExit(w http.ResponseWriter, r *http.Request) {
 	// If a present row was deleted, re-dispatch rules pointed at it so the
 	// data plane drops the forward.
 	if wasPresent {
-		go s.redispatchUserExit(id, body.Host, body.Port)
+		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.delete_exit", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))
