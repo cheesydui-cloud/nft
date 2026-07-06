@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -41,7 +44,40 @@ type listener struct {
 }
 
 func openListener(r nft.Rule, poolSize int) (*listener, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", r.SrcPort))
+	bindAddr := fmt.Sprintf(":%d", r.SrcPort)
+
+	// Use ListenConfig with SO_REUSEADDR to handle TIME_WAIT / lingering
+	// sockets left behind by a killed daemon. Retry with backoff so a
+	// transient "address already in use" (common right after a hard
+	// restart) self-heals instead of failing the entire Reconcile.
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			var opErr error
+			err := c.Control(func(fd uintptr) {
+				opErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			})
+			if err != nil {
+				return err
+			}
+			return opErr
+		},
+	}
+
+	var ln net.Listener
+	var err error
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		ln, err = lc.Listen(context.Background(), "tcp", bindAddr)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			break
+		}
+		log.Printf("userspace: port %d bind failed (attempt %d/%d): %v — retrying in %ds",
+			r.SrcPort, attempt+1, maxRetries, err, attempt+1)
+		time.Sleep(time.Duration(attempt+1) * time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -219,20 +255,25 @@ func (b *userspaceBackend) Reconcile(rules []nft.Rule) error {
 	}
 
 	var opened []*listener
+	var bindErrors []string
 	for port, r := range desired {
 		if _, ok := b.listeners[port]; ok {
 			continue
 		}
 		l, err := openListener(r, b.poolSize)
 		if err != nil {
-			for _, ol := range opened {
-				ol.close()
-				delete(b.listeners, ol.port)
-			}
-			return fmt.Errorf("listen tcp/%d: %w", port, err)
+			// Don't roll back already-opened listeners — a single port
+			// failure (e.g. still in TIME_WAIT) shouldn't tear down the
+			// rest. Collect the error and skip this port; the next
+			// Reconcile will retry.
+			bindErrors = append(bindErrors, fmt.Sprintf("port %d: %v", port, err))
+			continue
 		}
 		b.listeners[port] = l
 		opened = append(opened, l)
+	}
+	if len(bindErrors) > 0 {
+		return fmt.Errorf("bind errors: %s", strings.Join(bindErrors, "; "))
 	}
 
 	for port, r := range desired {

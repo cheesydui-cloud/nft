@@ -406,14 +406,17 @@ func TestUserspace_BindConflictRollback(t *testing.T) {
 	if err := be.Reconcile(rules); err == nil {
 		t.Fatal("expected Reconcile to fail on bind conflict")
 	}
-	if len(be.listeners) != 0 {
-		t.Fatalf("rollback incomplete, listeners=%d", len(be.listeners))
+	// New behaviour: the successfully-bound port stays open; only the
+	// conflicting port is skipped. The next Reconcile will retry it.
+	if len(be.listeners) != 1 {
+		t.Fatalf("expected 1 listener (ok port), got %d", len(be.listeners))
 	}
-	probe, err := net.Listen("tcp", fmt.Sprintf(":%d", free))
-	if err != nil {
-		t.Fatalf("port %d not rolled back: %v", free, err)
+	if _, ok := be.listeners[free]; !ok {
+		t.Fatalf("ok port %d not in listeners", free)
 	}
-	probe.Close()
+	if _, ok := be.listeners[taken]; ok {
+		t.Fatalf("bad port %d should not be in listeners", taken)
+	}
 }
 
 // A bandwidth cap must actually pace the forwarded stream. We send enough data
