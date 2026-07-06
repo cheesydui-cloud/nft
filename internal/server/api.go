@@ -212,7 +212,17 @@ func (s *Server) apiBranding(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	panelName, _ := db.GetSetting(s.DB, "panel_name")
-	jsonOK(w, map[string]any{"user": apiUserFullView(u), "panel_name": panelName, "version": serverVersion()})
+	userView := apiUserFullView(u)
+	// has_landing_source drives the sidebar entries "落地节点" and "我的代理".
+	// A user who only has repo-imported exits (no subscription URL or manual
+	// URIs) would otherwise lose those nav items — also check the DB for
+	// present landing exits (includes node-pool imports with source='repo').
+	if !userView["has_landing_source"].(bool) {
+		if exits, _ := db.PresentLandingExitsForUser(s.DB, u.ID); len(exits) > 0 {
+			userView["has_landing_source"] = true
+		}
+	}
+	jsonOK(w, map[string]any{"user": userView, "panel_name": panelName, "version": serverVersion()})
 }
 
 func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -2628,8 +2638,16 @@ func (s *Server) apiMyDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	showRate, _ := db.GetSetting(s.DB, "show_rate_to_user")
+	userView := apiUserFullView(u)
+	// Same fix as apiMe: ensure has_landing_source is true for users with
+	// repo-imported exits so the sidebar stays consistent on the dashboard.
+	if !userView["has_landing_source"].(bool) {
+		if exits, _ := db.PresentLandingExitsForUser(s.DB, u.ID); len(exits) > 0 {
+			userView["has_landing_source"] = true
+		}
+	}
 	jsonOK(w, map[string]any{
-		"user": apiUserFullView(u), "nodes": grantedNodes, "grants": grants,
+		"user": userView, "nodes": grantedNodes, "grants": grants,
 		"rules": rules, "show_rate": showRate == "1",
 	})
 }
