@@ -1,0 +1,32 @@
+# compiled binaries / release artifacts
+/build/
+
+# git worktrees managed by the dev workflow
+/.worktrees/
+
+# macOS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# runtime state (if anyone runs the binary inside the source tree)
+panel.db
+panel.db-*
+*-state.json
+rules.json
+agent.token
+
+# test helpers
+*.cookies
+/tmp/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# frontend build artifacts
+web/node_modules/
+web/dist/
+.claude/worktrees/

@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+/* Dark mode is class-driven (.dark on <html>) so we can follow the OS by
+   default yet honor an explicit user toggle. See lib/theme.js. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic color tokens. Utilities like bg-surface / text-ink / border-line
+   resolve to these CSS variables, so flipping the values under .dark recolors
+   the whole app without per-element dark: variants.
+   Brand/status hues (blue/green/red/amber) keep Tailwind's palette. */
+@theme {
+  --color-app: #eef1f5;        /* page background */
+  --color-surface: #ffffff;    /* cards, inputs, menus */
+  --color-raised: #f9fafb;     /* table headers, hover, chips */
+  --color-line: #e6e9ee;       /* borders */
+  --color-line-soft: #eef0f3;  /* subtle inner borders */
+  --color-ink: #1f2733;        /* primary text */
+  --color-ink-soft: #59626e;   /* secondary text */
+  --color-ink-mut: #9aa4b2;    /* muted text / icons */
+}
+
+.dark {
+  --color-app: #0a0c10;
+  --color-surface: #101319;
+  --color-raised: #15191f;
+  --color-line: #1c2027;
+  --color-line-soft: #181c22;
+  --color-ink: #e7eaf0;
+  --color-ink-soft: #9aa2ae;
+  --color-ink-mut: #6b7280;
+}
+
+html, body { background: var(--color-app); color: var(--color-ink); }
+
+/* Custom component classes built on top of Tailwind */
+
+/* Input fields */
+.input-field {
+  @apply w-full h-[40px] rounded-[9px] px-3.5 text-[13.5px] transition-colors outline-none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink);
+}
+.input-field::placeholder { color: var(--color-ink-mut); opacity: 0.7; }
+.input-field:focus { @apply border-blue-600 ring-3 ring-blue-600/10; }
+
+/* Button: primary */
+.btn-primary {
+  @apply inline-flex items-center gap-1.5 h-[38px] px-5 rounded-[9px] text-[13.5px] font-semibold bg-blue-600 text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 transition-colors cursor-pointer border-0;
+}
+
+/* Button: secondary/ghost */
+.btn-secondary {
+  @apply inline-flex items-center gap-1.5 h-[38px] px-5 rounded-[9px] text-[13.5px] font-semibold transition-colors cursor-pointer;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+}
+.btn-secondary:hover { border-color: var(--color-ink-mut); color: var(--color-ink); background: var(--color-raised); }
+
+/* Button: danger */
+.btn-danger {
+  @apply inline-flex items-center gap-1.5 h-[38px] px-5 rounded-[9px] text-[13.5px] font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer border-0;
+}
+
+/* Small danger button */
+.btn-danger-sm {
+  @apply inline-flex items-center h-[30px] px-2.5 rounded-md text-[12px] font-semibold bg-red-600/10 text-red-600 transition-colors cursor-pointer;
+  border: 1px solid color-mix(in srgb, var(--color-red-500) 35%, transparent);
+}
+.btn-danger-sm:hover { background: color-mix(in srgb, var(--color-red-500) 18%, transparent); }
+
+/* Icon button (34×34 square) */
+.icon-btn {
+  @apply w-[34px] h-[34px] inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer;
+  background: var(--color-raised);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+}
+.icon-btn:hover { color: var(--color-ink); border-color: var(--color-ink-mut); }
+.icon-btn-danger {
+  @apply w-[34px] h-[34px] inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer;
+  background: rgba(244,63,94,.08);
+  border: 1px solid rgba(244,63,94,.3);
+  color: #fb7185;
+}
+.icon-btn-danger:hover { background: rgba(244,63,94,.15); }
+
+/* Card */
+.card {
+  @apply rounded-[14px] shadow-[0_1px_2px_rgba(16,24,40,0.04)];
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+}
+.card-header {
+  @apply flex items-center gap-3 px-[22px] py-[18px];
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+/* Overview stat cards layer flex/h-full onto .card (pair both in markup) so
+   every card in a row keeps the same height — h-full fills the grid cell and
+   mt-auto pins the sub-label to the bottom whether or not it carries text, so
+   cards never drift out of alignment. */
+.stat-card { @apply px-[22px] py-5 flex flex-col h-full min-h-[128px]; }
+.stat-card .stat-sub { @apply mt-auto pt-3 text-[12.5px]; }
+
+/* Table */
+.tbl { @apply w-full border-collapse text-sm; }
+.tbl th {
+  @apply text-[12px] font-semibold tracking-wider text-left py-[13px] px-[22px] whitespace-nowrap;
+  color: var(--color-ink-mut);
+  background: var(--color-raised);
+  border-bottom: 1px solid var(--color-line);
+}
+/* Sticky header ONLY inside a local scroll container (TableScroll on list
+   pages, TableBox in cards/detail sections), so the header stays put while the
+   rows scroll. Scoped to .table-scroll so a bare table that scrolls with the
+   whole content area doesn't get a floating header. box-shadow draws the
+   divider because a border on a border-collapse cell doesn't stick reliably. */
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: inset 0 -1px 0 var(--color-line);
+}
+/* Header cells default to left; this lets a th opt into right alignment so its
+   label lines up with right-aligned data below it (the base rule's higher
+   specificity would otherwise win and pull the label left). */
+.tbl th.text-right { @apply text-right; }
+.tbl td {
+  @apply py-[15px] px-[22px] align-middle whitespace-nowrap text-[13px];
+  border-bottom: 1px solid var(--color-line-soft);
+  color: var(--color-ink);
+}
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl tbody tr { @apply transition-colors; }
+.tbl tbody tr:hover { background: color-mix(in srgb, var(--color-raised) 60%, transparent); }
+
+/* Form label */
+.fl { @apply text-[13px] font-semibold; color: var(--color-ink-soft); }
+
+/* Protocol tags */
+.tag-tcp {
+  @apply inline-flex items-center font-mono text-[11.5px] font-semibold px-[9px] py-[3px] rounded-md bg-blue-50 text-blue-700;
+}
+.tag-udp {
+  @apply inline-flex items-center font-mono text-[11.5px] font-semibold px-[9px] py-[3px] rounded-md bg-violet-50 text-violet-700;
+}
+.tag-tcpudp {
+  @apply inline-flex items-center font-mono text-[11.5px] font-semibold px-[9px] py-[3px] rounded-md bg-emerald-50 text-emerald-700;
+}
+
+/* Mode tags */
+.tag-kernel {
+  @apply inline-flex items-center font-mono text-[11.5px] font-semibold px-[9px] py-[3px] rounded-md bg-green-50 text-green-700;
+}
+.tag-user {
+  @apply inline-flex items-center font-mono text-[11.5px] font-semibold px-[9px] py-[3px] rounded-md bg-amber-50 text-amber-700;
+}
+
+/* In dark mode, status/protocol pills use translucent fills so the saturated
+   light-palette backgrounds don't glare against the dark surface. */
+.dark .tag-tcp, .dark .tag-udp, .dark .tag-tcpudp,
+.dark .tag-kernel, .dark .tag-user {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+/* Segmented control */
+.seg-label { @apply relative flex-1; }
+.seg-label .seg-span {
+  @apply block text-center py-2 px-2.5 rounded-[9px] text-[13px] font-semibold cursor-pointer transition-colors;
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+}
+.seg-label input:checked + .seg-span,
+.seg-label .peer:checked ~ .seg-span {
+  @apply border-blue-600 bg-blue-50 text-blue-700;
+}
+
+/* Animation */
+/* Horizontally scrollable table wrapper with sticky first column on mobile */
+.tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (max-width: 767px) {
+  .tbl-scroll .tbl th:first-child,
+  .tbl-scroll .tbl td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--color-surface);
+  }
+  .tbl-scroll .tbl thead th:first-child { background: var(--color-raised); z-index: 3; }
+}
+
+/* Mobile card: replaces table rows on narrow screens */
+.mobile-card {
+  @apply px-4 py-3.5 transition-colors;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.mobile-card:last-child { border-bottom: 0; }
+.mobile-card:active { background: color-mix(in srgb, var(--color-raised) 60%, transparent); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-toast { animation: toast-in 0.2s ease-out; }
+
+@keyframes fadeout {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.animate-fadeout { animation: fadeout 1.2s forwards; }
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(-16px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-in { animation: modal-in 0.2s ease; }

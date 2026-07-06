@@ -1,0 +1,101 @@
+package shim
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"nft/internal/nft"
+)
+
+// handleRegex captures the trailing `# handle N` annotation emitted by
+// `nft -a list chain`. nft prints it on every rule line.
+var handleRegex = regexp.MustCompile(`#\s*handle\s+(\d+)\s*$`)
+
+// parseShimHandles walks nft -a list chain output and returns every
+// handle whose rule line carries the OwnerComment string. Lines without
+// OwnerComment (other tools' rules, ct rules from a different owner)
+// are ignored.
+func parseShimHandles(listOutput string) []int {
+	var out []int
+	for _, line := range strings.Split(listOutput, "\n") {
+		if !strings.Contains(line, "comment \""+OwnerComment+"\"") {
+			continue
+		}
+		m := handleRegex.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// renderShimScript builds the `nft -f -` script that, in one atomic
+// transaction:
+//
+//  1. Deletes every rule whose handle is in staleHandles (the
+//     previously-injected daemon-managed rules).
+//  2. Re-adds the ct state established,related accept tail rule and
+//     one accept rule per DNAT (matching ip/ip6 daddr + proto/dport).
+//
+// family selects both the nft table family this script targets ("ip" or
+// "ip6") and which of rules' dest addresses belong in it — an "ip6 daddr"
+// match rejects an IPv4 literal at `nft -f` time (and vice versa), so a
+// mixed-family rule list must be split rather than rendered as-is; passing
+// an unfiltered list here would make the whole atomic script fail on the
+// first mismatched address, taking down the caller's v4 accepts along with
+// the invalid v6 one.
+//
+// Empty rules + empty staleHandles still emits the ct state rule so
+// reply traffic for any future rule has a route through.
+func renderShimScript(family, table, chain string, rules []nft.Rule, staleHandles []int) string {
+	var b strings.Builder
+	for _, h := range staleHandles {
+		fmt.Fprintf(&b, "delete rule %s %s %s handle %d\n", family, table, chain, h)
+	}
+	fmt.Fprintf(&b,
+		"add rule %s %s %s ct state established,related counter accept comment \"%s\"\n",
+		family, table, chain, OwnerComment,
+	)
+	v6 := family == "ip6"
+	for _, r := range rules {
+		if r.DestIP == "" || nft.IsIPv6(r.DestIP) != v6 {
+			continue
+		}
+		match := protoForwardMatch(r.Proto, r.DestPort)
+		fmt.Fprintf(&b,
+			"add rule %s %s %s %s daddr %s %s counter accept comment \"%s\"\n",
+			family, table, chain, family, r.DestIP, match, OwnerComment,
+		)
+	}
+	return b.String()
+}
+
+// protoForwardMatch produces the proto + dport match clause for the
+// forward chain.
+func protoForwardMatch(proto string, port int) string {
+	return nft.ProtoDportMatch(proto, port)
+}
+
+// renderInputShimScript builds the nft -f script for an INPUT-type chain:
+// delete stale owner-tagged rules, then one accept per userspace listen port.
+// No ct-state rule (inbound NEW is exactly what we allow) and no ip daddr.
+func renderInputShimScript(family, table, chain string, ports []ListenPort, staleHandles []int) string {
+	var b strings.Builder
+	for _, h := range staleHandles {
+		fmt.Fprintf(&b, "delete rule %s %s %s handle %d\n", family, table, chain, h)
+	}
+	for _, p := range ports {
+		fmt.Fprintf(&b,
+			"add rule %s %s %s %s dport %d counter accept comment \"%s\"\n",
+			family, table, chain, p.Proto, p.Port, OwnerComment,
+		)
+	}
+	return b.String()
+}
