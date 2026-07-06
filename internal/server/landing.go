@@ -49,6 +49,12 @@ func (s *Server) resolveLandingExits(u *db.User, force bool) ([]landing.Node, bo
 		}
 		nodes = append(nodes, subNodes...)
 	}
+	// No source configured (or source resolved to zero nodes) — return false
+	// so callers fall back to the DB materialized set, which includes
+	// repo-imported nodes that aren't in any subscription/URI source.
+	if len(nodes) == 0 {
+		return nil, false
+	}
 	return nodes, true
 }
 
