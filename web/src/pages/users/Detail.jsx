@@ -365,11 +365,26 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
   useEffect(() => { fetchNodeRoles().then(setRoles); loadExits() }, [userId])
   useEffect(() => { setSel(new Set()) }, [preview])
 
-  // Reload landing exits and preview from server — used after repo import.
+  // Refresh the exits ledger and rebuild the preview from its present rows.
+  // Used after a node-pool import. We deliberately do NOT call POST /landing
+  // here: that endpoint re-syncs from the subscription/URI source and would
+  // sweep freshly imported pool nodes whose ledgers are still empty
+  // (SyncUserLandingExits deletes present rows with quota==0 && used==0 that
+  // dropped out of the source — and pool nodes are never in the source).
   const reloadLanding = () => {
-    loadExits()
-    api.post(`/users/${userId}/landing`, { landing_sub_url: url.trim(), landing_uris: text })
-      .then(d => setPreview(d?.landing_nodes || []))
+    api.get(`/users/${userId}/landing-exits`)
+      .then(d => {
+        const ex = d?.exits || []
+        setExits(ex)
+        // Rebuild preview from present exits so pool-imported (and any other
+        // non-source) nodes appear in the "已分配节点" list.
+        setPreview(ex.filter(e => e.present).map(e => ({
+          host: e.host,
+          port: e.port,
+          name: e.name || '',
+          protocol: e.protocol || '',
+        })))
+      })
       .catch(err => toast(err.message, 'error'))
   }
 

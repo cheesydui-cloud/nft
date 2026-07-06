@@ -23,6 +23,7 @@ type LandingExit struct {
 	UsedBytes    int64  `json:"used_bytes"`
 	UpdatedAt    int64  `json:"updated_at"`
 	ExpiresAt    int64  `json:"expires_at"`
+	Source       string `json:"source"`
 }
 
 // LandingExitInput is a deduplicated landing node destined for the
@@ -80,9 +81,10 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 		present     bool
 		overQuota   bool
 		emptyLedger bool
+		source      string
 	}
 	existing := map[LandingExitKey]rowState{}
-	rows, err := tx.Query(`SELECT host, port, present, quota_bytes, used_bytes FROM user_landing_exits WHERE user_id=?`, userID)
+	rows, err := tx.Query(`SELECT host, port, present, quota_bytes, used_bytes, source FROM user_landing_exits WHERE user_id=?`, userID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -90,11 +92,12 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 		var k LandingExitKey
 		var present int
 		var quota, used int64
-		if err := rows.Scan(&k.Host, &k.Port, &present, &quota, &used); err != nil {
+		var source string
+		if err := rows.Scan(&k.Host, &k.Port, &present, &quota, &used, &source); err != nil {
 			rows.Close()
 			return nil, false, err
 		}
-		existing[k] = rowState{present: present == 1, overQuota: quota > 0 && used >= quota, emptyLedger: quota == 0 && used == 0}
+		existing[k] = rowState{present: present == 1, overQuota: quota > 0 && used >= quota, emptyLedger: quota == 0 && used == 0, source: source}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -110,10 +113,10 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 			continue
 		}
 		inInput[k] = true
-		if _, err := tx.Exec(`INSERT INTO user_landing_exits(user_id, host, port, name, protocol, uri, present, updated_at)
-			VALUES (?,?,?,?,?,?,1,?)
-			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at`,
-			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs); err != nil {
+		if _, err := tx.Exec(`INSERT INTO user_landing_exits(user_id, host, port, name, protocol, uri, present, updated_at, source)
+			VALUES (?,?,?,?,?,?,1,?,?)
+			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at, source=excluded.source`,
+			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs, "auto"); err != nil {
 			return nil, false, err
 		}
 		if st, ok := existing[k]; ok && !st.present && st.overQuota {
@@ -122,6 +125,10 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 	}
 	for k, st := range existing {
 		if inInput[k] {
+			continue
+		}
+		// Repo-imported nodes are never swept by source sync.
+		if st.source == "repo" {
 			continue
 		}
 		// Dropped out of the source. An empty ledger has nothing to resume, so
@@ -194,10 +201,10 @@ func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) (
 			continue
 		}
 		seen[k] = true
-		if _, err := tx.Exec(`INSERT INTO user_landing_exits(user_id, host, port, name, protocol, uri, present, updated_at)
-			VALUES (?,?,?,?,?,?,1,?)
-			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at`,
-			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs); err != nil {
+		if _, err := tx.Exec(`INSERT INTO user_landing_exits(user_id, host, port, name, protocol, uri, present, updated_at, source)
+			VALUES (?,?,?,?,?,?,1,?,?)
+			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at, source=excluded.source`,
+			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs, "repo"); err != nil {
 			return nil, err
 		}
 		if st, ok := existing[k]; ok && !st.present && st.overQuota {
@@ -210,15 +217,19 @@ func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) (
 	return flipped, nil
 }
 
-const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at, expires_at`
+const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at, expires_at, source`
 
 func scanLandingExit(r rowScanner) (*LandingExit, error) {
 	e := &LandingExit{}
 	var present int
-	if err := r.Scan(&e.UserID, &e.Host, &e.Port, &e.Name, &e.NameOverride, &e.Protocol, &e.URI, &present, &e.QuotaBytes, &e.UsedBytes, &e.UpdatedAt, &e.ExpiresAt); err != nil {
+	var expiresAt sql.NullInt64
+	if err := r.Scan(&e.UserID, &e.Host, &e.Port, &e.Name, &e.NameOverride, &e.Protocol, &e.URI, &present, &e.QuotaBytes, &e.UsedBytes, &e.UpdatedAt, &expiresAt, &e.Source); err != nil {
 		return nil, err
 	}
 	e.Present = present == 1
+	if expiresAt.Valid {
+		e.ExpiresAt = expiresAt.Int64
+	}
 	return e, nil
 }
 

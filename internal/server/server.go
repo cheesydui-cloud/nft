@@ -555,15 +555,15 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/node-repo/{id}", s.apiDeleteNodeRepoEntry)
 		r.Post("/users/{id}/assign-repo", s.apiAssignRepoToUser)
 
-		// Allow admin to change own username (same handler as user route)
-		r.Post("/my/username", s.apiChangeUsername)
+			// Allow admin to change own username (same handler as user route)
+			// r.Post("/my/username", s.apiChangeUsername) — moved to shared auth-only group below
 		})
 
 		// User routes
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth, s.requireRole("user"))
 			r.Get("/my", s.apiMyDashboard)
-			r.Post("/my/username", s.apiChangeUsername)
+			// /my/username moved to shared auth-only group below so both admin and user can use it
 			r.Get("/my/landing-nodes", s.apiMyLandingNodes)
 		r.Get("/my/announcements", s.apiMyAnnouncements)
 			r.Get("/my/rules", s.apiMyListRules)
@@ -580,6 +580,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth)
+			r.Post("/my/username", s.apiChangeUsername)
 			r.Get("/ws/speed", s.apiSpeedWS)
 		})
 	})
