@@ -2134,7 +2134,18 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	landingPreview, lok := s.resolveLandingExits(target, false)
 	if lok {
 		s.syncLandingExits(target, landingPreview)
-	} else {
+	}
+	// Rebuild landing preview from DB present rows to include both source-synced
+	// and repo-imported nodes. This is the authoritative materialized view.
+	// Without this, repo-imported nodes (source='repo') disappear on page
+	// refresh because resolveLandingExits only sees subscription/URI sources.
+	dbIndex := s.landingIndexFromDB(id)
+	if dbIndex != nil {
+		landingPreview = make([]landing.Node, 0, len(dbIndex))
+		for _, n := range dbIndex {
+			landingPreview = append(landingPreview, n)
+		}
+	} else if !lok {
 		landingPreview = s.landingNodesFor(target, false)
 	}
 	jsonOK(w, map[string]any{
