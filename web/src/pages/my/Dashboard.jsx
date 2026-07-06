@@ -10,8 +10,6 @@ export default function MyDashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('single')
-  const [editingUsername, setEditingUsername] = useState(false)
-  const [newUsername, setNewUsername] = useState('')
   const isMobile = useIsMobile()
   const toast = useToast()
   const confirm = useConfirm()
@@ -79,27 +77,7 @@ export default function MyDashboard() {
             <h3 className="text-[16px] font-bold mb-5">我的配额</h3>
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
               <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">用户名</div>
-              {editingUsername ? (
-                <form className="flex items-center gap-2" onSubmit={async (e) => {
-                  e.preventDefault()
-                  const name = newUsername.trim()
-                  if (!name) return
-                  try {
-                    await api.post('/my/username', { username: name })
-                    setEditingUsername(false)
-                    window.location.reload()
-                  } catch (err) { toast(err.message, 'error') }
-                }}>
-                  <input className="input-field font-mono text-sm" value={newUsername} onChange={e => setNewUsername(e.target.value)} autoFocus style={{ width: 180 }} />
-                  <button type="submit" className="btn-primary text-xs">保存</button>
-                  <button type="button" onClick={() => setEditingUsername(false)} className="btn-secondary text-xs">取消</button>
-                </form>
-              ) : (
-                <div className="text-[14.5px] flex items-center gap-2">
-                  <span className="font-semibold">{user.username}</span>
-                  <button onClick={() => { setNewUsername(user.username); setEditingUsername(true) }} className="text-blue-600 text-xs hover:underline">修改</button>
-                </div>
-              )}
+              <div className="text-[14.5px]"><span className="font-semibold">{user.username}</span></div>
             </div>
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
               <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">规则配额</div>
@@ -230,30 +208,62 @@ function AnnouncementArea() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
 
+  // Read / write read IDs from localStorage
+  const readKey = 'announcements.read'
+  const [readIds, setReadIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(readKey) || '[]')) } catch { return new Set() }
+  })
+  const markRead = (id) => {
+    setReadIds(prev => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      localStorage.setItem(readKey, JSON.stringify([...next]))
+      return next
+    })
+  }
+  const markAllRead = () => {
+    const allIds = new Set(items.map(a => a.id))
+    setReadIds(allIds)
+    localStorage.setItem(readKey, JSON.stringify([...allIds]))
+  }
+
   useEffect(() => {
     api.get('/my/announcements').then(d => setItems(d?.announcements || [])).catch(console.error).finally(() => setLoading(false))
   }, [])
 
+  const unreadCount = items.filter(a => !readIds.has(a.id)).length
+
   return (
     <div className="card flex flex-col">
       <div className="px-6 py-[22px] flex-1 flex flex-col">
-        <h3 className="text-[16px] font-bold mb-5">公告</h3>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-[16px] font-bold">公告</h3>
+          {unreadCount > 0 && (
+            <button onClick={markAllRead} className="text-xs text-blue-600 font-semibold hover:underline">全部已读</button>
+          )}
+        </div>
         {loading ? (
           <div className="text-sm text-ink-mut py-8 text-center">加载中…</div>
         ) : items.length === 0 ? (
           <div className="text-sm text-ink-mut py-8 text-center">暂无公告</div>
         ) : (
           <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 280 }}>
-            {items.map(a => (
-              <div key={a.id} className="border-b border-line-soft pb-3 last:border-0 last:pb-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-semibold text-[14px]">{a.title}</span>
-                  {a.target_user_id > 0 && <Badge color="blue">私信</Badge>}
+            {items.map(a => {
+              const isRead = readIds.has(a.id)
+              return (
+                <div key={a.id} className={`border-b border-line-soft pb-3 last:border-0 last:pb-0 cursor-pointer transition-opacity ${isRead ? 'opacity-60' : ''}`}
+                  onClick={() => markRead(a.id)}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-[14px]">{a.title}</span>
+                    {!isRead && <Badge color="red">新</Badge>}
+                    {a.target_user_id > 0 && <Badge color="blue">私信</Badge>}
+                  </div>
+                  <div className="text-[13px] text-ink-soft whitespace-pre-wrap">{a.content}</div>
+                  <div className="text-[11px] text-ink-mut mt-1">{fmtDate(a.created_at)}</div>
                 </div>
-                <div className="text-[13px] text-ink-soft whitespace-pre-wrap">{a.content}</div>
-                <div className="text-[11px] text-ink-mut mt-1">{fmtDate(a.created_at)}</div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

@@ -1,6 +1,36 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Component } from 'react'
 import { UserProvider, useUser, BlurProvider, CopyFmtProvider } from './components/Layout'
 import { Loading, ConfirmProvider } from './components/ui'
+
+// ErrorBoundary: catches render errors in any child component and shows a
+// friendly fallback instead of letting the whole page go white.
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  componentDidCatch(error, info) {
+    console.error('ErrorBoundary caught:', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-app">
+          <div className="text-center">
+            <h1 className="text-xl font-bold text-ink">页面加载出错</h1>
+            <p className="mt-2 text-ink-soft">请刷新页面重试，如果问题持续请联系管理员。</p>
+            <button onClick={() => window.location.reload()} className="mt-4 btn-primary">刷新页面</button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 import Login from './pages/Login'
 import Settings from './pages/Settings'
@@ -71,6 +101,7 @@ export default function App() {
         <ConfirmProvider>
         <BlurProvider>
         <CopyFmtProvider>
+        <ErrorBoundary>
         <Routes>
           <Route path="/login" element={<Login />} />
 
@@ -99,6 +130,7 @@ export default function App() {
 
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </ErrorBoundary>
         </CopyFmtProvider>
         </BlurProvider>
         </ConfirmProvider>

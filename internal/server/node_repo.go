@@ -130,7 +130,9 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 			URI:      e.URI,
 		})
 	}
-	if _, _, err := db.SyncUserLandingExits(s.DB, uid, inputs, "", ""); err != nil {
+	// Use Append (not Sync) so importing repo nodes doesn't wipe the user's
+	// existing subscription/manual exits.
+	if err := db.AppendUserLandingExits(s.DB, uid, inputs); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

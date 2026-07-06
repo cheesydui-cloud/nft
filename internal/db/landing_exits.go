@@ -151,6 +151,35 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 	return flipped, true, nil
 }
 
+// AppendUserLandingExits adds new landing exits to a user without removing
+// existing ones. Only inserts/updates entries from the input; does NOT sweep
+// or flip presence of rows absent from the input. Used by the node-pool
+// assignment flow so importing repo nodes doesn't wipe subscription/manual exits.
+func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	nowTs := now()
+	seen := map[LandingExitKey]bool{}
+	for _, e := range exits {
+		k := LandingExitKey{Host: e.Host, Port: e.Port}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if _, err := tx.Exec(`INSERT INTO user_landing_exits(user_id, host, port, name, protocol, uri, present, updated_at)
+			VALUES (?,?,?,?,?,?,1,?)
+			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at`,
+			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at, expires_at`
 
 func scanLandingExit(r rowScanner) (*LandingExit, error) {

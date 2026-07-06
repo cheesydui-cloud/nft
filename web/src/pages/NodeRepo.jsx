@@ -3,11 +3,13 @@ import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, useConfirm } from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, TableScroll } from '../components/page'
+import { parseURIs } from '../lib/landing'
 
 export default function NodeRepo() {
   const [list, setList] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [showBulk, setShowBulk] = useState(false)
   const [editing, setEditing] = useState(null)
   const toast = useToast()
   const confirm = useConfirm()
@@ -31,7 +33,8 @@ export default function NodeRepo() {
       <PageHeader title="节点池" count={list?.length || 0} unit="个" />
       <Panel fill>
         <PanelToolbar>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <ToolbarButton onClick={() => setShowBulk(true)} secondary>批量导入</ToolbarButton>
             <ToolbarButton onClick={() => { setEditing(null); setShowForm(true) }}>＋ 添加节点</ToolbarButton>
           </div>
         </PanelToolbar>
@@ -68,6 +71,12 @@ export default function NodeRepo() {
           node={editing}
           onClose={() => setShowForm(false)}
           onDone={() => { setShowForm(false); load() }}
+        />
+      )}
+      {showBulk && (
+        <BulkImportForm
+          onClose={() => setShowBulk(false)}
+          onDone={() => { setShowBulk(false); load() }}
         />
       )}
     </Layout>
@@ -152,6 +161,62 @@ function NodeRepoForm({ node, onClose, onDone }) {
           </div>
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={submitting} className="btn-primary flex-1">{submitting ? '保存中…' : '保存'}</button>
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function BulkImportForm({ onClose, onDone }) {
+  const [text, setText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const toast = useToast()
+
+  const submit = async (e) => {
+    e.preventDefault()
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    if (lines.length === 0) { toast('请输入至少一条 URI', 'error'); return }
+    const nodes = parseURIs(lines.join('\n'))
+    if (nodes.length === 0) { toast('未能解析出任何有效节点', 'error'); return }
+    setSubmitting(true)
+    try {
+      let count = 0
+      for (const n of nodes) {
+        await api.post('/node-repo', {
+          name: n.name || '(未命名)',
+          protocol: n.protocol || '',
+          host: n.host,
+          port: n.port,
+          uri: n.uri || '',
+          remark: '',
+        })
+        count++
+      }
+      toast(`成功导入 ${count} 个节点`)
+      onDone()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-line-soft">
+          <h3 className="text-[16px] font-bold">批量导入节点</h3>
+        </div>
+        <form onSubmit={submit} className="px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">节点 URI（每行一条）</label>
+            <textarea className="input-field font-mono text-xs" value={text} onChange={e => setText(e.target.value)}
+              placeholder={'ss://…\nvmess://…\ntrojan://…'} rows={10} style={{ resize: 'vertical' }} autoFocus />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="submit" disabled={submitting} className="btn-primary flex-1">{submitting ? '导入中…' : '导入'}</button>
             <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
           </div>
         </form>
