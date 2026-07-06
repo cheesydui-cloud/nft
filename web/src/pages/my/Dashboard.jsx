@@ -187,7 +187,7 @@ export default function MyDashboard() {
                         <span className="text-ink-mut">--</span>
                       )}
                     </td>
-                    <td className="font-mono text-xs">{fmtTrafficGB(g?.traffic_used_bytes, g?.traffic_quota_bytes)}</td>
+                    <td className="font-mono text-xs">{fmtTrafficGB(Math.round((g?.traffic_used_bytes || 0) * (user.billing_rate ?? 1)), g?.traffic_quota_bytes)}</td>
                     <td className="font-mono text-xs">{g?.rate_limit_mbytes > 0 ? `${g.rate_limit_mbytes} MB/s` : '不限'}</td>
                     <td className="font-mono">{g?.max_forwards ?? '--'}</td>
                   </tr>
@@ -219,7 +219,7 @@ export default function MyDashboard() {
                       <span className="font-mono text-blue-600">↓{fmtSpeed(speeds[n.id].down)}</span>
                     </>}
                     <span className="text-ink-mut">·</span>
-                    <span className="font-mono">{fmtTrafficGB(g?.traffic_used_bytes, g?.traffic_quota_bytes)}</span>
+                    <span className="font-mono">{fmtTrafficGB(Math.round((g?.traffic_used_bytes || 0) * (user.billing_rate ?? 1)), g?.traffic_quota_bytes)}</span>
                     {g?.rate_limit_mbytes > 0 && <>
                       <span className="text-ink-mut">·</span>
                       <span className="font-mono">{g.rate_limit_mbytes} MB/s</span>
