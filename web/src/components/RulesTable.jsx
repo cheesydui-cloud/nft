@@ -81,9 +81,11 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
             </th>
           )}
           <th>备注</th>
-          <th className="text-right cursor-pointer select-none" onClick={() => cycleSort('traffic')}>
-            <span className="inline-flex items-center justify-end">流量<SortArrow dir={sort.col === 'traffic' ? sort.dir : null} /></span>
-          </th>
+          {isAdmin && (
+            <th className="text-right cursor-pointer select-none" onClick={() => cycleSort('traffic')}>
+              <span className="inline-flex items-center justify-end">流量<SortArrow dir={sort.col === 'traffic' ? sort.dir : null} /></span>
+            </th>
+          )}
           <th className="text-right">操作</th>
         </tr>
       </thead>
@@ -162,7 +164,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                     : r.comment
                   : <span className="text-ink-mut">-</span>}
               </td>
-              <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</td>
+              {isAdmin && <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</td>}
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
@@ -201,8 +203,10 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                 {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
               </span>
               {isAdmin && r.owner_name && <><span className="text-ink-mut">·</span><span>{r.owner_name}</span></>}
-              <span className="text-ink-mut">·</span>
-              <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</span>
+              {isAdmin && <>
+                <span className="text-ink-mut">·</span>
+                <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.total_bytes || 0) * displayRate))}</span>
+              </>}
             </div>
             <div className="text-xs text-ink-mut truncate">
               <span className="font-sans">{r.entry ? (r.entry_listen_port ? `${node?.name || `#${r.node_id}`}:${r.entry_listen_port}` : (node?.name || `#${r.node_id}`)) : '--'}</span>

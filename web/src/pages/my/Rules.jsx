@@ -60,13 +60,13 @@ export default function MyRules() {
   const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [], billing_rate } = data || {}
 
   // Build expiry lookup from server landing nodes (includes expires_at)
-  const landingExpiry = useMemo(() => {
+  const landingExpiry = (() => {
     const m = new Map()
     ;(serverLanding || []).forEach(n => {
       if (n.expires_at > 0) m.set(`${n.host}:${n.port}`, n.expires_at)
     })
     return m
-  }, [serverLanding])
+  })()
 
   // Filter server-assigned nodes by global role table — only landing-marked ones
   // appear in the exit picker (unconfigured/direct ones are excluded).
