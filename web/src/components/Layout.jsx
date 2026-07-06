@@ -140,6 +140,7 @@ export function Layout({ children }) {
                 </NavGroup>
                 <NavGroup label="资源">
                   <SideLink to="/nodes" icon={<IconNodes />}>节点</SideLink>
+                  <SideLink to="/node-repo" icon={<IconRepo />}>节点池</SideLink>
                   <SideLink to="/rules" icon={<IconForwards />}>规则</SideLink>
                   <SideLink to="/users" icon={<IconUserGroup />}>用户</SideLink>
                   {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
@@ -332,4 +333,7 @@ function IconSettings() {
 function IconMegaphone() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>
 </svg>
+}
+function IconRepo() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></svg>
 }

@@ -547,6 +547,16 @@ func (s *Server) Router() http.Handler {
 		r.Get("/announcements", s.apiListAnnouncements)
 		r.Post("/announcements", s.apiCreateAnnouncement)
 		r.Delete("/announcements/{id}", s.apiDeleteAnnouncement)
+
+		// Node repository
+		r.Get("/node-repo", s.apiListNodeRepo)
+		r.Post("/node-repo", s.apiCreateNodeRepoEntry)
+		r.Patch("/node-repo/{id}", s.apiUpdateNodeRepoEntry)
+		r.Delete("/node-repo/{id}", s.apiDeleteNodeRepoEntry)
+		r.Post("/users/{id}/assign-repo", s.apiAssignRepoToUser)
+
+		// Allow admin to change own username (same handler as user route)
+		r.Post("/my/username", s.apiChangeUsername)
 		})
 
 		// User routes

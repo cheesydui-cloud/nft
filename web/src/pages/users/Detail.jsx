@@ -354,6 +354,7 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
   const [exits, setExits] = useState([])
   const [loading, setLoading] = useState(false)
   const [sel, setSel] = useState(new Set())
+  const [showRepoPicker, setShowRepoPicker] = useState(false)
   const toast = useToast()
 
   const loadExits = () => {
@@ -436,8 +437,19 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
             <textarea className={`input-field font-mono w-full ${blurred ? 'blur-[5px]' : ''}`} rows={10} value={text} onChange={e => setText(e.target.value)}
               placeholder={'vless://…\ntrojan://…'} />
           </div>
-          <button type="submit" disabled={loading} className="btn-primary text-xs">保存</button>
+          <div className="flex items-center gap-3">
+            <button type="submit" disabled={loading} className="btn-primary text-xs">保存</button>
+            <button type="button" onClick={() => setShowRepoPicker(true)} className="btn-secondary text-xs">从节点池导入</button>
+          </div>
         </form>
+
+        {showRepoPicker && (
+          <RepoPicker
+            userId={userId}
+            onClose={() => setShowRepoPicker(false)}
+            onDone={() => { setShowRepoPicker(false); loadExits() }}
+          />
+        )}
 
         {(preview.length > 0 || residualExits.length > 0) && (
           <div className="mt-4 border-t border-line-soft pt-4">
@@ -844,5 +856,69 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
         <button type="submit" disabled={loading} className="btn-primary text-xs">授权</button>
       </form>
     </>
+  )
+}
+
+// RepoPicker: select nodes from the admin's node pool and assign to this user.
+function RepoPicker({ userId, onClose, onDone }) {
+  const [repoNodes, setRepoNodes] = useState([])
+  const [selected, setSelected] = useState(new Set())
+  const [loading, setLoading] = useState(true)
+  const [assigning, setAssigning] = useState(false)
+  const toast = useToast()
+
+  useEffect(() => {
+    api.get('/node-repo').then(d => setRepoNodes(d?.nodes || [])).catch(console.error).finally(() => setLoading(false))
+  }, [])
+
+  const toggle = (id) => setSelected(s => {
+    const next = new Set(s)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+
+  const assign = async () => {
+    if (selected.size === 0) { toast('请至少选择一个节点', 'error'); return }
+    setAssigning(true)
+    try {
+      const ids = [...selected]
+      await api.post(`/users/${userId}/assign-repo`, { node_ids: ids })
+      toast(`已分配 ${ids.length} 个节点`)
+      onDone()
+    } catch (err) { toast(err.message, 'error') } finally { setAssigning(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-line-soft sticky top-0 bg-surface z-10 flex items-center justify-between">
+          <h3 className="text-[16px] font-bold">从节点池导入</h3>
+          {selected.size > 0 && <span className="text-xs text-blue-600 font-semibold">已选 {selected.size} 个</span>}
+        </div>
+        <div className="px-6 py-4">
+          {loading ? (
+            <div className="text-sm text-ink-mut text-center py-8">加载中…</div>
+          ) : repoNodes.length === 0 ? (
+            <div className="text-sm text-ink-mut text-center py-8">节点池为空，请先在「节点池」页面添加节点。</div>
+          ) : (
+            <div className="space-y-1.5">
+              {repoNodes.map(n => (
+                <label key={n.id} className="flex items-center gap-3 text-sm cursor-pointer py-2 px-3 rounded-lg hover:bg-raised transition-colors border border-transparent hover:border-line">
+                  <input type="checkbox" className="accent-blue-600" checked={selected.has(n.id)} onChange={() => toggle(n.id)} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold truncate">{n.name}</div>
+                    <div className="text-xs text-ink-mut font-mono">{n.protocol || '—'} · {n.host}:{n.port}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 pt-4 mt-4 border-t border-line-soft">
+            <button onClick={assign} disabled={assigning || selected.size === 0} className="btn-primary flex-1">{assigning ? '分配中…' : '分配选中节点'}</button>
+            <button onClick={onClose} className="btn-secondary flex-1">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }

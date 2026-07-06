@@ -74,14 +74,15 @@ export function isExpired(unix) {
   return unix < Math.floor(Date.now() / 1000)
 }
 
-/** Returns CSS color class for an expiry timestamp:
- *  - expired or <=3 days: red
- *  - >3 days: green
- *  - no expiry: default (empty string) */
-export function expiryColorClass(unix) {
-  if (!unix || unix <= 0) return ''
+/** Returns expiry status badge info:
+ *  - >3 days: { color: 'green', label: '正常' }
+ *  - ≤3 days & not expired: { color: 'red', label: '即将到期' }
+ *  - expired: { color: 'gray', label: '已过期' }
+ *  - no expiry: null */
+export function expiryBadge(unix) {
+  if (!unix || unix <= 0) return null
   const now = Math.floor(Date.now() / 1000)
-  if (unix <= now) return 'text-red-600 dark:text-red-400'
+  if (unix <= now) return { color: 'gray', label: '已过期' }
   const daysLeft = (unix - now) / 86400
-  return daysLeft > 3 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+  return daysLeft > 3 ? { color: 'green', label: '正常' } : { color: 'red', label: '即将到期' }
 }

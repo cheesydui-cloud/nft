@@ -9,7 +9,7 @@ import {
   landingIndex, splitEndpoint, rewriteEndpoint, mergeLanding,
 } from '../lib/landing'
 import { uriToClashYaml } from '../lib/yaml-convert'
-import { fmtDate, isExpired, expiryColorClass } from '../lib/fmt'
+import { fmtDate, isExpired, expiryBadge } from '../lib/fmt'
 
 export default function Proxies() {
   const [rules, setRules] = useState(null)
@@ -147,11 +147,11 @@ export default function Proxies() {
                       {(() => {
                         const ts = expiryMap.get(`${n.host}:${n.port}`)
                         if (!ts || ts <= 0) return <span className="text-ink-mut">—</span>
-                        const expired = isExpired(ts)
+                        const badge = expiryBadge(ts)
                         return (
                           <>
-                            <span className={expiryColorClass(ts)}>{fmtDate(ts)}</span>
-                            {expired && <Badge color="red" className="ml-1">已过期</Badge>}
+                            {fmtDate(ts)}
+                            {badge && <Badge color={badge.color} className="ml-1">{badge.label}</Badge>}
                           </>
                         )
                       })()}

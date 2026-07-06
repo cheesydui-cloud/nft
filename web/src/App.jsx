@@ -14,6 +14,7 @@ import RulesDetail from './pages/rules/Detail'
 import UserList from './pages/users/List'
 import UserDetail from './pages/users/Detail'
 import Announcements from './pages/Announcements'
+import NodeRepo from './pages/NodeRepo'
 
 import MyDashboard from './pages/my/Dashboard'
 import MyRules from './pages/my/Rules'
@@ -84,6 +85,7 @@ export default function App() {
           <Route path="/users/:id" element={<AdminRoute><UserDetail /></AdminRoute>} />
           <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
           <Route path="/announcements" element={<AdminRoute><Announcements /></AdminRoute>} />
+          <Route path="/node-repo" element={<AdminRoute><NodeRepo /></AdminRoute>} />
 
           {/* Regular user routes */}
           <Route path="/my" element={<UserRoute><MyDashboard /></UserRoute>} />
