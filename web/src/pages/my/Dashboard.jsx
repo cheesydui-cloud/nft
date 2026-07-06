@@ -94,7 +94,7 @@ export default function MyDashboard() {
               <div className="text-[14.5px] font-mono">
                 {(() => {
                   const rate = user.billing_rate ?? 1
-                  const displayUsed = Math.round(rules.reduce((sum, r) => sum + (r.total_bytes || 0), 0) * rate)
+                  const displayUsed = Math.round(user.traffic_used_bytes * rate)
                   return (
                     <>
                       {fmtTrafficGB(displayUsed, user.traffic_quota_bytes)}
