@@ -24,12 +24,13 @@ func (s *Server) apiListNodeRepo(w http.ResponseWriter, r *http.Request) {
 // apiCreateNodeRepoEntry creates a new node in the repository.
 func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     string `json:"name"`
-		Protocol string `json:"protocol"`
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		URI      string `json:"uri"`
-		Remark   string `json:"remark"`
+		Name      string `json:"name"`
+		Protocol  string `json:"protocol"`
+		Host      string `json:"host"`
+		Port      int    `json:"port"`
+		URI       string `json:"uri"`
+		Remark    string `json:"remark"`
+		ExpiresAt int64  `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -39,7 +40,7 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark)
+	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -56,12 +57,13 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		Name     string `json:"name"`
-		Protocol string `json:"protocol"`
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		URI      string `json:"uri"`
-		Remark   string `json:"remark"`
+		Name      string `json:"name"`
+		Protocol  string `json:"protocol"`
+		Host      string `json:"host"`
+		Port      int    `json:"port"`
+		URI       string `json:"uri"`
+		Remark    string `json:"remark"`
+		ExpiresAt int64  `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -71,7 +73,7 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark); err != nil {
+	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -94,7 +96,8 @@ func (s *Server) apiDeleteNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 }
 
 // apiAssignRepoToUser takes selected repo node IDs and assigns them to a user
-// as landing exits. This creates entries in user_landing_exits for each node.
+// as landing exits. Uses Append (not Sync) so existing exits are preserved.
+// expires_at from the repo entry is carried over to the user's landing exit.
 func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 	uidStr := r.PathValue("id")
 	uid, err := strconv.ParseInt(uidStr, 10, 64)
@@ -113,13 +116,11 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "no nodes selected")
 		return
 	}
-	// Fetch the repo entries
 	entries, err := db.ListNodeRepoByIDs(s.DB, body.NodeIDs)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Create landing exit inputs from repo entries
 	var inputs []db.LandingExitInput
 	for _, e := range entries {
 		inputs = append(inputs, db.LandingExitInput{
@@ -130,11 +131,22 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 			URI:      e.URI,
 		})
 	}
-	// Use Append (not Sync) so importing repo nodes doesn't wipe the user's
-	// existing subscription/manual exits.
-	if err := db.AppendUserLandingExits(s.DB, uid, inputs); err != nil {
+	flipped, err := db.AppendUserLandingExits(s.DB, uid, inputs)
+	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonOK(w, map[string]any{"ok": true, "assigned": len(inputs)})
+	// Re-dispatch rules pointed at flipped exits (present changed → push-exclusion may change)
+	for _, k := range flipped {
+		go s.redispatchUserExit(uid, k.Host, k.Port)
+	}
+	// Carry over expires_at from repo entries to user landing exits.
+	for _, e := range entries {
+		if e.ExpiresAt > 0 {
+			db.SetUserLandingExitExpires(s.DB, uid, e.Host, e.Port, e.ExpiresAt)
+		}
+	}
+	// Return updated exits so frontend can refresh.
+	exits, _ := db.ListUserLandingExits(s.DB, uid)
+	jsonOK(w, map[string]any{"ok": true, "assigned": len(inputs), "exits": exits})
 }

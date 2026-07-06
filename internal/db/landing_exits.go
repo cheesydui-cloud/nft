@@ -155,15 +155,39 @@ func SyncUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput, src
 // existing ones. Only inserts/updates entries from the input; does NOT sweep
 // or flip presence of rows absent from the input. Used by the node-pool
 // assignment flow so importing repo nodes doesn't wipe subscription/manual exits.
-func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) error {
+// Returns keys that flipped from present=0 to present=1 while at/over quota.
+func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) ([]LandingExitKey, error) {
 	tx, err := d.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
+	// Check existing state for flip detection
+	type rowState struct {
+		present   bool
+		overQuota bool
+	}
+	existing := map[LandingExitKey]rowState{}
+	rows, err := tx.Query(`SELECT host, port, present, quota_bytes, used_bytes FROM user_landing_exits WHERE user_id=?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var k LandingExitKey
+		var present int
+		var quota, used int64
+		if err := rows.Scan(&k.Host, &k.Port, &present, &quota, &used); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		existing[k] = rowState{present: present == 1, overQuota: quota > 0 && used >= quota}
+	}
+	rows.Close()
+
 	nowTs := now()
 	seen := map[LandingExitKey]bool{}
+	var flipped []LandingExitKey
 	for _, e := range exits {
 		k := LandingExitKey{Host: e.Host, Port: e.Port}
 		if seen[k] {
@@ -174,10 +198,16 @@ func AppendUserLandingExits(d *sql.DB, userID int64, exits []LandingExitInput) e
 			VALUES (?,?,?,?,?,?,1,?)
 			ON CONFLICT(user_id, host, port) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, uri=excluded.uri, present=1, updated_at=excluded.updated_at`,
 			userID, e.Host, e.Port, e.Name, e.Protocol, e.URI, nowTs); err != nil {
-			return err
+			return nil, err
+		}
+		if st, ok := existing[k]; ok && !st.present && st.overQuota {
+			flipped = append(flipped, k)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return flipped, nil
 }
 
 const landingExitCols = `user_id, host, port, name, name_override, protocol, uri, present, quota_bytes, used_bytes, updated_at, expires_at`

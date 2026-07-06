@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
-import { fmtBytes, fmtTrafficGB, pct, fmtDate, fmtDateInput, isExpired, nullInt, nullStr } from '../../lib/fmt'
+import { fmtBytes, fmtTrafficGB, pct, fmtDate, fmtDateInput, isExpired, expiryBadge, nullInt, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur } from '../../components/Layout'
 import { Loading, Empty, Badge, ProtoBadge, NodeTypeBadge, useConfirm, Select, Modal, SensText } from '../../components/ui'
 import { TableBox } from '../../components/page'
@@ -80,7 +80,7 @@ export default function UserDetail() {
                 <span className="font-mono">×{user.billing_rate ?? 1}</span>
                 <span className="fl">到期时间</span>
                 <span className="font-mono">
-                  {expiresAt ? <>{fmtDate(expiresAt)} {isExpired(expiresAt) && <Badge color="red">已过期</Badge>}</> : '永不过期'}
+                  {expiresAt ? <>{fmtDate(expiresAt)}{(() => { const b = expiryBadge(expiresAt); return b ? <Badge color={b.color} className="ml-1">{b.label}</Badge> : null })()}</> : '永不过期'}
                 </span>
                 <span className="fl">状态</span>
                 <span>
@@ -365,6 +365,14 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
   useEffect(() => { fetchNodeRoles().then(setRoles); loadExits() }, [userId])
   useEffect(() => { setSel(new Set()) }, [preview])
 
+  // Reload landing exits and preview from server — used after repo import.
+  const reloadLanding = () => {
+    loadExits()
+    api.post(`/users/${userId}/landing`, { landing_sub_url: url.trim(), landing_uris: text })
+      .then(d => setPreview(d?.landing_nodes || []))
+      .catch(err => toast(err.message, 'error'))
+  }
+
   const submit = async (e) => {
     e.preventDefault()
     setLoading(true)
@@ -447,7 +455,7 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
           <RepoPicker
             userId={userId}
             onClose={() => setShowRepoPicker(false)}
-            onDone={() => { setShowRepoPicker(false); loadExits() }}
+            onDone={() => { setShowRepoPicker(false); reloadLanding() }}
           />
         )}
 
@@ -455,7 +463,7 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
           <div className="mt-4 border-t border-line-soft pt-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-bold text-ink-mut uppercase tracking-wider">
-                解析出的节点
+                已分配节点
                 <span className="normal-case font-normal ml-2">{landingCount} 落地 · {directCount} 直连 · {unconfiguredCount} 未配置</span>
               </div>
               <AdminRoleBulkToggle nodes={preview.filter((_, i) => sel.has(i))} roleOf={roleOf}

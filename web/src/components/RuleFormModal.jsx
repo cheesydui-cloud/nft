@@ -115,10 +115,18 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
-  const landingOptions = (landingNodes || []).map(n => ({
-    value: `${n.host}:${n.port}`,
-    label: `${n.protocol ? `[${n.protocol}] ` : ''}${n.name || '(未命名)'}${n.expires_at > 0 ? ` · ${fmtDate(n.expires_at)}` : ''}`,
-  }))
+  const landingOptions = (landingNodes || []).map(n => {
+    const label = `${n.protocol ? `[${n.protocol}] ` : ''}${n.name || '(未命名)'}${n.expires_at > 0 ? ` · ${fmtDate(n.expires_at)}` : ''}`
+    // Add a colored dot icon based on expiry status
+    let icon = null
+    if (n.expires_at > 0) {
+      const now = Math.floor(Date.now() / 1000)
+      const daysLeft = (n.expires_at - now) / 86400
+      const color = n.expires_at <= now ? '#9ca3af' : daysLeft > 3 ? '#22c55e' : '#ef4444'
+      icon = <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
+    }
+    return { value: `${n.host}:${n.port}`, label, icon }
+  })
 
   // Cascaded middle-layer picker: chain[i]'s candidates are the binding
   // graph's downstreams of chain[i-1] (chain[-1] = the entry), narrowed to

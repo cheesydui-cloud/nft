@@ -9,7 +9,7 @@ import {
   landingIndex, splitEndpoint, rewriteEndpoint, mergeLanding,
 } from '../lib/landing'
 import { uriToClashYaml } from '../lib/yaml-convert'
-import { fmtDate, isExpired, expiryBadge } from '../lib/fmt'
+import { fmtDate, expiryBadge } from '../lib/fmt'
 
 export default function Proxies() {
   const [rules, setRules] = useState(null)

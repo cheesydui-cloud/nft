@@ -3,6 +3,26 @@ import { Component } from 'react'
 import { UserProvider, useUser, BlurProvider, CopyFmtProvider } from './components/Layout'
 import { Loading, ConfirmProvider } from './components/ui'
 
+import Login from './pages/Login'
+import Settings from './pages/Settings'
+import Dashboard from './pages/Dashboard'
+import ChangePassword from './pages/ChangePassword'
+
+import NodeList from './pages/nodes/List'
+import NodeDetail from './pages/nodes/Detail'
+import RulesList from './pages/rules/List'
+import RulesDetail from './pages/rules/Detail'
+import UserList from './pages/users/List'
+import UserDetail from './pages/users/Detail'
+import Announcements from './pages/Announcements'
+import NodeRepo from './pages/NodeRepo'
+
+import MyDashboard from './pages/my/Dashboard'
+import MyRules from './pages/my/Rules'
+import MyRuleDetail from './pages/my/RuleDetail'
+import MyLandingNodes from './pages/my/LandingNodes'
+import Proxies from './pages/Proxies'
+
 // ErrorBoundary: catches render errors in any child component and shows a
 // friendly fallback instead of letting the whole page go white.
 class ErrorBoundary extends Component {
@@ -31,26 +51,6 @@ class ErrorBoundary extends Component {
     return this.props.children
   }
 }
-
-import Login from './pages/Login'
-import Settings from './pages/Settings'
-import Dashboard from './pages/Dashboard'
-import ChangePassword from './pages/ChangePassword'
-
-import NodeList from './pages/nodes/List'
-import NodeDetail from './pages/nodes/Detail'
-import RulesList from './pages/rules/List'
-import RulesDetail from './pages/rules/Detail'
-import UserList from './pages/users/List'
-import UserDetail from './pages/users/Detail'
-import Announcements from './pages/Announcements'
-import NodeRepo from './pages/NodeRepo'
-
-import MyDashboard from './pages/my/Dashboard'
-import MyRules from './pages/my/Rules'
-import MyRuleDetail from './pages/my/RuleDetail'
-import MyLandingNodes from './pages/my/LandingNodes'
-import Proxies from './pages/Proxies'
 
 function ProtectedRoute({ children }) {
   const { user } = useUser()

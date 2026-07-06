@@ -139,7 +139,7 @@ function AnnouncementForm({ users, onClose, onDone }) {
       const body = {
         title: title.trim(),
         content: content.trim(),
-        target_user_id: targetMode === 'all' ? 0 : 0,
+        target_user_id: 0,
         target_user_ids: targetMode === 'select' ? selectedIds : [],
         expires_at: expiresAt,
       }
@@ -185,7 +185,11 @@ function AnnouncementForm({ users, onClose, onDone }) {
             </div>
             {targetMode === 'select' && (
               <div className="border border-line rounded-lg p-3 max-h-[200px] overflow-y-auto">
-                <input className="input-field mb-2" placeholder="搜索用户名…" value={search} onChange={e => setSearch(e.target.value)} />
+                <div className="flex items-center gap-2 mb-2">
+                  <input className="input-field flex-1" placeholder="搜索用户名…" value={search} onChange={e => setSearch(e.target.value)} />
+                  <button type="button" onClick={() => setSelectedIds(filteredUsers.map(u => u.id))} className="text-xs text-blue-600 font-semibold px-2 py-1 hover:underline whitespace-nowrap">全选</button>
+                  <button type="button" onClick={() => setSelectedIds([])} className="text-xs text-ink-mut font-semibold px-2 py-1 hover:underline whitespace-nowrap">清空</button>
+                </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {filteredUsers.map(u => (
                     <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer py-1 px-1.5 rounded hover:bg-raised transition-colors">

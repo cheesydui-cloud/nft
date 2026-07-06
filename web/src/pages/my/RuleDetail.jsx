@@ -2,11 +2,9 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes } from '../../lib/fmt'
-import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
+import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
 import { Loading, Empty, Badge, ProtoBadge, SensText, useConfirm, ExitKindBadge } from '../../components/ui'
-import { copyToClipboard } from '../../lib/clipboard'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
-import { uriToClashYaml } from '../../lib/yaml-convert'
 import { parseURIs, landingIndex, mergeLanding, splitEndpoint, rewriteEndpoint, loadLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
 
 export default function MyRuleDetail() {
@@ -27,7 +25,6 @@ export default function MyRuleDetail() {
   const blurred = useBlur()
   const confirm = useConfirm()
   const { user } = useUser()
-  const { copyFmt } = useCopyFmt()
 
   const [nodeRoles, setNodeRoles] = useState({})
   useEffect(() => {
