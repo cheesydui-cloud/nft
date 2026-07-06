@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
-import { Loading, Empty, CopyText, useConfirm } from '../components/ui'
+import { Loading, Empty, Badge, CopyText, Modal, useConfirm } from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, TableScroll, SearchInput } from '../components/page'
 import { parseURIs, tryParseURI } from '../lib/landing'
 import { copyToClipboard } from '../lib/clipboard'
 import { fmtDate, expiryBadge } from '../lib/fmt'
+import { useIsMobile } from '../lib/useIsMobile'
 
 export default function NodeRepo() {
   const [list, setList] = useState(null)
@@ -17,6 +18,7 @@ export default function NodeRepo() {
   const [sel, setSel] = useState(new Set())
   const toast = useToast()
   const confirm = useConfirm()
+  const isMobile = useIsMobile()
 
   const load = () => {
     setLoading(true)
@@ -75,8 +77,8 @@ export default function NodeRepo() {
           <Empty title="暂无节点" desc="点击右上角「添加节点」将预先准备好的代理节点录入节点池。" />
         ) : filtered.length === 0 ? (
           <Empty title="无匹配节点" desc="试试别的关键词。" />
-        ) : (
-          <table className="tbl">
+        ) : (<>
+          {!isMobile && <table className="tbl">
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-blue-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
@@ -90,21 +92,53 @@ export default function NodeRepo() {
                   <td className="font-mono text-xs">{n.host}:{n.port}</td>
                   <td className="text-xs">
                     {n.expires_at > 0 ? (
-                      <span>{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <span className={`ml-1 text-${b.color === 'green' ? 'green' : b.color === 'red' ? 'red' : 'gray'}-600`}>{b.label}</span> : null })()}</span>
+                      <span className="inline-flex items-center gap-1.5">{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
                     ) : <span className="text-ink-mut">—</span>}
                   </td>
                   <td className="text-xs text-ink-soft">{n.remark || '—'}</td>
                   <td className="text-xs text-ink-mut">{new Date(n.created_at * 1000).toLocaleDateString('zh-CN')}</td>
-                  <td className="text-right whitespace-nowrap">
-                    {n.uri && <CopyText text={n.uri}><span className="text-blue-600 text-xs font-semibold hover:underline mr-3 cursor-pointer">复制</span></CopyText>}
-                    <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-blue-600 text-xs font-semibold hover:underline mr-3">编辑</button>
-                    <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
+                  <td className="text-right">
+                    <div className="inline-flex items-center gap-3">
+                      {n.uri && <CopyText text={n.uri}><span className="text-blue-600 text-xs font-semibold hover:underline cursor-pointer">复制</span></CopyText>}
+                      <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-blue-600 text-xs font-semibold hover:underline">编辑</button>
+                      <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
-        )}
+          </table>}
+          {isMobile && <div>
+            {filtered.map(n => (
+              <div key={n.id} className="mobile-card">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="flex items-center gap-2 font-semibold">
+                    <input type="checkbox" className="accent-blue-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} />
+                    {n.name}
+                  </label>
+                  <span className="inline-flex items-center gap-2">
+                    {n.uri && <CopyText text={n.uri}><span className="text-blue-600 text-xs font-semibold">复制</span></CopyText>}
+                    <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-blue-600 text-xs font-semibold">编辑</button>
+                    <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold">删除</button>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
+                  <span className="font-mono">{n.protocol || '—'}</span>
+                  <span className="text-ink-mut">·</span>
+                  <span className="font-mono">{n.host}:{n.port}</span>
+                  {n.expires_at > 0 && <>
+                    <span className="text-ink-mut">·</span>
+                    <span>{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
+                  </>}
+                  {n.remark && <>
+                    <span className="text-ink-mut">·</span>
+                    <span>{n.remark}</span>
+                  </>}
+                </div>
+              </div>
+            ))}
+          </div>}
+        </>)}
         </TableScroll>
       </Panel>
       </div>
@@ -189,12 +223,8 @@ function NodeRepoForm({ node, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-line-soft">
-          <h3 className="text-[16px] font-bold">{isEdit ? '编辑节点' : '添加节点'}</h3>
-        </div>
-        <form onSubmit={submit} className="px-6 py-5 space-y-4">
+    <Modal open onClose={onClose} title={isEdit ? '编辑节点' : '添加节点'}>
+      <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">URI <span className="text-ink-mut font-normal text-xs">(粘贴后自动识别)</span></label>
             <input className="input-field font-mono text-xs" value={form.uri} onChange={e => set('uri', e.target.value)} onBlur={handleURIBlur} placeholder="粘贴代理 URI，自动填充下方字段" />
@@ -230,8 +260,7 @@ function NodeRepoForm({ node, onClose, onDone }) {
             <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -270,12 +299,8 @@ function BulkImportForm({ onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-2xl mx-4" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-line-soft">
-          <h3 className="text-[16px] font-bold">批量导入节点</h3>
-        </div>
-        <form onSubmit={submit} className="px-6 py-5 space-y-4">
+    <Modal open onClose={onClose} title="批量导入节点" wide>
+      <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">节点 URI（每行一条）</label>
             <textarea className="input-field font-mono text-xs" value={text} onChange={e => setText(e.target.value)}
@@ -286,7 +311,6 @@ function BulkImportForm({ onClose, onDone }) {
             <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   )
 }

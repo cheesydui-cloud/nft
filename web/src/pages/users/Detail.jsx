@@ -236,7 +236,7 @@ function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays
 
   return (
     <form onSubmit={submit} className="mt-5">
-      <div className="grid grid-cols-[100px_1fr] gap-x-4 gap-y-3 items-center max-w-lg">
+      <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-3 items-center max-w-lg">
         <label className="fl">到期时间</label>
         <div>
           <input className="input-field font-mono" type="date" value={form.expiresAt} onChange={set('expiresAt')} />
@@ -912,14 +912,9 @@ function RepoPicker({ userId, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface rounded-xl shadow-2xl border border-line w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-line-soft sticky top-0 bg-surface z-10 flex items-center justify-between">
-          <h3 className="text-[16px] font-bold">从节点池导入</h3>
-          {selected.size > 0 && <span className="text-xs text-blue-600 font-semibold">已选 {selected.size} 个</span>}
-        </div>
-        <div className="px-6 py-4">
-          {loading ? (
+    <Modal open onClose={onClose} title="从节点池导入">
+      {selected.size > 0 && <div className="text-xs text-blue-600 font-semibold mb-3">已选 {selected.size} 个</div>}
+      {loading ? (
             <div className="text-sm text-ink-mut text-center py-8">加载中…</div>
           ) : repoNodes.length === 0 ? (
             <div className="text-sm text-ink-mut text-center py-8">节点池为空，请先在「节点池」页面添加节点。</div>
@@ -940,8 +935,6 @@ function RepoPicker({ userId, onClose, onDone }) {
             <button onClick={assign} disabled={assigning || selected.size === 0} className="btn-primary flex-1">{assigning ? '分配中…' : '分配选中节点'}</button>
             <button onClick={onClose} className="btn-secondary flex-1">取消</button>
           </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }

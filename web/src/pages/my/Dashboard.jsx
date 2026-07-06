@@ -76,21 +76,21 @@ export default function MyDashboard() {
           <div className="px-6 py-[22px] flex-1 flex flex-col">
             <h3 className="text-[16px] font-bold mb-5">我的配额</h3>
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
-              <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">用户名</div>
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">用户名</div>
               <div className="text-[14.5px]"><span className="font-semibold">{user.username}</span></div>
             </div>
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
-              <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">规则配额</div>
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">规则配额</div>
               <div className="text-[14.5px]"><span className="font-mono">{rules.length}</span> <span className="text-ink-mut">/</span> <span className="font-mono">{user.max_forwards}</span></div>
             </div>
             {show_rate && (
               <div className="flex items-center gap-4 py-3 border-b border-line-soft">
-                <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">倍率</div>
+                <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">倍率</div>
                 <div className="text-[14.5px] font-mono">×{user.billing_rate ?? 1}</div>
               </div>
             )}
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
-              <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">流量</div>
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">流量</div>
               <div className="text-[14.5px] font-mono">
                 {(() => {
                   const rate = user.billing_rate ?? 1
@@ -105,7 +105,7 @@ export default function MyDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-4 py-3">
-              <div className="w-[130px] flex-shrink-0 text-[14px] text-ink-soft">到期时间</div>
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">到期时间</div>
               <div className="text-[14.5px]">
                 {expiresAt ? <>{fmtDate(expiresAt)} {isExpired(expiresAt) && <Badge color="red">已过期</Badge>}</> : '永不过期'}
               </div>
@@ -146,8 +146,10 @@ export default function MyDashboard() {
                     onDrop={() => onDropRow(i)}
                     className={dragIdx === i ? 'opacity-50' : ''}>
                     <td className="font-semibold">
-                      <span className="text-ink-mut mr-1.5 select-none cursor-move" title="拖拽排序（仅保存在本浏览器）"
-                        draggable onDragStart={() => setDragIdx(i)}>⠿</span>
+                      <span className="text-ink-mut mr-1.5 select-none cursor-move flex-none" title="拖拽排序（仅保存在本浏览器）"
+                        draggable onDragStart={() => setDragIdx(i)}>
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                      </span>
                       {n.name}
                       {(n.roles & 2) !== 0 && <Badge color="blue" className="ml-1.5">中间层</Badge>}
                     </td>
@@ -248,7 +250,7 @@ function AnnouncementArea() {
         ) : items.length === 0 ? (
           <div className="text-sm text-ink-mut py-8 text-center">暂无公告</div>
         ) : (
-          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 280 }}>
+          <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
             {items.map(a => {
               const isRead = readIds.has(a.id)
               return (
