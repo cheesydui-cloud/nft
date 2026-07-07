@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
@@ -6,7 +6,7 @@ import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, copyInitial, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
-import { parseURIs, mergeLanding, landingIndex, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
+import { parseURIs, mergeLanding, landingIndex, rewriteEndpoint, splitEndpoint, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
 
 export default function RulesList() {
   const [data, setData] = useState(null)
@@ -54,7 +54,16 @@ export default function RulesList() {
   const landingNodes = localNodes
   const localIdx = useMemo(() => landingIndex(localNodes), [localNodes])
 
-  const enrich = useCallback((r) => enrichRuleWithLanding(r, localIdx), [localIdx])
+  const enrich = (r) => {
+    const key = r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : null
+    if (key && localIdx.has(key) && r.entry) {
+      const ep = splitEndpoint(r.entry)
+      const node = localIdx.get(key)
+      const relay = ep && rewriteEndpoint(node.uri, ep.host, ep.port)
+      if (relay) return { ...r, exit_kind: 'landing', landing_name: node.name, landing_protocol: node.protocol, relay_uri: relay }
+    }
+    return r
+  }
 
   const addProxyURI = (uri) => {
     if (!user?.username) return
@@ -90,12 +99,9 @@ export default function RulesList() {
   if (!data && error) return <Layout><Empty title="加载失败" desc={error}><button onClick={load} className="btn-secondary text-xs mt-3">重试</button></Empty></Layout>
 
   const { rules: allRulesRaw = [], nodes = [] } = data || {}
-  const nodeMap = useMemo(() => {
-    const m = {}
-    nodes.forEach(n => { m[n.id] = n })
-    return m
-  }, [nodes])
-  const rules = useMemo(() => allRulesRaw.map(enrich), [allRulesRaw, enrich])
+  const nodeMap = {}
+  nodes.forEach(n => { nodeMap[n.id] = n })
+  const rules = allRulesRaw.map(enrich)
 
   const deleteRule = async (rule) => {
     if (!(await confirm({ title: '删除规则', message: `确认删除规则「${rule.name}」？`, confirmText: '删除', danger: true }))) return
@@ -217,13 +223,13 @@ function FilterDropdown({ label, icon, options, selected, onChange, searchPlaceh
   }, [open])
 
   const q = query.trim().toLowerCase()
-  const shown = useMemo(() => q ? options.filter(o => String(o.label).toLowerCase().includes(q)) : options, [options, q])
+  const shown = q ? options.filter(o => String(o.label).toLowerCase().includes(q)) : options
 
-  const toggle = useCallback((val) => {
+  const toggle = (val) => {
     const next = new Set(selected)
     if (next.has(val)) next.delete(val); else next.add(val)
     onChange(next)
-  }, [selected, onChange])
+  }
 
   return (
     <div ref={ref} className="relative">
