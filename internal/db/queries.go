@@ -135,6 +135,10 @@ type Rule struct {
 	// BilledBytes is the rate-neutral billed base (raw × entry_node_mult).
 	// The UI multiplies it by the user's billing_rate to show consumed traffic.
 	BilledBytes int64 `json:"billed_bytes"`
+	// ExitBytes is the raw upload+download traffic observed at the rule's final
+	// hop (the landing exit). User billing is based on this value, not on the
+	// entry hop or any intermediate multiplier.
+	ExitBytes int64 `json:"exit_bytes"`
 }
 
 type RuleHop struct {
@@ -656,13 +660,13 @@ func RecordUpgradeResult(d DBTX, nodeID int64, version, status, errText string) 
 // out of the projection rather than dropped (dropping needs a table rebuild).
 // bandwidth_mbps is likewise dead (shaping moved to the per-grant rate limit
 // on user_nodes) and stays out of the projection.
-const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids`
+const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids,exit_bytes`
 
 func scanRule(r rowScanner) (*Rule, error) {
 	rl := &Rule{}
 	var disabled int
 	var viaJSON string
-	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON); err != nil {
+	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON, &rl.ExitBytes); err != nil {
 		return nil, err
 	}
 	rl.Disabled = disabled == 1

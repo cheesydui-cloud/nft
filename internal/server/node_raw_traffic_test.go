@@ -52,9 +52,11 @@ func TestApplyCountersNodeRawTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Global usage takes the multiplier (300 uplink × 3.0); raw above must not.
-	if u.TrafficUsedBytes != 900 {
-		t.Fatalf("global billed bytes want 900, got %d", u.TrafficUsedBytes)
+	// Global usage is landing-based now: raw up+down at the final hop, entry
+	// multiplier and unidirectional setting are ignored for billing. The single
+	// hop here is both entry and final hop, so 300 + 700 = 1000.
+	if u.TrafficUsedBytes != 1000 {
+		t.Fatalf("global billed bytes want 1000, got %d", u.TrafficUsedBytes)
 	}
 
 	if err := db.ResetAllUserTraffic(d, uid); err != nil {

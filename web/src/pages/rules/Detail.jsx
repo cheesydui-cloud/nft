@@ -110,7 +110,7 @@ export default function RulesDetail() {
               {rule.exit_kind === 'landing' && rule.landing_name && <span className="text-ink-mut text-xs font-sans">{rule.landing_name}</span>}
             </span>
             <span className="text-ink-soft font-semibold">流量</span>
-            <span className="font-mono text-ink-mut">{fmtBytes(rule.billed_bytes || 0)}</span>
+            <span className="font-mono text-ink-mut">{fmtBytes(rule.exit_bytes || 0)}</span>
             {rule.comment && <>
               <span className="text-ink-soft font-semibold">备注</span>
               <span className="text-ink-soft">{rule.comment}</span>

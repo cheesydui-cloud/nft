@@ -480,12 +480,12 @@ func RuleCountByNode(d *sql.DB) (map[int64]int, error) {
 	return m, rows.Err()
 }
 
-// TotalRuleTrafficBytes sums per-rule billed traffic (the entry hop's
-// billed_bytes, matching FillRuleTraffic) across all rules, for the dashboard
-// total. This is the rate-neutral base; the UI multiplies by billing_rate.
+// TotalRuleTrafficBytes sums per-rule landing traffic (rules.exit_bytes) across
+// all rules, for the dashboard total. This is the raw upload+download volume at
+// the final hop, matching the user billing model.
 func TotalRuleTrafficBytes(d *sql.DB) (int64, error) {
 	var total int64
-	err := d.QueryRow(`SELECT COALESCE(SUM(billed_bytes),0) FROM rule_hops WHERE position=0`).Scan(&total)
+	err := d.QueryRow(`SELECT COALESCE(SUM(exit_bytes),0) FROM rules`).Scan(&total)
 	return total, err
 }
 

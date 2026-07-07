@@ -680,6 +680,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 	userNodeAdds := map[userNode]int64{}
 	userAdds := map[int64]int64{}
 	totalUserAdds := map[int64]int64{}
+	ruleExitAdds := map[int64]int64{}
 	exitAdds := map[db.UserExitKey]int64{}
 	// The reporting node's raw ledger: every sampled byte counts, both
 	// directions regardless of unidirectional billing, and before the rule_hop
@@ -720,11 +721,9 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			}
 		}
 
-		// Global quota: the same bytes flow through every hop, so the user is
-		// billed exactly once — at the entry hop — with the entry node's own
-		// rate_multiplier (a composite entry carries the baked composite factor;
-		// middle-layer and child hops never stack their own). The stored value is
-		// rate-neutral: the UI multiplies by the user's billing_rate on display.
+		// User billing is now based on the landing exit traffic only: the raw
+		// upload+download bytes observed at the rule's final hop. Entry node
+		// multipliers are intentionally excluded from user billing.
 		billedBase := billedDelta
 		var userID int64
 		hasOwner := r != nil && r.OwnerID.Valid && billedDelta > 0
@@ -749,10 +748,8 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				}
 			}
 
-			// Entry multiplier 0 marks a free node: global usage accrues nothing.
-			// Only a negative value or a map-miss (entry node vanished mid-batch)
-			// falls back to 1.0 — a miss must never silently make a rule free.
-			// Per-grant raw-byte quotas and the exit ledger still accrue regardless.
+			// Entry multiplier is kept only for the legacy rule_hops.billed_bytes
+			// admin metric; it does not affect user billing.
 			entryMult, ok := multipliers[r.NodeID]
 			if !ok || entryMult < 0 {
 				entryMult = 1.0
@@ -791,16 +788,18 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			userNodeAdds[userNode{userID, via}] += billedDelta
 			touched[userNode{userID, via}] = true
 		}
-		// Global usage is entry-only: bill the rate-neutral base once, at position 0.
-		if rh.Position == 0 && billedBase > 0 {
-			userAdds[userID] += billedBase
-			totalUserAdds[userID] += billedBase
+		// User billing: count raw up+down at the final hop only. This matches the
+		// landing exit ledger and is the single source of truth for user display.
+		if len(maxPos) > 0 && rh.Position == maxPos[rh.RuleID] && totalDelta > 0 {
+			ruleExitAdds[rh.RuleID] += totalDelta
+			userAdds[userID] += totalDelta
+			totalUserAdds[userID] += totalDelta
 		}
 	}
 
 	// Flush every accumulated mutation in a single transaction: one commit (one
 	// fsync) for the whole batch instead of 3-5 auto-commits per sample.
-	if len(hopWrites) > 0 || len(userNodeAdds) > 0 || len(userAdds) > 0 || len(totalUserAdds) > 0 || len(exitAdds) > 0 || rawAdd > 0 {
+	if len(hopWrites) > 0 || len(userNodeAdds) > 0 || len(userAdds) > 0 || len(totalUserAdds) > 0 || len(ruleExitAdds) > 0 || len(exitAdds) > 0 || rawAdd > 0 {
 		if tx, err := h.DB.Begin(); err != nil {
 			log.Printf("hub: node %d counters tx begin: %v", nodeID, err)
 		} else {
@@ -848,6 +847,16 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				}
 				if _, err := tx.Exec(`UPDATE users SET total_traffic_used_bytes = total_traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
 					log.Printf("hub: user %d total traffic add: %v", uid, err)
+					ok = false
+					break
+				}
+			}
+			for ruleID, delta := range ruleExitAdds {
+				if !ok {
+					break
+				}
+				if _, err := tx.Exec(`UPDATE rules SET exit_bytes = exit_bytes + ? WHERE id=?`, delta, ruleID); err != nil {
+					log.Printf("hub: rule %d exit bytes add: %v", ruleID, err)
 					ok = false
 					break
 				}

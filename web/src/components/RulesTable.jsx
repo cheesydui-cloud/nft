@@ -54,7 +54,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
 
   const sorted = !sort.col ? rules : [...rules].sort((a, b) => {
     if (sort.col === 'traffic') {
-      const d = (a.billed_bytes || 0) - (b.billed_bytes || 0)
+      const d = (a.exit_bytes || 0) - (b.exit_bytes || 0)
       return sort.dir === 'asc' ? d : -d
     }
     const va = sort.col === 'node' ? (nodeMap[a.node_id]?.name || '') : (a.owner_name || '')
@@ -74,7 +74,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
           <th className="cursor-pointer select-none" onClick={() => cycleSort('node')}>
             <span className="inline-flex items-center">节点<SortArrow dir={sort.col === 'node' ? sort.dir : null} /></span>
           </th>
-          <th>入口 / 出口</th>
+          {isAdmin && <th>入口 / 出口</th>}
           <th>协议</th>
           {isAdmin && (
             <th className="cursor-pointer select-none" onClick={() => cycleSort('owner')}>
@@ -103,6 +103,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                   {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
                 </span>
               </td>
+              {isAdmin && (
               <td className="font-mono text-xs !whitespace-normal">
                 <div className="inline-block" onClick={e => e.stopPropagation()}>
                   {(() => {
@@ -154,6 +155,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                   })()}
                 </div>
               </td>
+              )}
               <td><ProtoBadge proto={r.proto} /></td>
               {isAdmin && <td className="text-ink-soft">{r.owner_name || '--'}</td>}
               <td className="text-xs text-ink-soft">
@@ -163,7 +165,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                     : r.comment
                   : <span className="text-ink-mut">-</span>}
               </td>
-              <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round(((r.billed_bytes || 0)) * displayRate))}</td>
+              <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round(((r.exit_bytes || 0)) * displayRate))}</td>
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
@@ -203,8 +205,9 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               </span>
               {isAdmin && r.owner_name && <><span className="text-ink-mut">·</span><span>{r.owner_name}</span></>}
               <span className="text-ink-mut">·</span>
-              <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.billed_bytes || 0) * displayRate))}</span>
+              <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.exit_bytes || 0) * displayRate))}</span>
             </div>
+            {isAdmin && (
             <div className="text-xs text-ink-mut truncate">
               <span className="font-sans">{r.entry ? (r.entry_listen_port ? `${node?.name || `#${r.node_id}`}:${r.entry_listen_port}` : (node?.name || `#${r.node_id}`)) : '--'}</span>
               <span className="mx-1.5">→</span>
@@ -214,6 +217,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                   : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>}
               </span>
             </div>
+            )}
           </div>
         )
       })}
