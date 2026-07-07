@@ -24,7 +24,7 @@ const (
 	dialerPingInterval     = 10 * time.Second
 	dialerCountersInterval = 5 * time.Second
 	dialerReadTimeout      = 30 * time.Second
-	dialerWriteTimeout     = 10 * time.Second
+	dialerWriteTimeout     = 20 * time.Second
 	dialerBackoffInitial   = 1 * time.Second
 	dialerBackoffMax       = 60 * time.Second
 )
@@ -102,7 +102,7 @@ func NewDialer(cfg DialerConfig) *Dialer {
 	return &Dialer{
 		cfg:       cfg,
 		upgradeCh: make(chan upgradeResult, 1),
-		cmdCh:     make(chan wsproto.Envelope),
+		cmdCh:     make(chan wsproto.Envelope, 16),
 		pending:   make(map[string]chan wsproto.RuleCmdAck),
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
@@ -508,7 +508,11 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				continue
 			}
 			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypePing, ID: "ping-" + strconv.FormatInt(time.Now().UnixMilli(), 36), Payload: pp}); err != nil {
-				return helloAcked, err
+				// One failed ping write on a flaky link is usually transient.
+				// The reader will detect a truly dead connection; tearing down
+				// here makes high-latency links oscillate.
+				log.Printf("dialer: write %s: %v", wsproto.TypePing, err)
+				continue
 			}
 		case <-countersT.C:
 			if d.cfg.CountersFn == nil {
@@ -528,6 +532,10 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				if d.cfg.CountersReadd != nil {
 					d.cfg.CountersReadd(samples)
 				}
+				// Counters are best-effort periodic telemetry; a single failed
+				// write on a flaky link should not tear the whole control
+				// channel down. The reader will still detect a truly dead conn.
+				continue
 			}
 		case res := <-d.upgradeCh:
 			ap, _ := json.Marshal(res.ack)

@@ -26,7 +26,7 @@ import (
 const (
 	hubWriteTimeout = 10 * time.Second
 	hubReadTimeout  = 30 * time.Second
-	applyAckTimeout = 30 * time.Second
+	applyAckTimeout = 60 * time.Second
 )
 
 type Hub struct {
