@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
@@ -86,33 +86,28 @@ export default function NodeList() {
     setTab(key)
     if (key === 'composite') setSort(s => s.col === 'rawtraffic' ? { col: null, dir: null } : s)
   }
-  const cycleSort = useCallback((col) => {
+  const cycleSort = (col) => {
     setSort(s => {
-      if (col === 'speed') setSpeedSnap(speeds)
+      if (col === 'speed') setSpeedSnap({ ...speeds })
       if (s.col !== col) return { col, dir: 'desc' }
       if (s.dir === 'desc') return { col, dir: 'asc' }
       return { col: null, dir: null }
     })
-  }, [speeds])
-  const filtered = useMemo(() => {
-    if (!sort.col) return filtered0
-    const list = [...filtered0]
-    list.sort((a, b) => {
-      let d = 0
-      if (sort.col === 'traffic') {
-        d = (node_traffic[a.id] || 0) - (node_traffic[b.id] || 0)
-      } else if (sort.col === 'rawtraffic') {
-        d = (node_raw_traffic[a.id] || 0) - (node_raw_traffic[b.id] || 0)
-      } else if (sort.col === 'speed') {
-        const sa = speedSnap || speeds
-        const va = sa[a.id] ? (sa[a.id].up + sa[a.id].down) : 0
-        const vb = sa[b.id] ? (sa[b.id].up + sa[b.id].down) : 0
-        d = va - vb
-      }
-      return sort.dir === 'asc' ? d : -d
-    })
-    return list
-  }, [filtered0, sort, node_traffic, node_raw_traffic, speedSnap, speeds])
+  }
+  const filtered = !sort.col ? filtered0 : [...filtered0].sort((a, b) => {
+    let d = 0
+    if (sort.col === 'traffic') {
+      d = (node_traffic[a.id] || 0) - (node_traffic[b.id] || 0)
+    } else if (sort.col === 'rawtraffic') {
+      d = (node_raw_traffic[a.id] || 0) - (node_raw_traffic[b.id] || 0)
+    } else if (sort.col === 'speed') {
+      const sa = speedSnap || speeds
+      const va = sa[a.id] ? (sa[a.id].up + sa[a.id].down) : 0
+      const vb = sa[b.id] ? (sa[b.id].up + sa[b.id].down) : 0
+      d = va - vb
+    }
+    return sort.dir === 'asc' ? d : -d
+  })
   // 任何过滤/排序生效时都不能拖拽调序：saveOrder 以可见列表为全量重建顺序，
   // 子集视图下会把被过滤掉的节点从顺序里丢掉。
   const draggable = !sort.col && !q && !roleMask

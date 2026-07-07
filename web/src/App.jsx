@@ -35,11 +35,25 @@ class ErrorBoundary extends Component {
   }
   componentDidCatch(error, info) {
     console.error('ErrorBoundary caught:', error, info)
+    this.setState({ info })
+    try {
+      const payload = {
+        time: new Date().toISOString(),
+        href: window.location.href,
+        message: error?.message || String(error),
+        stack: error?.stack || '',
+        componentStack: info?.componentStack || '',
+      }
+      localStorage.setItem('nf-last-error', JSON.stringify(payload))
+    } catch {}
   }
   render() {
     if (this.state.hasError) {
       const err = this.state.error
-      const details = err?.stack || err?.message || String(err) || '未知错误'
+      const message = err?.message || err?.name || String(err) || '未知错误'
+      const stack = err?.stack || ''
+      const componentStack = this.state.info?.componentStack || ''
+      const details = `${message}\n\n--- 堆栈 ---\n${stack}\n\n--- 组件栈 ---\n${componentStack}`
       return (
         <div className="min-h-screen flex items-center justify-center bg-app p-6">
           <div className="text-center max-w-2xl">
