@@ -326,8 +326,7 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	db.ResolveCompositeOnline(s.DB, nodes)
-	db.ResolveCompositeRelayStack(s.DB, nodes)
+	db.ResolveCompositeAll(s.DB, nodes)
 	panelURL, _ := db.GetSetting(s.DB, "panel_url")
 	panelName, _ := db.GetSetting(s.DB, "panel_name")
 	showRate, _ := db.GetSetting(s.DB, "show_rate_to_user")
@@ -593,8 +592,7 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["single_nodes"] = singleNodes
 		// Online is aggregated from children; reuse the same node list.
-		db.ResolveCompositeOnline(s.DB, all)
-		db.ResolveCompositeRelayStack(s.DB, all)
+		db.ResolveCompositeAll(s.DB, all)
 		for _, c := range all {
 			if c.ID == n.ID {
 				n.Online = c.Online
@@ -1526,8 +1524,7 @@ func (s *Server) apiListRules(w http.ResponseWriter, r *http.Request) {
 	}
 	db.FillRuleTraffic(s.DB, rules)
 	nodes, _ := db.ListNodes(s.DB)
-	db.ResolveCompositeRelayStack(s.DB, nodes)
-	db.ResolveCompositeHops(s.DB, nodes)
+	db.ResolveCompositeAll(s.DB, nodes)
 	nodeByID := buildMap(nodes, func(n *db.Node) int64 { return n.ID })
 	allUsers, _ := db.ListUsers(s.DB)
 	byID := make(map[int64]*db.User, len(allUsers))

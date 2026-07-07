@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
@@ -45,6 +45,7 @@ export default function NodeDetail() {
   const toast = useToast()
   const blurred = useBlur()
   const confirm = useConfirm()
+  const upgradePollRef = useRef(null)
 
   const applyData = (d) => {
     setData(d)
@@ -66,19 +67,28 @@ export default function NodeDetail() {
   const reloadSilent = () => api.get(`/nodes/${id}`).then(applyData).catch(console.error)
   useEffect(load, [id])
 
-  // 离线的实体节点每 3 秒静默轮询：安装命令跑完、agent 一连上面板，页面即自动
-  // 切到在线视图，无需手动刷新。上线后 offline 翻转，定时器随 effect 清理停止；
-  // 轮询期间只更新展示数据不动表单，避免覆盖正在编辑的输入。
+  useEffect(() => () => {
+    if (upgradePollRef.current) { clearInterval(upgradePollRef.current); upgradePollRef.current = null }
+  }, [id])
+
+  // 离线的实体节点按指数退避静默轮询：首次 3 秒，之后 6s / 12s / 24s / 30s 封顶。
+  // agent 一连上面板，offline 状态翻转为 false，effect 清理停止；轮询期间只更新
+  // 展示数据不动表单，避免覆盖正在编辑的输入。
   const offline = !!data?.node && data.node.node_type !== 'composite' && data.node.online !== 1
   useEffect(() => {
     if (!offline) return
-    const t = setInterval(() => {
+    let timeout = null
+    let delay = 3000
+    const tick = () => {
       api.get(`/nodes/${id}`).then(d => {
         if (d?.node?.online === 1) { applyData(d); toast('节点已上线') }
         else setData(d)
       }).catch(() => { /* 网络抖动，等下一轮 */ })
-    }, 3000)
-    return () => clearInterval(t)
+      delay = Math.min(delay * 2, 30000)
+      timeout = setTimeout(tick, delay)
+    }
+    timeout = setTimeout(tick, delay)
+    return () => clearTimeout(timeout)
   }, [offline, id])
 
   if (loading) return <Layout><Loading /></Layout>
@@ -129,18 +139,21 @@ export default function NodeDetail() {
     if (!(await confirm({ title: '升级节点', message: '推送 agent 二进制到此节点并重启？', confirmText: '升级' }))) return
     try {
       await api.post(`/nodes/${id}/upgrade`); toast('已发起升级')
+      if (upgradePollRef.current) { clearInterval(upgradePollRef.current); upgradePollRef.current = null }
       const poll = setInterval(async () => {
         try {
           const d = await api.get(`/nodes/${id}`)
           const st = d?.upgrade?.status
           if (st === 'ok' || st === 'error') {
             clearInterval(poll)
+            upgradePollRef.current = null
             toast(st === 'ok' ? '升级成功' : '升级失败: ' + (d.upgrade.error || ''), st === 'ok' ? undefined : 'error')
             load()
           }
-        } catch { clearInterval(poll) }
+        } catch { clearInterval(poll); upgradePollRef.current = null }
       }, 2000)
-      setTimeout(() => clearInterval(poll), 120000)
+      upgradePollRef.current = poll
+      setTimeout(() => { clearInterval(poll); upgradePollRef.current = null }, 120000)
     } catch (err) { toast(err.message, 'error') }
   }
   const toggle = async () => {

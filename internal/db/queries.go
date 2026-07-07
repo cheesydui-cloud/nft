@@ -217,10 +217,22 @@ func scanUser(r rowScanner) (*User, error) {
 	return u, nil
 }
 
+func scanUserPublic(r rowScanner) (*User, error) {
+	u := &User{}
+	var disabled int
+	if err := r.Scan(&u.ID, &u.Username, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
+		return nil, err
+	}
+	u.Disabled = disabled == 1
+	return u, nil
+}
+
 const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
 
+const userPublicCols = `id, username, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
+
 func ListUsers(d *sql.DB) ([]*User, error) {
-	return queryAll(d, `SELECT `+userCols+` FROM users ORDER BY id`, scanUser)
+	return queryAll(d, `SELECT `+userPublicCols+` FROM users ORDER BY id`, scanUserPublic)
 }
 
 func SetUserDisabled(d *sql.DB, id int64, disabled bool, reason string) error {
@@ -315,9 +327,11 @@ func CreateSession(d *sql.DB, userID int64, ttl time.Duration) (string, error) {
 
 const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
 
+const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
+
 func GetSessionUser(d *sql.DB, token string) (*User, error) {
-	return scanUser(d.QueryRow(`
-		SELECT `+userColsQualified+`
+	return scanUserPublic(d.QueryRow(`
+		SELECT `+userPublicColsQualified+`
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > strftime('%s','now')`, HashToken(token)))
 }
@@ -442,6 +456,30 @@ func ReorderNodes(d *sql.DB, ids []int64) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ResolveCompositeAll resolves online status, relay stack, and child hops for
+// composite nodes in a single node_hops query. Use it when a response needs
+// more than one of these derived fields; the individual functions remain for
+// callers that only need one.
+func ResolveCompositeAll(d *sql.DB, nodes []*Node) {
+	hasComposite := false
+	for _, n := range nodes {
+		if n.NodeType == "composite" {
+			hasComposite = true
+			break
+		}
+	}
+	if !hasComposite {
+		return
+	}
+	hops, err := ListAllNodeHops(d)
+	if err != nil {
+		return
+	}
+	resolveCompositeOnline(nodes, hops)
+	resolveCompositeRelayStack(nodes, hops)
+	resolveCompositeHops(nodes, hops)
 }
 
 // ResolveCompositeOnline derives the Online field of composite nodes from their
@@ -860,15 +898,25 @@ func NodeIDsByNames(d *sql.DB, names []string) (map[string]int64, error) {
 	if len(names) == 0 {
 		return out, nil
 	}
-	for _, name := range names {
+	ph := strings.Repeat("?,", len(names)-1) + "?"
+	args := make([]any, len(names))
+	for i, name := range names {
+		args[i] = name
+	}
+	rows, err := d.Query(`SELECT name, id FROM nodes WHERE name IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
 		var id int64
-		err := d.QueryRow(`SELECT id FROM nodes WHERE name = ?`, name).Scan(&id)
-		if err != nil {
-			continue
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, err
 		}
 		out[name] = id
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Agent-dialer helpers

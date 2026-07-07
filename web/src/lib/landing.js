@@ -197,6 +197,31 @@ export function landingIndex(nodes) {
   return m
 }
 
+/* If a rule's exit matches a landing node, rewrite the rule's entry endpoint
+   into the proxy URI so the UI can offer a copyable relay URI. Returns the
+   original rule when there is no match. */
+export function enrichRuleWithLanding(rule, landingIdx) {
+  const key = rule.exit_host && rule.exit_port ? `${rule.exit_host}:${rule.exit_port}` : null
+  if (!key || !landingIdx.has(key) || !rule.entry) return rule
+  const node = landingIdx.get(key)
+  const ep = splitEndpoint(rule.entry)
+  const relay = ep && rewriteEndpoint(node.uri, ep.host, ep.port)
+  if (!relay) return rule
+  const out = {
+    ...rule,
+    exit_kind: 'landing',
+    landing_name: node.name,
+    landing_protocol: node.protocol,
+    relay_uri: relay,
+  }
+  if (rule.entry_v6) {
+    const ep6 = splitEndpoint(rule.entry_v6)
+    const relay6 = ep6 && rewriteEndpoint(node.uri, ep6.host, ep6.port)
+    if (relay6) out.relay_uri_v6 = relay6
+  }
+  return out
+}
+
 /* Parse a "host:port" string (e.g. a rule's entry endpoint) into {host, port},
    or null if malformed. Handles bracketed IPv6. */
 export function splitEndpoint(s) {

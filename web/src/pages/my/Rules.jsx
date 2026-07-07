@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
@@ -6,7 +6,7 @@ import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, copyInitial, ruleFormToPayload } from '../../components/RuleFormModal'
-import { parseURIs, landingIndex, rewriteEndpoint, splitEndpoint, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
+import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
 
 export default function MyRules() {
   const [data, setData] = useState(null)
@@ -76,26 +76,7 @@ export default function MyRules() {
 
   const allLandingIdx = landingIndex(landingNodes)
 
-  const enrich = (r) => {
-    const key = r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : null
-    if (key && allLandingIdx.has(key) && r.entry) {
-      const node = allLandingIdx.get(key)
-      const ep = splitEndpoint(r.entry)
-      const relay = ep && rewriteEndpoint(node.uri, ep.host, ep.port)
-      if (relay) {
-        const out = { ...r, exit_kind: 'landing', landing_name: node.name, landing_protocol: node.protocol, relay_uri: relay }
-        // A dual-stack rule has a second (v6) entry, so offer a matching relay
-        // URI with the v6 endpoint substituted alongside the v4 one.
-        if (r.entry_v6) {
-          const ep6 = splitEndpoint(r.entry_v6)
-          const relay6 = ep6 && rewriteEndpoint(node.uri, ep6.host, ep6.port)
-          if (relay6) out.relay_uri_v6 = relay6
-        }
-        return out
-      }
-    }
-    return r
-  }
+  const enrich = useCallback((r) => enrichRuleWithLanding(r, allLandingIdx), [allLandingIdx])
 
   const deleteRule = async (rule) => {
     if (!(await confirm({ title: '删除规则', message: `确认删除规则「${rule.name}」？`, confirmText: '删除', danger: true }))) return

@@ -18,6 +18,7 @@ export function UserProvider({ children }) {
   const [version, setVersion] = useState('')
   const [toasts, setToasts] = useState([])
   const idRef = useRef(0)
+  const timersRef = useRef([])
 
   useEffect(() => {
     api.get('/me').then(data => {
@@ -33,10 +34,16 @@ export function UserProvider({ children }) {
     return () => window.removeEventListener('nf-unauthorized', handler)
   }, [])
 
+  useEffect(() => () => {
+    timersRef.current.forEach(clearTimeout)
+    timersRef.current = []
+  }, [])
+
   const toast = useCallback((msg, type) => {
     const id = ++idRef.current
     setToasts(prev => [...prev, { id, msg, type: type || 'success' }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2000)
+    const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2000)
+    timersRef.current.push(timer)
   }, [])
 
   return (

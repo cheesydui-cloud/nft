@@ -38,6 +38,7 @@ func newLoginLimiter() *loginLimiter {
 func (l *loginLimiter) allowed(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneLocked(l.now())
 	a := l.byID[key]
 	if a == nil {
 		return true
@@ -51,6 +52,7 @@ func (l *loginLimiter) recordFailure(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
+	l.pruneLocked(now)
 	a := l.byID[key]
 	if a == nil || now.Sub(a.windowStart) > loginWindow {
 		a = &loginAttempt{windowStart: now}
@@ -60,13 +62,13 @@ func (l *loginLimiter) recordFailure(key string) {
 	if a.failures >= loginMaxFailures {
 		a.lockedUntil = now.Add(loginLockout)
 	}
-	l.pruneLocked(now)
 }
 
 // recordSuccess clears any accumulated failures for the key.
 func (l *loginLimiter) recordSuccess(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneLocked(l.now())
 	delete(l.byID, key)
 }
 

@@ -5,7 +5,7 @@ import { fmtBytes } from '../../lib/fmt'
 import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
 import { Loading, Empty, Badge, ProtoBadge, SensText, useConfirm, ExitKindBadge } from '../../components/ui'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
-import { parseURIs, landingIndex, mergeLanding, splitEndpoint, rewriteEndpoint, loadLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
+import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
 
 export default function MyRuleDetail() {
   const { id } = useParams()
@@ -61,26 +61,7 @@ export default function MyRuleDetail() {
   // relay URI from the server (the URI never leaves the browser), so rewrite the
   // rule's entry into it client-side here — the same enrichment the rules list
   // does — so the detail page can offer a copyable relay URI too.
-  const rule = (() => {
-    const key = serverRule.exit_host && serverRule.exit_port ? `${serverRule.exit_host}:${serverRule.exit_port}` : null
-    if (key && allLandingIdx.has(key) && serverRule.entry) {
-      const lnode = allLandingIdx.get(key)
-      const ep = splitEndpoint(serverRule.entry)
-      const relay = ep && rewriteEndpoint(lnode.uri, ep.host, ep.port)
-      if (relay) {
-        const out = { ...serverRule, exit_kind: 'landing', landing_name: lnode.name, landing_protocol: lnode.protocol, relay_uri: relay }
-        // Dual-stack rule: also rewrite the v6 entry into the URI so the detail
-        // page can offer a v6 relay URI beside the v4 one.
-        if (serverRule.entry_v6) {
-          const ep6 = splitEndpoint(serverRule.entry_v6)
-          const relay6 = ep6 && rewriteEndpoint(lnode.uri, ep6.host, ep6.port)
-          if (relay6) out.relay_uri_v6 = relay6
-        }
-        return out
-      }
-    }
-    return serverRule
-  })()
+  const rule = enrichRuleWithLanding(serverRule, allLandingIdx)
   const node = node_by_id[rule.node_id]
   // Names resolve only through node_by_id — the granted-node map the page
   // already has in scope — so an unresolvable via (rare: node revoked after

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -27,6 +28,9 @@ const (
 	hubWriteTimeout = 10 * time.Second
 	hubReadTimeout  = 30 * time.Second
 	applyAckTimeout = 60 * time.Second
+	// hubMaxReadBytes bounds a single WebSocket frame. Counters samples and
+	// rule command payloads are small; anything larger is malformed or malicious.
+	hubMaxReadBytes = 4 << 20
 )
 
 type Hub struct {
@@ -428,17 +432,48 @@ func (h *Hub) BroadcastConfigUpdate(poolSize int) {
 
 // Helpers --------------------------------------------------------------
 
-func extractIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.Index(xff, ","); i > 0 {
-			return strings.TrimSpace(xff[:i])
+// trustedProxyNets contains the CIDRs from which X-Forwarded-For / X-Real-IP
+// are considered trustworthy. Defaults to loopback and RFC1918 private ranges
+// so a same-machine or LAN reverse proxy is trusted, but a random internet peer
+// cannot spoof its address. The server also calls this for the speed/landing
+// HTTP endpoints, so it lives on Hub's helper section rather than inside the
+// WS handler.
+var trustedProxyNets = func() []*net.IPNet {
+	nets := []*net.IPNet{}
+	for _, cidr := range []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		if _, n, err := net.ParseCIDR(cidr); err == nil {
+			nets = append(nets, n)
 		}
-		return strings.TrimSpace(xff)
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
+	return nets
+}()
+
+func isTrustedProxy(ip net.IP) bool {
+	for _, n := range trustedProxyNets {
+		if n.Contains(ip) {
+			return true
+		}
 	}
-	host := r.RemoteAddr
+	return false
+}
+
+func extractIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	remoteIP := net.ParseIP(host)
+	if remoteIP != nil && isTrustedProxy(remoteIP) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.Index(xff, ","); i > 0 {
+				return strings.TrimSpace(xff[:i])
+			}
+			return strings.TrimSpace(xff)
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
+	}
 	if i := strings.LastIndex(host, ":"); i > 0 {
 		host = host[:i]
 	}
@@ -562,9 +597,16 @@ func lookupNodeBySecret(d *sql.DB, secret string) (*db.Node, error) {
 func readEnvelope(ctx context.Context, ws *websocket.Conn, timeout time.Duration) (wsproto.Envelope, error) {
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, b, err := ws.Read(rctx)
+	_, r, err := ws.Reader(rctx)
 	if err != nil {
 		return wsproto.Envelope{}, err
+	}
+	b, err := io.ReadAll(io.LimitReader(r, hubMaxReadBytes+1))
+	if err != nil {
+		return wsproto.Envelope{}, err
+	}
+	if len(b) > hubMaxReadBytes {
+		return wsproto.Envelope{}, fmt.Errorf("frame exceeds %d bytes", hubMaxReadBytes)
 	}
 	var env wsproto.Envelope
 	if err := json.Unmarshal(b, &env); err != nil {
