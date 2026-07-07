@@ -95,7 +95,7 @@ export default function MyDashboard() {
                 {(() => {
                   const rate = user.billing_rate ?? 1
                   const displayUsed = Math.round(user.traffic_used_bytes * rate)
-                  const displayQuota = Math.round(user.traffic_quota_bytes * rate)
+                  const displayQuota = user.traffic_quota_bytes
                   return (
                     <>
                       {fmtTrafficGB(displayUsed, displayQuota)}
