@@ -90,18 +90,25 @@ export default function MyDashboard() {
               </div>
             )}
             <div className="flex items-center gap-4 py-3 border-b border-line-soft">
-              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">流量</div>
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">{show_rate ? '流量（计费）' : '流量'}</div>
               <div className="text-[14.5px] font-mono">
                 {(() => {
                   const rate = user.billing_rate ?? 1
                   const displayUsed = Math.round(user.traffic_used_bytes * rate)
+                  const displayQuota = Math.round(user.traffic_quota_bytes * rate)
                   return (
                     <>
-                      {fmtTrafficGB(displayUsed, user.traffic_quota_bytes)}
-                      {user.traffic_quota_bytes > 0 && <span className="text-green-600 dark:text-green-400"> ({pct(displayUsed, user.traffic_quota_bytes)}%)</span>}
+                      {fmtTrafficGB(displayUsed, displayQuota)}
+                      {user.traffic_quota_bytes > 0 && <span className="text-green-600 dark:text-green-400"> ({pct(displayUsed, displayQuota)}%)</span>}
                     </>
                   )
                 })()}
+              </div>
+            </div>
+            <div className="flex items-center gap-4 py-3 border-b border-line-soft">
+              <div className="w-[120px] flex-shrink-0 text-[14px] text-ink-soft">{show_rate ? '累计流量（计费）' : '累计流量'}</div>
+              <div className="text-[14.5px] font-mono">
+                {fmtTrafficGB(Math.round((user.total_traffic_used_bytes || 0) * (user.billing_rate ?? 1)), 0)}
               </div>
             </div>
             <div className="flex items-center gap-4 py-3">

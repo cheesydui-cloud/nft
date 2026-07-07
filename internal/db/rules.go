@@ -337,32 +337,35 @@ func ListAllRules(d *sql.DB) ([]*Rule, error) {
 	return listRulesWhere(d, "")
 }
 
-// FillRuleTraffic sets each rule's TotalBytes from its entry hop (position=0).
-// A composite chain carries the same bytes through every hop but is billed
-// once at the entrance, so the entry hop's counter is the rule's traffic;
-// summing all hops would multiply it by the hop count.
+// FillRuleTraffic sets each rule's TotalBytes and BilledBytes from its entry
+// hop (position=0). A composite chain carries the same bytes through every hop
+// but is billed once at the entrance, so the entry hop's counter is the rule's
+// traffic; summing all hops would multiply it by the hop count.
 func FillRuleTraffic(d DBTX, rules []*Rule) error {
 	if len(rules) == 0 {
 		return nil
 	}
-	rows, err := d.Query(`SELECT rule_id, total_bytes FROM rule_hops WHERE position=0`)
+	rows, err := d.Query(`SELECT rule_id, total_bytes, billed_bytes FROM rule_hops WHERE position=0`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	bytesByRule := map[int64]int64{}
+	billedByRule := map[int64]int64{}
 	for rows.Next() {
-		var ruleID, bytes int64
-		if err := rows.Scan(&ruleID, &bytes); err != nil {
+		var ruleID, bytes, billed int64
+		if err := rows.Scan(&ruleID, &bytes, &billed); err != nil {
 			return err
 		}
 		bytesByRule[ruleID] = bytes
+		billedByRule[ruleID] = billed
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	for _, r := range rules {
 		r.TotalBytes = bytesByRule[r.ID]
+		r.BilledBytes = billedByRule[r.ID]
 	}
 	return nil
 }
@@ -477,11 +480,12 @@ func RuleCountByNode(d *sql.DB) (map[int64]int, error) {
 	return m, rows.Err()
 }
 
-// TotalRuleTrafficBytes sums per-rule traffic (the entry hop's total_bytes,
-// matching FillRuleTraffic) across all rules, for the dashboard total.
+// TotalRuleTrafficBytes sums per-rule billed traffic (the entry hop's
+// billed_bytes, matching FillRuleTraffic) across all rules, for the dashboard
+// total. This is the rate-neutral base; the UI multiplies by billing_rate.
 func TotalRuleTrafficBytes(d *sql.DB) (int64, error) {
 	var total int64
-	err := d.QueryRow(`SELECT COALESCE(SUM(total_bytes),0) FROM rule_hops WHERE position=0`).Scan(&total)
+	err := d.QueryRow(`SELECT COALESCE(SUM(billed_bytes),0) FROM rule_hops WHERE position=0`).Scan(&total)
 	return total, err
 }
 

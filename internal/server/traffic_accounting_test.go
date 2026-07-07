@@ -136,18 +136,22 @@ func TestBillingEntryOnlyAndRawGrantBytes(t *testing.T) {
 	}
 
 	u, _ := db.GetUserByID(d, uid)
-	if u.TrafficUsedBytes != 2000 { // 1000 × entry multiplier 2.0, billed once
-		t.Fatalf("global used want 2000, got %d", u.TrafficUsedBytes)
+	if u.TrafficUsedBytes != 2000 || u.TotalTrafficUsedBytes != 2000 { // 1000 × entry multiplier 2.0, billed once
+		t.Fatalf("global used want 2000, got %d/%d", u.TrafficUsedBytes, u.TotalTrafficUsedBytes)
 	}
 	ge, _ := db.GetNodeGrant(d, uid, entry.ID)
 	gm, _ := db.GetNodeGrant(d, uid, mid.ID)
 	if ge.TrafficUsedBytes != 1000 || gm.TrafficUsedBytes != 1000 {
 		t.Fatalf("grant raw bytes want 1000/1000, got %d/%d", ge.TrafficUsedBytes, gm.TrafficUsedBytes)
 	}
-	// hop totals: entry hop stores the billed 2000; every other hop stores raw 1000
+	// hop totals: total_bytes is always raw; billed_bytes carries the rate-
+	// neutral billed base (raw × entry node multiplier) on the entry hop only.
 	hops, _ = db.ListRuleHops(d, id)
-	if hops[0].TotalBytes != 2000 || hops[1].TotalBytes != 1000 || hops[2].TotalBytes != 1000 {
-		t.Fatalf("hop totals: %d/%d/%d", hops[0].TotalBytes, hops[1].TotalBytes, hops[2].TotalBytes)
+	if hops[0].TotalBytes != 1000 || hops[1].TotalBytes != 1000 || hops[2].TotalBytes != 1000 {
+		t.Fatalf("hop raw totals: %d/%d/%d", hops[0].TotalBytes, hops[1].TotalBytes, hops[2].TotalBytes)
+	}
+	if hops[0].BilledBytes != 2000 || hops[1].BilledBytes != 0 || hops[2].BilledBytes != 0 {
+		t.Fatalf("hop billed totals: %d/%d/%d", hops[0].BilledBytes, hops[1].BilledBytes, hops[2].BilledBytes)
 	}
 }
 
@@ -259,8 +263,8 @@ func TestApplyCountersZeroMultiplierIsFree(t *testing.T) {
 
 	u, _ := db.GetUserByID(d, uid)
 	// free entry multiplier (0) → global usage accrues nothing
-	if u.TrafficUsedBytes != 0 {
-		t.Fatalf("free entry multiplier must bill 0 global usage, got %d", u.TrafficUsedBytes)
+	if u.TrafficUsedBytes != 0 || u.TotalTrafficUsedBytes != 0 {
+		t.Fatalf("free entry multiplier must bill 0 global usage, got %d/%d", u.TrafficUsedBytes, u.TotalTrafficUsedBytes)
 	}
 	gc, _ := db.GetNodeGrant(d, uid, comp.ID)
 	// per-grant quota still charges the raw bytes that flowed
@@ -268,9 +272,12 @@ func TestApplyCountersZeroMultiplierIsFree(t *testing.T) {
 		t.Fatalf("free entry per-grant quota want raw 5000, got %d", gc.TrafficUsedBytes)
 	}
 	hops, _ = db.ListRuleHops(d, ruleID)
-	// entry hop stores the billed amount, which is 0 under a free multiplier
-	if hops[0].TotalBytes != 0 {
-		t.Fatalf("free entry hop total_bytes (billed) want 0, got %d", hops[0].TotalBytes)
+	// total_bytes is raw; billed_bytes is the billed base, 0 under a free multiplier
+	if hops[0].TotalBytes != 5000 {
+		t.Fatalf("free entry hop total_bytes (raw) want 5000, got %d", hops[0].TotalBytes)
+	}
+	if hops[0].BilledBytes != 0 {
+		t.Fatalf("free entry hop billed_bytes want 0, got %d", hops[0].BilledBytes)
 	}
 }
 

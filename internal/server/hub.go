@@ -675,10 +675,11 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 	// loop. Reads, cycle resets and redispatch stay outside any tx: with
 	// MaxOpenConns(1) a tx holds the only connection, so a pool read or a
 	// redispatch goroutine inside it would deadlock.
-	type hopWrite struct{ lastBytes, lastUp, lastDown, addWeighted int64 }
+	type hopWrite struct{ lastBytes, lastUp, lastDown, addTotal, addBilled int64 }
 	hopWrites := map[int64]*hopWrite{}
 	userNodeAdds := map[userNode]int64{}
 	userAdds := map[int64]int64{}
+	totalUserAdds := map[int64]int64{}
 	exitAdds := map[db.UserExitKey]int64{}
 	// The reporting node's raw ledger: every sampled byte counts, both
 	// directions regardless of unidirectional billing, and before the rule_hop
@@ -722,8 +723,9 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 		// Global quota: the same bytes flow through every hop, so the user is
 		// billed exactly once — at the entry hop — with the entry node's own
 		// rate_multiplier (a composite entry carries the baked composite factor;
-		// middle-layer and child hops never stack their own).
-		weighted := billedDelta
+		// middle-layer and child hops never stack their own). The stored value is
+		// rate-neutral: the UI multiplies by the user's billing_rate on display.
+		billedBase := billedDelta
 		var userID int64
 		hasOwner := r != nil && r.OwnerID.Valid && billedDelta > 0
 		if hasOwner {
@@ -751,22 +753,18 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			// Only a negative value or a map-miss (entry node vanished mid-batch)
 			// falls back to 1.0 — a miss must never silently make a rule free.
 			// Per-grant raw-byte quotas and the exit ledger still accrue regardless.
-			mult, ok := multipliers[r.NodeID]
-			if !ok || mult < 0 {
-				mult = 1.0
+			entryMult, ok := multipliers[r.NodeID]
+			if !ok || entryMult < 0 {
+				entryMult = 1.0
 			}
-			billingRate := 1.0
-			if u != nil && u.BillingRate > 0 {
-				billingRate = u.BillingRate
-			}
-			weighted = int64(math.Round(float64(billedDelta) * mult * billingRate))
+			billedBase = int64(math.Round(float64(billedDelta) * entryMult))
 		}
 
-		// rule_hops: last_bytes stay raw for speed display. total_bytes carries
-		// the billed (weighted) amount on the entry hop — what per-rule traffic
-		// shows and the global quota consumes — and raw bytes on every other hop.
-		// A tcp+udp hop can fan in as two samples to the same row; last_* take
-		// the last sample and the total sums.
+		// rule_hops: last_bytes stay raw for speed display. total_bytes is always
+		// the raw forwarded volume; billed_bytes carries the rate-neutral billed
+		// base (raw × entry node multiplier) on the entry hop and stays 0 on
+		// middle hops. A tcp+udp hop can fan in as two samples to the same row;
+		// last_* take the last sample and the total sums.
 		w := hopWrites[rh.ID]
 		if w == nil {
 			w = &hopWrite{}
@@ -775,10 +773,9 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 		w.lastBytes = totalDelta
 		w.lastUp = s.BytesUp
 		w.lastDown = s.BytesDown
+		w.addTotal += totalDelta
 		if rh.Position == 0 {
-			w.addWeighted += weighted
-		} else {
-			w.addWeighted += billedDelta
+			w.addBilled += billedBase
 		}
 
 		if !hasOwner {
@@ -794,15 +791,16 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			userNodeAdds[userNode{userID, via}] += billedDelta
 			touched[userNode{userID, via}] = true
 		}
-		// Global usage is entry-only: bill the weighted amount once, at position 0.
-		if rh.Position == 0 && weighted > 0 {
-			userAdds[userID] += weighted
+		// Global usage is entry-only: bill the rate-neutral base once, at position 0.
+		if rh.Position == 0 && billedBase > 0 {
+			userAdds[userID] += billedBase
+			totalUserAdds[userID] += billedBase
 		}
 	}
 
 	// Flush every accumulated mutation in a single transaction: one commit (one
 	// fsync) for the whole batch instead of 3-5 auto-commits per sample.
-	if len(hopWrites) > 0 || len(userNodeAdds) > 0 || len(userAdds) > 0 || len(exitAdds) > 0 || rawAdd > 0 {
+	if len(hopWrites) > 0 || len(userNodeAdds) > 0 || len(userAdds) > 0 || len(totalUserAdds) > 0 || len(exitAdds) > 0 || rawAdd > 0 {
 		if tx, err := h.DB.Begin(); err != nil {
 			log.Printf("hub: node %d counters tx begin: %v", nodeID, err)
 		} else {
@@ -817,8 +815,8 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if !ok {
 					break
 				}
-				if _, err := tx.Exec(`UPDATE rule_hops SET last_bytes=?, last_bytes_up=?, last_bytes_down=?, total_bytes=total_bytes+? WHERE id=?`,
-					w.lastBytes, w.lastUp, w.lastDown, w.addWeighted, id); err != nil {
+				if _, err := tx.Exec(`UPDATE rule_hops SET last_bytes=?, last_bytes_up=?, last_bytes_down=?, total_bytes=total_bytes+?, billed_bytes=billed_bytes+? WHERE id=?`,
+					w.lastBytes, w.lastUp, w.lastDown, w.addTotal, w.addBilled, id); err != nil {
 					log.Printf("hub: node %d counters rule_hop update: %v", nodeID, err)
 					ok = false
 					break
@@ -840,6 +838,16 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				}
 				if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
 					log.Printf("hub: user %d traffic add: %v", uid, err)
+					ok = false
+					break
+				}
+			}
+			for uid, delta := range totalUserAdds {
+				if !ok {
+					break
+				}
+				if _, err := tx.Exec(`UPDATE users SET total_traffic_used_bytes = total_traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
+					log.Printf("hub: user %d total traffic add: %v", uid, err)
 					ok = false
 					break
 				}

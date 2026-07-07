@@ -31,7 +31,7 @@ func ResetAllUserTraffic(d *sql.DB, userID int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0 WHERE id=?`, userID); err != nil {
+	if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0, total_traffic_used_bytes = 0 WHERE id=?`, userID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE user_nodes SET traffic_used_bytes = 0 WHERE user_id=?`, userID); err != nil {
@@ -40,7 +40,7 @@ func ResetAllUserTraffic(d *sql.DB, userID int64) error {
 	if _, err := tx.Exec(`UPDATE user_landing_exits SET used_bytes = 0 WHERE user_id=?`, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE rule_hops SET total_bytes = 0 WHERE rule_id IN (SELECT id FROM rules WHERE owner_id = ?)`, userID); err != nil {
+	if _, err := tx.Exec(`UPDATE rule_hops SET total_bytes = 0, billed_bytes = 0 WHERE rule_id IN (SELECT id FROM rules WHERE owner_id = ?)`, userID); err != nil {
 		return err
 	}
 	return tx.Commit()

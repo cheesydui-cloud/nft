@@ -3151,6 +3151,7 @@ func apiUserFullView(u *db.User) map[string]any {
 	m["max_forwards"] = u.MaxForwards
 	m["traffic_quota_bytes"] = u.TrafficQuotaBytes
 	m["traffic_used_bytes"] = u.TrafficUsedBytes
+	m["total_traffic_used_bytes"] = u.TotalTrafficUsedBytes
 	if u.ExpiresAt.Valid && u.ExpiresAt.Int64 != 0 {
 		m["expires_at"] = u.ExpiresAt.Int64
 	} else {

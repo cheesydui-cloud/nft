@@ -152,7 +152,7 @@ export default function UserDetail() {
                   <td className="font-mono text-xs"><SensText blurred={blurred}>{r.entry_listen_port ? `:${r.entry_listen_port}` : '--'}</SensText></td>
                   <td className="font-mono text-xs"><SensText blurred={blurred}>{r.exit_host ? `${r.exit_host}:${r.exit_port}` : '--'}</SensText></td>
                   <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.total_bytes || 0)}</td>
-                  <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.total_bytes || 0) * (user.billing_rate ?? 1)))}</td>
+                  <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.billed_bytes || 0) * (user.billing_rate ?? 1)))}</td>
                 </tr>
               ))}
             </tbody>
