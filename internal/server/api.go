@@ -70,6 +70,19 @@ func ensureNonNilSlices(m map[string]any) {
 	}
 }
 
+// normalizeAgentVersion replaces the vague "latest" alias with the concrete
+// server version when the binary SHA proves the agent is actually current.
+// This keeps the panel display consistent even when an older installer wrote
+// "latest" into /etc/nft/agent.version.
+func normalizeAgentVersion(n *db.Node, latestVersion, latestSHA string) {
+	if n == nil || n.AgentVersion != "latest" {
+		return
+	}
+	if n.AgentSHA != "" && latestSHA != "" && n.AgentSHA == latestSHA {
+		n.AgentVersion = latestVersion
+	}
+}
+
 // --- API auth middleware ---
 
 func (s *Server) requireAPIAuth(next http.Handler) http.Handler {
@@ -346,11 +359,15 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 	if art != nil {
 		latestAgentSHA = art.SHA
 	}
+	lv := serverVersion()
+	for _, n := range nodes {
+		normalizeAgentVersion(n, lv, latestAgentSHA)
+	}
 	jsonOK(w, map[string]any{
 		"nodes": nodes, "panel_url": panelURL, "panel_name": panelName,
 		"node_traffic":         nodeTraffic,
 		"node_raw_traffic":     nodeRawTraffic,
-		"latest_agent_version": serverVersion(),
+		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,
 		"show_rate_to_user":    showRate == "1",
 	})
@@ -561,12 +578,14 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	if art != nil {
 		latestAgentSHA = art.SHA
 	}
+	lv := serverVersion()
+	normalizeAgentVersion(n, lv, latestAgentSHA)
 	resp := map[string]any{
 		"node": nodeWithSecret{Node: n, Secret: n.Secret}, "rule_hops": views, "panel_url": panelURL,
 		"panel_url_configured": panelURL != "",
-		"latest_agent_version": serverVersion(),
+		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,
-		"upgrade":              deriveUpgradeStatus(n, serverVersion(), latestAgentSHA, time.Now()),
+		"upgrade":              deriveUpgradeStatus(n, lv, latestAgentSHA, time.Now()),
 		"granted_users":        grantedUsers,
 	}
 

@@ -351,22 +351,32 @@ do_update_script() {
 }
 
 # Resolve "latest" to the concrete tag so identity files record a real version
-# rather than the moving "latest" alias. Falls back to "latest" only if the
-# GitHub redirect can't be read (e.g. restricted network without a proxy set).
+# rather than the moving "latest" alias. Falls back to "latest" only if every
+# method fails (e.g. restricted network without a proxy set).
 resolve_release_tag() {
   if [[ "$RELEASE" != "latest" ]]; then
     echo "$RELEASE"
     return 0
   fi
-  local url="${GH_PROXY}https://github.com/$REPO/releases/latest"
   local resolved
-  resolved="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url" 2>/dev/null \
+
+  # Method 1: follow the GitHub releases/latest redirect.
+  resolved="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${GH_PROXY}https://github.com/$REPO/releases/latest" 2>/dev/null \
               | sed -n 's#.*/releases/tag/##p' | tr -d '\r\n')"
   if [[ -n "$resolved" ]]; then
     echo "$resolved"
-  else
-    echo "latest"
+    return 0
   fi
+
+  # Method 2: GitHub API (helps when the redirect is intercepted/blocked).
+  resolved="$(curl -fsSL --max-time 10 "${GH_PROXY}https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+              | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [[ -n "$resolved" ]]; then
+    echo "$resolved"
+    return 0
+  fi
+
+  echo "latest"
 }
 
 # Write the nft-agent identity files consumed by the daemon's first hello so the

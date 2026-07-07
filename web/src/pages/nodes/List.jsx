@@ -68,6 +68,15 @@ export default function NodeList() {
   if (!data && error) return <Layout><Empty title="加载失败" desc={error}><button onClick={load} className="btn-secondary text-xs mt-3">重试</button></Empty></Layout>
 
   const { nodes = [], latest_agent_version, latest_agent_sha, node_traffic = {}, node_raw_traffic = {} } = data || {}
+  // Older installers (and failed release-tag resolution) write "latest" into
+  // /etc/nft/agent.version. When the binary SHA matches the server's target
+  // agent SHA, the node is actually on the latest release — show the concrete
+  // version label instead of the vague "latest" alias.
+  const displayAgentVersion = (n) => {
+    if (n.agent_version && n.agent_version !== 'latest') return n.agent_version
+    if (n.agent_sha && latest_agent_sha && n.agent_sha === latest_agent_sha) return latest_agent_version
+    return n.agent_version || '--'
+  }
   const isAgentOutdated = (n) => {
     if (n.agent_sha && latest_agent_sha && n.agent_sha === latest_agent_sha) return false
     if (n.agent_version === 'latest') return false
@@ -248,9 +257,7 @@ export default function NodeList() {
                     </div>
                   </td>
                   <td className="font-mono text-xs">
-                    {n.agent_version ? (
-                      <span className={isAgentOutdated(n) ? 'text-red-600' : ''}>{n.agent_version}</span>
-                    ) : <span className="text-ink-mut">--</span>}
+                    <span className={isAgentOutdated(n) ? 'text-red-600' : ''}>{displayAgentVersion(n)}</span>
                   </td>
                   <td className="font-mono text-xs text-ink-soft">
                     {fmtTime(n.last_apply_at?.Valid ? n.last_apply_at.Int64 : null)}

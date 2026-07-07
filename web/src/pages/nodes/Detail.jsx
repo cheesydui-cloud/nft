@@ -26,6 +26,14 @@ function agentIsOutdated(node, latestVersion, latestSHA) {
   return node.agent_version && semverLT(node.agent_version, latestVersion)
 }
 
+// Resolve a usable version label for display. If the daemon reports "latest"
+// but its SHA matches the server's target agent SHA, show the concrete tag.
+function displayAgentVersion(node, latestVersion, latestSHA) {
+  if (node.agent_version && node.agent_version !== 'latest') return node.agent_version
+  if (node.agent_sha && latestSHA && node.agent_sha === latestSHA) return latestVersion
+  return node.agent_version || '未知'
+}
+
 export default function NodeDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -228,7 +236,7 @@ export default function NodeDetail() {
                     : <span className="text-ink-mut">未连接</span>}</span>
                   <span className="text-[#cfd6df] hidden sm:inline">|</span>
                   <span className="hidden sm:inline">Agent&nbsp;&nbsp;{node.agent_version
-                    ? <><span className="font-mono text-ink-soft">{node.agent_version}</span>{agentOutdated && <span className="ml-1"><Badge color="amber">非最新</Badge></span>}</>
+                    ? <><span className="font-mono text-ink-soft">{displayAgentVersion(node, latest_agent_version, latest_agent_sha)}</span>{agentOutdated && <span className="ml-1"><Badge color="amber">非最新</Badge></span>}</>
                     : <span className="text-ink-mut">未知</span>}</span>
                   <span className="text-[#cfd6df] hidden sm:inline">|</span>
                   <span className="hidden sm:inline">最近同步&nbsp;&nbsp;<b className="text-ink-soft font-semibold">{fmtTime(node.last_apply_at?.Valid ? node.last_apply_at.Int64 : null)}</b></span>
@@ -307,7 +315,7 @@ export default function NodeDetail() {
               </InfoRow>
               <InfoRow label="Agent 版本" mono valueClass="text-[12.5px]" last={!showUpgrade}>
                 {node.agent_version
-                  ? <>{node.agent_version} {agentOutdated ? <Badge color="amber">非最新</Badge> : <Badge color="green">最新</Badge>}</>
+                  ? <>{displayAgentVersion(node, latest_agent_version, latest_agent_sha)} {agentOutdated ? <Badge color="amber">非最新</Badge> : <Badge color="green">最新</Badge>}</>
                   : <span className="text-ink-mut">未知</span>}
               </InfoRow>
               {showUpgrade && (
@@ -315,7 +323,7 @@ export default function NodeDetail() {
                   {up.status === 'ok' && <><Badge color="green">升级成功</Badge> <span className="ml-1 text-ink-mut">{up.version} · {fmtTime(up.at)}</span></>}
                   {up.status === 'error' && <><Badge color="red">升级失败</Badge> <span className="ml-1 text-ink-mut break-all">{up.error}</span></>}
                   {up.status === 'pending' && <><Badge color="blue">升级中</Badge> <span className="ml-1 text-ink-mut">已推送 {up.version} · {fmtTime(up.at)}</span></>}
-                  {up.status === 'stuck' && <><Badge color="amber">可能未生效</Badge> <span className="ml-1 text-ink-mut">已确认接收 {up.version}（{fmtTime(up.at)}），当前仍为 {node.agent_version || '未知'}，可能重启失败</span></>}
+                  {up.status === 'stuck' && <><Badge color="amber">可能未生效</Badge> <span className="ml-1 text-ink-mut">已确认接收 {up.version}（{fmtTime(up.at)}），当前仍为 {displayAgentVersion(node, latest_agent_version, latest_agent_sha)}，可能重启失败</span></>}
                 </InfoRow>
               )}
             </div>
