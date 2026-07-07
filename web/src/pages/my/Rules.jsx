@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
@@ -76,7 +76,7 @@ export default function MyRules() {
 
   const allLandingIdx = landingIndex(landingNodes)
 
-  const enrich = useCallback((r) => enrichRuleWithLanding(r, allLandingIdx), [allLandingIdx])
+  const enrich = (r) => enrichRuleWithLanding(r, allLandingIdx)
 
   const deleteRule = async (rule) => {
     if (!(await confirm({ title: '删除规则', message: `确认删除规则「${rule.name}」？`, confirmText: '删除', danger: true }))) return

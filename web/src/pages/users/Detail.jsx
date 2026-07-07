@@ -76,6 +76,12 @@ export default function UserDetail() {
                   {user.traffic_quota_bytes > 0 && ` (${pct(user.traffic_used_bytes, user.traffic_quota_bytes)}%)`}
                   {user.traffic_reset_days > 0 && <span className="text-ink-mut text-xs ml-1">每{user.traffic_reset_days}天重置</span>}
                 </span>
+                <span className="fl">用户视角流量</span>
+                <span className="font-mono">
+                  {fmtTrafficGB((user.traffic_used_bytes || 0) * (user.billing_rate ?? 1), user.traffic_quota_bytes)}
+                  {user.traffic_quota_bytes > 0 && ` (${pct((user.traffic_used_bytes || 0) * (user.billing_rate ?? 1), user.traffic_quota_bytes)}%)`}
+                  <span className="text-ink-mut text-xs ml-1">已用×{user.billing_rate ?? 1}</span>
+                </span>
                 <span className="fl">计费倍率</span>
                 <span className="font-mono">×{user.billing_rate ?? 1}</span>
                 <span className="fl">到期时间</span>
