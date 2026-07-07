@@ -450,27 +450,29 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
 					continue
 				}
-				go func(id string) {
+				id := env.ID
+				safeGo(func() {
 					ack := d.handleUpgrade(ctx, u)
 					select {
 					case d.upgradeCh <- upgradeResult{id: id, ack: ack}:
 					default:
 					}
-				}(env.ID)
+				})
 			case wsproto.TypeProbe:
 				var p wsproto.Probe
 				if err := json.Unmarshal(env.Payload, &p); err != nil {
 					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
 					continue
 				}
-				go func(id string) {
+				id := env.ID
+				safeGo(func() {
 					ack := doProbe(p.Target)
 					raw, _ := json.Marshal(ack)
 					select {
 					case d.cmdCh <- wsproto.Envelope{Type: wsproto.TypeProbeAck, ID: id, Payload: raw}:
 					default:
 					}
-				}(env.ID)
+				})
 			case wsproto.TypePong:
 				// reset is implicit; readOne uses fresh deadline each call
 			case wsproto.TypeError:

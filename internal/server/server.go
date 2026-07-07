@@ -46,10 +46,10 @@ func New(d *sql.DB) (*Server, error) {
 		s.enforceExitQuota(userID)
 	}
 	hub.Redispatch = s.redispatchNodes
-	go s.expiryEnforcer()
-	go s.cycleResetEnforcer()
-	go s.landingSyncEnforcer()
-	go s.landingExpiryEnforcer()
+	safeGo(s.expiryEnforcer)
+	safeGo(s.cycleResetEnforcer)
+	safeGo(s.landingSyncEnforcer)
+	safeGo(s.landingExpiryEnforcer)
 	return s, nil
 }
 
@@ -350,11 +350,12 @@ func (s *Server) dispatchAfterFanout(w http.ResponseWriter, nodeIDs []int64, act
 // rule mutation touched. Dispatches run off the caller's goroutine.
 func (s *Server) redispatchNodes(nodeIDs []int64) {
 	for _, n := range nodeIDs {
-		go func(n int64) {
-			if err := s.dispatchToNode(n); err != nil {
-				log.Printf("dispatch node %d (规则变更): %v", n, err)
+		id := n
+		safeGo(func() {
+			if err := s.dispatchToNode(id); err != nil {
+				log.Printf("dispatch node %d (规则变更): %v", id, err)
 			}
-		}(n)
+		})
 	}
 }
 

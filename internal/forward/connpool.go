@@ -67,7 +67,13 @@ func newConnPool(addr string, size int) *connPool {
 func (p *connPool) Get() (net.Conn, error) {
 	for {
 		select {
-		case tc := <-p.idle:
+		case tc, ok := <-p.idle:
+			if !ok {
+				return dialUpstream(p.addr)
+			}
+			if tc.Conn == nil {
+				continue
+			}
 			if time.Since(tc.created) > poolConnMaxAge {
 				tc.Close()
 				continue

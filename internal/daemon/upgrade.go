@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -84,11 +83,7 @@ func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+	client := &http.Client{}
 	req, err := http.NewRequestWithContext(ctx, "GET", u.DownloadAt, nil)
 	if err != nil {
 		return nil, err

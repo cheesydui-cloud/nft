@@ -224,6 +224,12 @@ func (h *Hub) Close() {
 }
 
 func (h *Hub) writerLoop(ac *agentConn) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("hub: writerLoop panic for node %d: %v", ac.nodeID, r)
+			ac.signalClose()
+		}
+	}()
 	for {
 		select {
 		case <-ac.closed:
@@ -241,6 +247,12 @@ func (h *Hub) writerLoop(ac *agentConn) {
 }
 
 func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("hub: readerLoop panic for node %d: %v", ac.nodeID, r)
+			ac.signalClose()
+		}
+	}()
 	for {
 		ctx, cancel := context.WithTimeout(parent, hubReadTimeout)
 		_, b, err := ac.ws.Read(ctx)
@@ -889,6 +901,11 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			pairs = append(pairs, un)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("hub: OnTrafficUpdate panic: %v", r)
+				}
+			}()
 			for _, un := range pairs {
 				h.OnTrafficUpdate(un.userID, un.nodeID)
 			}
