@@ -24,11 +24,22 @@ func spaHandler() http.Handler {
 		if _, err := fs.Stat(dist, p); err == nil {
 			if strings.HasPrefix(p, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else if p == "index.html" || p == "favicon.svg" {
+				// index.html references hashed JS/CSS chunks that change every
+				// release. Never let browsers or CDNs cache it, otherwise an old
+				// HTML shell will try to load chunks that no longer exist and the
+				// SPA will crash on startup.
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				w.Header().Set("Pragma", "no-cache")
+				w.Header().Set("Expires", "0")
 			}
 			files.ServeHTTP(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		w.Write(index)
 	})
 }
