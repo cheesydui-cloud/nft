@@ -1,49 +1,54 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Component, Suspense, lazy } from 'react'
+import { Component } from 'react'
 import { UserProvider, useUser, BlurProvider, CopyFmtProvider } from './components/Layout'
 import { Loading, ConfirmProvider } from './components/ui'
 
-const Login = lazy(() => import('./pages/Login'))
-const Settings = lazy(() => import('./pages/Settings'))
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const ChangePassword = lazy(() => import('./pages/ChangePassword'))
+import Login from './pages/Login'
+import Settings from './pages/Settings'
+import Dashboard from './pages/Dashboard'
+import ChangePassword from './pages/ChangePassword'
 
-const NodeList = lazy(() => import('./pages/nodes/List'))
-const NodeDetail = lazy(() => import('./pages/nodes/Detail'))
-const RulesList = lazy(() => import('./pages/rules/List'))
-const RulesDetail = lazy(() => import('./pages/rules/Detail'))
-const UserList = lazy(() => import('./pages/users/List'))
-const UserDetail = lazy(() => import('./pages/users/Detail'))
-const Announcements = lazy(() => import('./pages/Announcements'))
-const NodeRepo = lazy(() => import('./pages/NodeRepo'))
+import NodeList from './pages/nodes/List'
+import NodeDetail from './pages/nodes/Detail'
+import RulesList from './pages/rules/List'
+import RulesDetail from './pages/rules/Detail'
+import UserList from './pages/users/List'
+import UserDetail from './pages/users/Detail'
+import Announcements from './pages/Announcements'
+import NodeRepo from './pages/NodeRepo'
 
-const MyDashboard = lazy(() => import('./pages/my/Dashboard'))
-const MyRules = lazy(() => import('./pages/my/Rules'))
-const MyRuleDetail = lazy(() => import('./pages/my/RuleDetail'))
-const MyLandingNodes = lazy(() => import('./pages/my/LandingNodes'))
-const Proxies = lazy(() => import('./pages/Proxies'))
+import MyDashboard from './pages/my/Dashboard'
+import MyRules from './pages/my/Rules'
+import MyRuleDetail from './pages/my/RuleDetail'
+import MyLandingNodes from './pages/my/LandingNodes'
+import Proxies from './pages/Proxies'
 
 // ErrorBoundary: catches render errors in any child component and shows a
 // friendly fallback instead of letting the whole page go white.
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props)
-    this.state = { hasError: false }
+    this.state = { hasError: false, error: null }
   }
-  static getDerivedStateFromError() {
-    return { hasError: true }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
   }
   componentDidCatch(error, info) {
     console.error('ErrorBoundary caught:', error, info)
   }
   render() {
     if (this.state.hasError) {
+      const err = this.state.error
+      const details = err?.stack || err?.message || String(err) || '未知错误'
       return (
-        <div className="min-h-screen flex items-center justify-center bg-app">
-          <div className="text-center">
+        <div className="min-h-screen flex items-center justify-center bg-app p-6">
+          <div className="text-center max-w-2xl">
             <h1 className="text-xl font-bold text-ink">页面加载出错</h1>
-            <p className="mt-2 text-ink-soft">请刷新页面重试，如果问题持续请联系管理员。</p>
+            <p className="mt-2 text-ink-soft">请刷新页面重试，如果问题持续请把下方错误信息发给管理员。</p>
             <button onClick={() => window.location.reload()} className="mt-4 btn-primary">刷新页面</button>
+            <div className="mt-6 text-left bg-surface border border-line rounded-lg p-4 overflow-auto max-h-[60vh]">
+              <pre className="text-[12px] text-red-600 whitespace-pre-wrap break-words">{details}</pre>
+            </div>
           </div>
         </div>
       )
@@ -102,7 +107,6 @@ export default function App() {
         <BlurProvider>
         <CopyFmtProvider>
         <ErrorBoundary>
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-app"><Loading /></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
 
@@ -131,7 +135,6 @@ export default function App() {
 
           <Route path="*" element={<NotFound />} />
         </Routes>
-        </Suspense>
         </ErrorBoundary>
         </CopyFmtProvider>
         </BlurProvider>
