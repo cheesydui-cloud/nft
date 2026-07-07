@@ -67,7 +67,12 @@ export default function NodeList() {
   if (loading && !data) return <Layout><Loading /></Layout>
   if (!data && error) return <Layout><Empty title="加载失败" desc={error}><button onClick={load} className="btn-secondary text-xs mt-3">重试</button></Empty></Layout>
 
-  const { nodes = [], latest_agent_version, node_traffic = {}, node_raw_traffic = {} } = data || {}
+  const { nodes = [], latest_agent_version, latest_agent_sha, node_traffic = {}, node_raw_traffic = {} } = data || {}
+  const isAgentOutdated = (n) => {
+    if (n.agent_sha && latest_agent_sha && n.agent_sha === latest_agent_sha) return false
+    if (n.agent_version === 'latest') return false
+    return n.agent_version && n.agent_version !== latest_agent_version
+  }
   const singleNodes = nodes.filter(n => n.node_type !== 'composite')
   const compositeNodes = nodes.filter(n => n.node_type === 'composite')
   const tabNodes = tab === 'composite' ? compositeNodes : singleNodes
@@ -244,7 +249,7 @@ export default function NodeList() {
                   </td>
                   <td className="font-mono text-xs">
                     {n.agent_version ? (
-                      <span className={n.agent_version !== latest_agent_version ? 'text-red-600' : ''}>{n.agent_version}</span>
+                      <span className={isAgentOutdated(n) ? 'text-red-600' : ''}>{n.agent_version}</span>
                     ) : <span className="text-ink-mut">--</span>}
                   </td>
                   <td className="font-mono text-xs text-ink-soft">

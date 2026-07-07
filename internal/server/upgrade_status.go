@@ -23,9 +23,17 @@ type upgradeView struct {
 
 // deriveUpgradeStatus turns a node's stored last-upgrade columns plus its live
 // agent_version into a display status. It surfaces the silent failure: an acked
-// upgrade whose target version never took, past the grace window.
-func deriveUpgradeStatus(n *db.Node, serverVersion string, now time.Time) upgradeView {
+// upgrade whose target version never took, past the grace window. If the agent's
+// binary SHA matches the server's target agent SHA, the node is considered up-to-
+// date even when the version label is stale (e.g. "latest" written by an older
+// installer).
+func deriveUpgradeStatus(n *db.Node, serverVersion, latestAgentSHA string, now time.Time) upgradeView {
 	if !n.LastUpgradeAt.Valid {
+		return upgradeView{Status: "none"}
+	}
+	// Binary identity is authoritative: same SHA means same agent, regardless of
+	// the version label the daemon happens to report.
+	if n.AgentSHA != "" && latestAgentSHA != "" && n.AgentSHA == latestAgentSHA {
 		return upgradeView{Status: "none"}
 	}
 	// A node at or above the panel's current version has nothing to report;

@@ -18,6 +18,14 @@ function semverLT(a, b) {
   return false
 }
 
+// The version label is not always reliable (older installers wrote "latest");
+// use the binary SHA as the authoritative identity when both sides provide it.
+function agentIsOutdated(node, latestVersion, latestSHA) {
+  if (node.agent_sha && latestSHA && node.agent_sha === latestSHA) return false
+  if (node.agent_version === 'latest') return false
+  return node.agent_version && semverLT(node.agent_version, latestVersion)
+}
+
 export default function NodeDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -76,12 +84,12 @@ export default function NodeDetail() {
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="节点不存在" /></Layout>
 
-  const { node, panel_url, panel_url_configured, latest_agent_version } = data
+  const { node, panel_url, panel_url_configured, latest_agent_version, latest_agent_sha } = data
   const ruleHops = data.rule_hops || []
   const nodeHops = data.node_hops || []
   const grantedUsers = data.granted_users || []
   const isComposite = node.node_type === 'composite'
-  const agentOutdated = node.agent_version && semverLT(node.agent_version, latest_agent_version)
+  const agentOutdated = agentIsOutdated(node, latest_agent_version, latest_agent_sha)
   const up = data.upgrade || { status: 'none' }
   const showUpgrade = up.status !== 'none'
 

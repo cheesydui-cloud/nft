@@ -342,11 +342,17 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 	if nodeRawTraffic == nil {
 		nodeRawTraffic = map[int64]int64{}
 	}
+	art, _ := s.loadAgentArtifact()
+	latestAgentSHA := ""
+	if art != nil {
+		latestAgentSHA = art.SHA
+	}
 	jsonOK(w, map[string]any{
 		"nodes": nodes, "panel_url": panelURL, "panel_name": panelName,
 		"node_traffic":         nodeTraffic,
 		"node_raw_traffic":     nodeRawTraffic,
 		"latest_agent_version": serverVersion(),
+		"latest_agent_sha":     latestAgentSHA,
 		"show_rate_to_user":    showRate == "1",
 	})
 }
@@ -551,11 +557,17 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grantedUsers, _ := db.ListUsersForNode(s.DB, n.ID)
+	art, _ := s.loadAgentArtifact()
+	latestAgentSHA := ""
+	if art != nil {
+		latestAgentSHA = art.SHA
+	}
 	resp := map[string]any{
 		"node": nodeWithSecret{Node: n, Secret: n.Secret}, "rule_hops": views, "panel_url": panelURL,
 		"panel_url_configured": panelURL != "",
 		"latest_agent_version": serverVersion(),
-		"upgrade":              deriveUpgradeStatus(n, serverVersion(), time.Now()),
+		"latest_agent_sha":     latestAgentSHA,
+		"upgrade":              deriveUpgradeStatus(n, serverVersion(), latestAgentSHA, time.Now()),
 		"granted_users":        grantedUsers,
 	}
 
