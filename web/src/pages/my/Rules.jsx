@@ -67,7 +67,7 @@ export default function MyRules() {
 
   if (loading) return <Layout><Loading /></Layout>
 
-  const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [], billing_rate } = data || {}
+  const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [] } = data || {}
 
   // Filter server-assigned nodes by global role table — only landing-marked ones
   // appear in the exit picker (unconfigured/direct ones are excluded).
@@ -134,7 +134,7 @@ export default function MyRules() {
           <TableScroll>
             <RulesTable variant="my" rules={filtered} nodeMap={node_by_id} blurred={blurred}
               onDelete={deleteRule} onCopy={copyRule} onRowClick={r => navigate(`/my/rules/${r.id}`)}
-              probeAllTrigger={probeAllTrigger} displayRate={billing_rate ?? 1} landingExpiry={landingExpiry} />
+              probeAllTrigger={probeAllTrigger} displayRate={user?.billing_rate ?? 1} landingExpiry={landingExpiry} />
           </TableScroll>
         )}
       </Panel>
