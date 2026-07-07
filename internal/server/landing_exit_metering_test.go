@@ -34,7 +34,7 @@ func TestExitLedgerCountsFinalHopOnly(t *testing.T) {
 	ruleID := createTestRuleWithHops(t, d, uid, n1.ID, n2.ID)
 	seedLandingExit(t, d, uid, "8.8.8.8", 443, 0, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	p1 := getHopPort(t, d, ruleID, n1.ID)
 	p2 := getHopPort(t, d, ruleID, n2.ID)
 	s.Hub.applyCounters(n1.ID, []wsproto.CounterSample{{Proto: "tcp", ListenPort: p1, BytesUp: 300, BytesDown: 700}})
@@ -65,7 +65,7 @@ func TestExitLedgerIgnoresRelayCollision(t *testing.T) {
 	d.Exec(`UPDATE rule_hops SET target_host='8.8.8.8', target_port=443 WHERE rule_id=? AND position=0`, ruleID)
 	seedLandingExit(t, d, uid, "8.8.8.8", 443, 0, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	p1 := getHopPort(t, d, ruleID, n1.ID)
 	s.Hub.applyCounters(n1.ID, []wsproto.CounterSample{{Proto: "tcp", ListenPort: p1, BytesUp: 500, BytesDown: 500}})
 
@@ -87,7 +87,7 @@ func TestExitLedgerUnidirectionalAndTouch(t *testing.T) {
 	ruleID := createTestRuleDirectNode(t, d, uid, n1.ID)
 	seedLandingExit(t, d, uid, "8.8.8.8", 443, 0, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	touched := make(chan struct{}, 1)
 	s.Hub.OnTrafficUpdate = func(userID, nodeID int64) {
 		select {
@@ -123,7 +123,7 @@ func TestExitLedgerSkipsAbsentAndForeign(t *testing.T) {
 	seedLandingExit(t, d, uid, "8.8.8.8", 443, 0, 0)
 	d.Exec(`UPDATE user_landing_exits SET present=0 WHERE user_id=?`, uid)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	port := getHopPort(t, d, ruleID, n1.ID)
 	s.Hub.applyCounters(n1.ID, []wsproto.CounterSample{{Proto: "tcp", ListenPort: port, BytesUp: 100, BytesDown: 100}})
 

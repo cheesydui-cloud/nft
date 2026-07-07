@@ -89,7 +89,7 @@ func TestApiUpgradeNodeRecordsError(t *testing.T) {
 	}
 	cookie := &http.Cookie{Name: sessionCookie, Value: cookieTok}
 
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	// Warm the agent artifact cache so the push reaches SendUpgrade without
 	// hitting GitHub (a "dev" test build has no matching release).

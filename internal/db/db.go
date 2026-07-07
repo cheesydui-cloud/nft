@@ -24,13 +24,25 @@ func Open(path string) (*sql.DB, error) {
 	// synchronous=NORMAL is the recommended durability level under WAL: safe
 	// across application crashes, only the last transaction is at risk on OS
 	// power loss. It avoids an fsync per commit, which matters here because the
-	// hot counters path commits frequently and MaxOpenConns(1) serializes every
-	// writer behind those fsyncs.
+	// hot counters path commits frequently. MaxOpenConns is kept modest: WAL
+	// allows readers to proceed concurrently with a writer, but writes still
+	// serialize; a small pool prevents churn while letting API/WebSocket/counter
+	// traffic share the database without queueing behind a single connection.
 	d, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
-	d.SetMaxOpenConns(1)
+	// In-memory databases are per-connection in SQLite. A connection pool larger
+	// than 1 would give each goroutine a different empty database, breaking tests
+	// that use :memory:. Keep the pool at 1 for in-memory mode; file databases
+	// can use a larger pool.
+	if path == ":memory:" {
+		d.SetMaxOpenConns(1)
+		d.SetMaxIdleConns(1)
+	} else {
+		d.SetMaxOpenConns(8)
+		d.SetMaxIdleConns(8)
+	}
 	if err := d.Ping(); err != nil {
 		return nil, err
 	}

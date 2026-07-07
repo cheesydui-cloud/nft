@@ -58,7 +58,7 @@ func TestUserCreateRuleOnGrantedCompositeNode(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0) // only the composite, not its sub-nodes
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRule(t, s, cookie, comp.ID, "vless")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("composite grant should allow rule creation; status=%d body=%s", rec.Code, rec.Body.String())
@@ -82,7 +82,7 @@ func TestUserCreateRuleRejectsUngrantedCompositeNode(t *testing.T) {
 	// granted a sub-node but NOT the composite itself
 	_ = db.GrantNode(d, uid, a.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRule(t, s, cookie, comp.ID, "vless")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("ungranted composite must be 403, got %d body=%s", rec.Code, rec.Body.String())
@@ -103,7 +103,7 @@ func TestMyListRulesItemShapeIsFlat(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, g.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	if rec := createMyRule(t, s, cookie, g.ID, "r1"); rec.Code != http.StatusOK {
 		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -163,7 +163,7 @@ func TestMyRulesCarriesGrantedBindings(t *testing.T) {
 	_ = db.GrantNode(d, uid, up.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0) // other 未授权 → 其边不下发
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	req := httptest.NewRequest("GET", "/api/my/rules", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()

@@ -39,7 +39,7 @@ func adminJSON(t *testing.T, s *Server, admin *http.Cookie, method, url string, 
 
 func TestSingleNodeRuleModeCreateAndEdit(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	n, _ := db.CreateNode(d, "n1", "", "t1")
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
@@ -80,7 +80,7 @@ func TestSingleNodeRuleModeCreateAndEdit(t *testing.T) {
 
 func TestSingleNodeRuleModeUDPCoercesKernel(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	n, _ := db.CreateNode(d, "n1", "", "t1")
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")

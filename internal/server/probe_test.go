@@ -51,7 +51,7 @@ func probeChainStatus(t *testing.T, s *Server, ruleID int64, cookie *http.Cookie
 // user's hop node names and targets via the chain probe.
 func TestProbeChainOwnershipGate(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	owner, ownerCookie := loginAsUser(t, d, 10)
 	ruleID := createOwnedRule(t, s, d, owner, ownerCookie)

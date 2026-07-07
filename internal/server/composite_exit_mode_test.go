@@ -106,7 +106,7 @@ func adminCreateRuleID(t *testing.T, s *Server, admin *http.Cookie, body map[str
 // composite config's modes.
 func TestCompositeRuleCreateUsesRequestModeForExitHop(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	comp := threeNodeChain(t, d, "kernel")
 
@@ -122,7 +122,7 @@ func TestCompositeRuleCreateUsesRequestModeForExitHop(t *testing.T) {
 // silently rewrite the exit segment on every edit.
 func TestCompositeRuleLegacyModeFieldIgnored(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	comp := threeNodeChain(t, d, "userspace")
 
@@ -142,7 +142,7 @@ func TestCompositeRuleLegacyModeFieldIgnored(t *testing.T) {
 // hop — the same default a single-node rule gets — not the config's tail mode.
 func TestCompositeRuleCreateDefaultsExitHopKernel(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	comp := threeNodeChain(t, d, "userspace")
 
@@ -156,7 +156,7 @@ func TestCompositeRuleCreateDefaultsExitHopKernel(t *testing.T) {
 // the config/default mode; an explicit mode switches it.
 func TestCompositeRuleEditExitHopMode(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	comp := threeNodeChain(t, d, "kernel")
 
@@ -180,7 +180,7 @@ func TestCompositeRuleEditExitHopMode(t *testing.T) {
 // the admin ones.
 func TestMyCompositeRuleExitHopMode(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	comp := threeNodeChain(t, d, "kernel")
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
@@ -217,7 +217,7 @@ func TestMyCompositeRuleExitHopMode(t *testing.T) {
 // prefill the exit-segment picker; entry_mode alone reflects the first hop.
 func TestRuleListItemExposesExitMode(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	comp := threeNodeChain(t, d, "kernel")
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
@@ -254,7 +254,7 @@ func TestRuleListItemExposesExitMode(t *testing.T) {
 // hop; exit_mode wins when both are present so old and new clients coexist.
 func TestSingleNodeRuleExitModeField(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	n, _ := db.CreateNode(d, "n1", "", "t1")
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
@@ -271,7 +271,7 @@ func TestSingleNodeRuleExitModeField(t *testing.T) {
 // or the composite config asks for.
 func TestCompositeRuleUDPCoercesAllHopsKernel(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	comp := threeNodeChain(t, d, "userspace")
 

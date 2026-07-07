@@ -21,7 +21,7 @@ func TestAPISetPerNodeQuota(t *testing.T) {
 	uid, _ := loginAsUser(t, d, 10)
 	n, _ := db.CreateNode(d, "qnode", "", "")
 	db.GrantNode(d, uid, n.ID, 10, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"traffic_quota_bytes": 1073741824})
@@ -46,7 +46,7 @@ func TestAPIResetPerNodeTraffic(t *testing.T) {
 	n, _ := db.CreateNode(d, "rnode", "", "")
 	db.GrantNode(d, uid, n.ID, 10, 0)
 	db.AddUserNodeTraffic(d, uid, n.ID, 5000)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/reset-traffic", nil)
@@ -70,7 +70,7 @@ func TestAPIResetTrafficClearsPerNode(t *testing.T) {
 	db.GrantNode(d, uid, n.ID, 10, 0)
 	db.AddUserTraffic(d, uid, 3000)
 	db.AddUserNodeTraffic(d, uid, n.ID, 2000)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/reset-traffic", nil)
@@ -94,7 +94,7 @@ func TestAPIResetTrafficClearsPerNode(t *testing.T) {
 func TestAPISetResetDays(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"traffic_reset_days": 30})

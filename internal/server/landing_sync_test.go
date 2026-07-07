@@ -14,7 +14,7 @@ func TestResolveLandingExitsManualOnly(t *testing.T) {
 	uid, _ := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
 	u, _ := db.GetUserByID(d, uid)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	nodes, ok := s.resolveLandingExits(u, false)
 	if !ok || len(nodes) != 1 || nodes[0].Host != "1.2.3.4" {
@@ -30,7 +30,7 @@ func TestResolveLandingExitsSubFailure(t *testing.T) {
 	uid, _ := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "http://127.0.0.1:1/sub", "vless://u@1.2.3.4:443#HK")
 	u, _ := db.GetUserByID(d, uid)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	if _, ok := s.resolveLandingExits(u, true); ok {
 		t.Fatal("subscription fetch failure must report ok=false")
@@ -42,7 +42,7 @@ func TestSyncLandingExitsMaterializes(t *testing.T) {
 	uid, _ := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK\nvless://u@1.2.3.4:443#DUP")
 	u, _ := db.GetUserByID(d, uid)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	nodes, ok := s.resolveLandingExits(u, false)
 	if !ok {
@@ -59,7 +59,7 @@ func TestLandingSyncPassBackfillsManualUsers(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	s.landingSyncPass(true)
 	exits, _ := db.ListUserLandingExits(d, uid)
@@ -79,7 +79,7 @@ func TestLandingSyncPassKeepsSetOnSubFailure(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
-	s, _ := New(d)
+	s := newServer(t, d)
 	s.landingSyncPass(true)
 
 	// switching to a failing subscription must not flip the existing rows
@@ -95,7 +95,7 @@ func TestMyLandingNodesCarriesLedger(t *testing.T) {
 	d := openDB(t)
 	uid, cookie := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	req := httptest.NewRequest("GET", "/api/my/landing-nodes", nil)
 	req.AddCookie(cookie)
@@ -139,7 +139,7 @@ func TestLandingIndexFromDB(t *testing.T) {
 	db.SyncUserLandingExits(d, uid, []db.LandingExitInput{
 		{Host: "5.6.7.8", Port: 8443, Name: "TW", Protocol: "trojan", URI: "trojan://u@5.6.7.8:8443#TW"},
 	}, "", "")
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	idx := s.landingIndexFromDB(uid)
 	if _, ok := idx["1.2.3.4:443"]; ok {
@@ -157,7 +157,7 @@ func TestMyLandingNodesStaleFallback(t *testing.T) {
 	// materialize while healthy, then break the subscription
 	db.SyncUserLandingExits(d, uid, []db.LandingExitInput{{Host: "1.2.3.4", Port: 443, Name: "HK", Protocol: "vless", URI: "vless://u@1.2.3.4:443#HK"}}, "", "")
 	d.Exec(`UPDATE users SET landing_sub_url='http://127.0.0.1:1/sub' WHERE id=?`, uid)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	req := httptest.NewRequest("GET", "/api/my/landing-nodes?refresh=1", nil)
 	req.AddCookie(cookie)
@@ -180,7 +180,7 @@ func TestMyLandingNodesAppliesNameOverride(t *testing.T) {
 	d := openDB(t)
 	uid, cookie := loginAsUser(t, d, 10)
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	// first request materializes the exit set the rename targets
 	req := httptest.NewRequest("GET", "/api/my/landing-nodes", nil)

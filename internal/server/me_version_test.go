@@ -10,7 +10,7 @@ import (
 // without a separate endpoint; a non-release build reports "dev".
 func TestMeIncludesServerVersion(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	req := httptest.NewRequest("GET", "/api/me", nil)

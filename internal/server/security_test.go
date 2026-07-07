@@ -16,7 +16,7 @@ import (
 // endpoint (needed for the install command).
 func TestNodeSecretNotLeakedToUser(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	const secret = "super-secret-node-token-abc123"
 	n, _ := db.CreateNode(d, "leaky", "https://p", secret)
@@ -50,7 +50,7 @@ func TestNodeSecretNotLeakedToUser(t *testing.T) {
 // admin-only.
 func TestProbeNodeAuthorization(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	n, _ := db.CreateNode(d, "probe-node", "https://p", "sekret")
 	granted, grantedCookie := loginAsUser(t, d, 10)

@@ -13,7 +13,7 @@ import (
 // regardless of any frontend gating.
 func TestAdminUserCannotBeResetOrDeleted(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	hash, _ := HashPassword("pw")

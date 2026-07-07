@@ -167,10 +167,7 @@ func CheckAndResetTrafficCycle(d *sql.DB, u *User) (bool, error) {
 	}
 	nowTs := time.Now().Unix()
 	period := int64(u.TrafficResetDays) * 86400
-	var createdAt int64
-	if err := d.QueryRow(`SELECT created_at FROM users WHERE id=?`, u.ID).Scan(&createdAt); err != nil {
-		return false, err
-	}
+	createdAt := u.CreatedAt
 	elapsed := nowTs - createdAt
 	if elapsed < 0 {
 		return false, nil

@@ -200,7 +200,7 @@ func TestApplyCountersMultiplier(t *testing.T) {
 	tx.Commit()
 	hops, _ := db.ListRuleHops(d, ruleID)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	// Same 1000 bytes flow through both hops.
 	for _, hp := range hops {
 		s.Hub.applyCounters(hp.NodeID, []wsproto.CounterSample{
@@ -260,7 +260,7 @@ func TestApplyCountersZeroMultiplierIsFree(t *testing.T) {
 	tx.Commit()
 	hops, _ := db.ListRuleHops(d, ruleID)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	s.Hub.applyCounters(hops[0].NodeID, []wsproto.CounterSample{
 		{Proto: "tcp", ListenPort: hops[0].ListenPort, BytesUp: 2500, BytesDown: 2500},
 	})
@@ -319,7 +319,7 @@ func TestApplyCountersNegativeMultiplierBillsAtUnit(t *testing.T) {
 	tx.Commit()
 	hops, _ := db.ListRuleHops(d, ruleID)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	s.Hub.applyCounters(hops[0].NodeID, []wsproto.CounterSample{
 		{Proto: "tcp", ListenPort: hops[0].ListenPort, BytesUp: 2500, BytesDown: 2500},
 	})

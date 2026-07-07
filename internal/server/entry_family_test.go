@@ -25,7 +25,7 @@ func TestEntryFamilyDerived(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, v4only.ID, "3.3.3.3")
 
 	cookie := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	create := func(name string, nodeID int64, proto string, extra map[string]any) *httptest.ResponseRecorder {
 		payload := map[string]any{"node_id": nodeID, "name": name, "proto": proto, "exit": "9.9.9.9:8443"}

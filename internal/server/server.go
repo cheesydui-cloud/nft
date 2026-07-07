@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -22,15 +23,19 @@ import (
 )
 
 type Server struct {
-	DB              *sql.DB
-	Hub             *Hub
-	Dispatcher      *Dispatcher
-	Landing         *landing.Fetcher
-	loginLimiter    *loginLimiter
-	stopExpiry      chan struct{}
-	stopCycle       chan struct{}
-	stopLandingSync chan struct{}
+	DB                *sql.DB
+	Hub               *Hub
+	Dispatcher        *Dispatcher
+	Landing           *landing.Fetcher
+	loginLimiter      *loginLimiter
+	stopExpiry        chan struct{}
+	stopCycle         chan struct{}
+	stopLandingSync   chan struct{}
 	stopLandingExpiry chan struct{}
+	enforcerWg        sync.WaitGroup
+	stopAll           chan struct{}
+	stopOnce          sync.Once
+	asyncWg           sync.WaitGroup
 }
 
 func New(d *sql.DB) (*Server, error) {
@@ -39,17 +44,24 @@ func New(d *sql.DB) (*Server, error) {
 	}
 	hub := NewHub(d)
 	disp := &Dispatcher{DB: d, Hub: hub}
-	s := &Server{DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(), loginLimiter: newLoginLimiter(), stopExpiry: make(chan struct{}), stopCycle: make(chan struct{}), stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{})}
+	s := &Server{
+		DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
+		loginLimiter: newLoginLimiter(),
+		stopExpiry: make(chan struct{}), stopCycle: make(chan struct{}),
+		stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
+		stopAll: make(chan struct{}),
+	}
 	hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
 		s.enforcePerNodeQuota(userID, nodeID)
 		s.enforceUserQuota(userID)
 		s.enforceExitQuota(userID)
 	}
 	hub.Redispatch = s.redispatchNodes
-	safeGo(s.expiryEnforcer)
-	safeGo(s.cycleResetEnforcer)
-	safeGo(s.landingSyncEnforcer)
-	safeGo(s.landingExpiryEnforcer)
+	s.enforcerWg.Add(4)
+	safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
 	return s, nil
 }
 
@@ -142,6 +154,13 @@ func (s *Server) cycleResetEnforcer() {
 // right after upgrade; the table then persists, so later restarts have no
 // empty-set window.
 func (s *Server) landingSyncEnforcer() {
+	// If Stop() is called before this goroutine starts, skip the backfill pass
+	// so we never touch the database after shutdown has begun.
+	select {
+	case <-s.stopLandingSync:
+		return
+	default:
+	}
 	s.landingSyncPass(true)
 	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
@@ -182,6 +201,42 @@ func (s *Server) landingExpiryEnforcer() {
 			}
 		}
 	}
+}
+
+// Stop gracefully shuts down the server's background goroutines and the hub.
+// It waits for both the periodic enforcers and any in-flight async dispatches
+// to finish, so it must be called before closing the database connection.
+func (s *Server) Stop() {
+	if s.Hub != nil {
+		s.Hub.Close()
+	}
+	close(s.stopExpiry)
+	close(s.stopCycle)
+	close(s.stopLandingSync)
+	close(s.stopLandingExpiry)
+	s.enforcerWg.Wait()
+	s.stopOnce.Do(func() { close(s.stopAll) })
+	s.asyncWg.Wait()
+}
+
+// goAsync starts fn in a goroutine unless the server is already stopped.
+// It tracks the goroutine in asyncWg so Stop() can wait for it.
+func (s *Server) goAsync(fn func()) {
+	select {
+	case <-s.stopAll:
+		return
+	default:
+	}
+	s.asyncWg.Add(1)
+	go func() {
+		defer s.asyncWg.Done()
+		select {
+		case <-s.stopAll:
+			return
+		default:
+		}
+		fn()
+	}()
 }
 
 // landingSyncPass syncs every user with a landing source. includeManualOnly
@@ -315,17 +370,41 @@ func (s *Server) dispatchAfterMutation(w http.ResponseWriter, nodeID int64, acti
 // dispatchAfterFanout dispatches to every node touched by a user-scope
 // mutation. Per-node errors are aggregated into a single flash because
 // the flash cookie holds only one message.
+// An overall timeout plus a bounded concurrency semaphore prevent a single
+// offline/slow node from holding the HTTP request for the full per-node
+// dispatch timeout.
 func (s *Server) dispatchAfterFanout(w http.ResponseWriter, nodeIDs []int64, action string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	type result struct {
 		nodeID int64
 		err    error
 	}
 	results := make(chan result, len(nodeIDs))
 	var wg sync.WaitGroup
+
+	// Bound concurrency so a large fanout doesn't hammer the database and
+	// WebSocket hub all at once.
+	const maxConcurrent = 4
+	sem := make(chan struct{}, maxConcurrent)
+
 	for _, n := range nodeIDs {
 		wg.Add(1)
 		go func(nodeID int64) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- result{nodeID: nodeID, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+
+			if err := ctx.Err(); err != nil {
+				results <- result{nodeID: nodeID, err: err}
+				return
+			}
 			results <- result{nodeID: nodeID, err: s.dispatchToNode(nodeID)}
 		}(n)
 	}
@@ -351,7 +430,7 @@ func (s *Server) dispatchAfterFanout(w http.ResponseWriter, nodeIDs []int64, act
 func (s *Server) redispatchNodes(nodeIDs []int64) {
 	for _, n := range nodeIDs {
 		id := n
-		safeGo(func() {
+		s.goAsync(func() {
 			if err := s.dispatchToNode(id); err != nil {
 				log.Printf("dispatch node %d (规则变更): %v", id, err)
 			}

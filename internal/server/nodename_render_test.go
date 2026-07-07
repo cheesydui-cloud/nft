@@ -18,10 +18,7 @@ func TestRulesListShowsNodeName(t *testing.T) {
 	}
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
 
-	s, err := New(d)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newServer(t, d)
 
 	admin := loginAsAdmin(t, d)
 	body, _ := json.Marshal(map[string]any{

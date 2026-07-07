@@ -18,7 +18,7 @@ func TestGetCompositeNodeHopsCarryChildNames(t *testing.T) {
 	b, _ := db.CreateNode(d, "日本-B", "", "")
 	comp := makeComposite(t, d, "chain", a.ID, b.ID)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/nodes/%d", comp.ID), nil)
 	req.AddCookie(admin)

@@ -20,7 +20,7 @@ func TestCompositeHopMultCreateUsesOwnRateMultiplier(t *testing.T) {
 	_ = db.UpdateNodeRateMultiplier(d, b.ID, 3.0)
 
 	admin := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	rec := adminJSON(t, s, admin, "POST", "/api/nodes", map[string]any{
 		"name": "chain", "node_type": "composite", "rate_multiplier": 2.5,
@@ -100,7 +100,7 @@ func TestCompositeHopMultUpdateIgnoresTrafficMultiplier(t *testing.T) {
 	c, _ := db.CreateNode(d, "hop-c", "", "")
 
 	admin := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	createRec := adminJSON(t, s, admin, "POST", "/api/nodes", map[string]any{
 		"name": "chain", "node_type": "composite", "rate_multiplier": 4.0,

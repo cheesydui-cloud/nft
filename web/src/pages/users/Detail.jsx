@@ -392,9 +392,12 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
     e.preventDefault()
     setLoading(true)
     try {
-      const d = await api.post(`/users/${userId}/landing`, { landing_sub_url: url.trim(), landing_uris: text })
-      setPreview(d?.landing_nodes || [])
-      toast('已保存'); loadExits()
+      await api.post(`/users/${userId}/landing`, { landing_sub_url: url.trim(), landing_uris: text })
+      // Rebuild preview from the materialized ledger so repo-imported exits
+      // (which are never in the subscription/URI source) stay visible after
+      // the sync.
+      reloadLanding()
+      toast('已保存')
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
   }
 

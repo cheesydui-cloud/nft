@@ -36,7 +36,7 @@ func TestDeleteNodeSucceeds(t *testing.T) {
 	d := openDB(t)
 	n, _ := db.CreateNode(d, "n1", "https://p", "t1")
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
 	req.AddCookie(admin)
@@ -67,7 +67,7 @@ func setNodeRelayHost(t *testing.T, s *Server, admin *http.Cookie, nodeID int64,
 func TestSetNodeRelayHostRejectsIPv6Literal(t *testing.T) {
 	d := openDB(t)
 	n, _ := db.CreateNode(d, "n1", "https://p", "t1")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	if code := setNodeRelayHost(t, s, admin, n.ID, "2001:db8::1"); code != http.StatusBadRequest {
@@ -86,7 +86,7 @@ func TestSetNodeRelayHostRejectsIPv6Literal(t *testing.T) {
 func TestSetNodeRelayHostAcceptsIPv4AndHostname(t *testing.T) {
 	d := openDB(t)
 	n, _ := db.CreateNode(d, "n1", "https://p", "t1")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	if code := setNodeRelayHost(t, s, admin, n.ID, "203.0.113.9"); code != http.StatusOK {
@@ -122,7 +122,7 @@ func TestSetNodeRelayHostRejectsWhenDeclared(t *testing.T) {
 	if err := db.SetNodeRelayHostDeclared(d, n.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	if code := setNodeRelayHost(t, s, admin, n.ID, "198.51.100.1"); code != http.StatusConflict {
@@ -146,7 +146,7 @@ func TestSetNodeRelayHostV6RejectsWhenDeclared(t *testing.T) {
 	if err := db.SetNodeRelayHostV6Declared(d, n.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]string{"relay_host_v6": "2001:db8::99"})
@@ -172,7 +172,7 @@ func TestNodeRolesAndBindingsEndpoints(t *testing.T) {
 	up, _ := db.CreateNode(d, "entry-hk", "", "")
 	mid, _ := db.CreateNode(d, "akari", "", "")
 	cookie := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
@@ -221,7 +221,7 @@ func TestNodeBindingsModeDefaultValidationAndDuplicates(t *testing.T) {
 	mid, _ := db.CreateNode(d, "mid", "", "")
 	_ = db.UpdateNodeRoles(d, mid.ID, db.NodeRoleEntry|db.NodeRoleVia)
 	cookie := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	do := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/bindings", mid.ID), bytes.NewReader([]byte(body)))
@@ -264,7 +264,7 @@ func TestDownstreamBindingsFromUpstream(t *testing.T) {
 	m2, _ := db.CreateNode(d, "m2", "", "")
 	// New nodes default to entry|via, so m1/m2 already qualify as downstreams.
 	cookie := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
 		req.Header.Set("Content-Type", "application/json")

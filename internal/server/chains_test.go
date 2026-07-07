@@ -19,10 +19,7 @@ func TestCreateRuleWiresHopsAndShowsEntry(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, h.ID, "2.2.2.2")
 
-	s, err := New(d)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"name":  "vless",
 		"proto": "tcp",
@@ -88,7 +85,7 @@ func TestGetRuleIncludesComputedFields(t *testing.T) {
 	h, _ := db.CreateNode(d, "nnc-hk", "https://p", "t2")
 	_ = db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, h.ID, "2.2.2.2")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{g.ID, h.ID})
@@ -123,7 +120,7 @@ func TestSaveRuleReorderKeepsHops(t *testing.T) {
 	h, _ := db.CreateNode(d, "nnc-hk", "https://p", "t2")
 	_ = db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, h.ID, "2.2.2.2")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{g.ID, h.ID})
@@ -158,7 +155,7 @@ func TestReallocateRuleHopChangesPort(t *testing.T) {
 	h, _ := db.CreateNode(d, "nnc-hk", "https://p", "t2")
 	_ = db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, h.ID, "2.2.2.2")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{g.ID, h.ID})
@@ -192,7 +189,7 @@ func TestSetNodeRelayHost(t *testing.T) {
 	d := openDB(t)
 	n, _ := db.CreateNode(d, "gomami", "https://p", "t1")
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	apiSetRelayHost := func(val string, wantOK bool) {
@@ -231,7 +228,7 @@ func TestCreateRuleRejectsNodeWithoutRelayHost(t *testing.T) {
 	bare, _ := db.CreateNode(d, "bare", "https://p", "t2")
 	_ = db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1")
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"name":  "x",
 		"proto": "tcp",
@@ -286,7 +283,7 @@ func TestSetNodeRelayHostRewiresUpstream(t *testing.T) {
 	b, _ := db.CreateNode(d, "node-b", "https://p", "t2")
 	_ = db.UpdateNodeRelayHost(d, a.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, b.ID, "2.2.2.2")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{a.ID, b.ID})
@@ -314,7 +311,7 @@ func TestDeleteMidNodeRewiresRule(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, a.ID, "1.1.1.1")
 	_ = db.UpdateNodeRelayHost(d, b.ID, "2.2.2.2")
 	_ = db.UpdateNodeRelayHost(d, cNode.ID, "3.3.3.3")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{a.ID, b.ID, cNode.ID})

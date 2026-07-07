@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type User struct {
 	// TrafficResetDays is the rolling window length in days; 0 means never auto-reset.
 	TrafficResetDays   int           `json:"traffic_reset_days"`
 	LastTrafficResetAt int64         `json:"last_traffic_reset_at"`
+	CreatedAt          int64         `json:"created_at"`
 	ExpiresAt          sql.NullInt64 `json:"expires_at"`
 	// LandingSubURL is an optional subscription URL; LandingURIs is an optional
 	// newline-separated list of proxy URIs. They combine into the user's set of
@@ -208,14 +210,14 @@ func CreateUser(d *sql.DB, username, pwHash, role string) (int64, error) {
 func scanUser(r rowScanner) (*User, error) {
 	u := &User{}
 	var disabled int
-	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.ExpiresAt, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
 		return nil, err
 	}
 	u.Disabled = disabled == 1
 	return u, nil
 }
 
-const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
+const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
 
 func ListUsers(d *sql.DB) ([]*User, error) {
 	return queryAll(d, `SELECT `+userCols+` FROM users ORDER BY id`, scanUser)
@@ -241,6 +243,32 @@ func GetUserByUsername(d *sql.DB, username string) (*User, error) {
 
 func GetUserByID(d *sql.DB, id int64) (*User, error) {
 	return scanUser(d.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+// GetUsersByIDs returns a map of users keyed by ID for the given set of IDs.
+func GetUsersByIDs(d *sql.DB, ids []int64) (map[int64]*User, error) {
+	if len(ids) == 0 {
+		return map[int64]*User{}, nil
+	}
+	ph := strings.Repeat("?,", len(ids)-1) + "?"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := d.Query(`SELECT `+userCols+` FROM users WHERE id IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[int64]*User, len(ids))
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		m[u.ID] = u
+	}
+	return m, rows.Err()
 }
 
 func CountUsers(d *sql.DB) (int, error) {
@@ -285,7 +313,7 @@ func CreateSession(d *sql.DB, userID int64, ttl time.Duration) (string, error) {
 	return token, nil
 }
 
-const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
+const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
 
 func GetSessionUser(d *sql.DB, token string) (*User, error) {
 	return scanUser(d.QueryRow(`

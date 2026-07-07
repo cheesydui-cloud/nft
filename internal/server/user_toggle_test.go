@@ -35,7 +35,7 @@ func TestResetTrafficReEnablesQuotaDisabledUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	postAdmin(t, s, admin, fmt.Sprintf("/api/users/%d/reset-traffic", uid))
@@ -63,7 +63,7 @@ func TestResetTrafficKeepsAdminDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	postAdmin(t, s, admin, fmt.Sprintf("/api/users/%d/reset-traffic", uid))

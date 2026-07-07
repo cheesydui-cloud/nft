@@ -26,10 +26,10 @@ async function request(method, path, body) {
     throw new Error('网络错误，请检查网络连接后重试')
   }
   if (res.status === 401) {
-    if (window.location.pathname !== '/login') {
-      window.location.href = '/login'
-    }
-    return null
+    // Broadcast an event so the UserProvider can soft-navigate to /login via
+    // React Router instead of doing a full page reload and losing form state.
+    window.dispatchEvent(new CustomEvent('nf-unauthorized'))
+    throw new Error('登录已过期，请重新登录')
   }
   if (res.status === 204) return null
 

@@ -39,7 +39,7 @@ func TestUserCreateRuleOnGrantedNode(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, g.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"node_id": g.ID,
 		"name":    "vless",
@@ -67,7 +67,7 @@ func TestUserCreateRuleRejectsUngrantedNode(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	// not granted
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"node_id": g.ID,
 		"name":    "x",
@@ -92,7 +92,7 @@ func TestUserCreateRuleRejectsOverQuota(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 0) // max_forwards = 0
 	_ = db.GrantNode(d, uid, g.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"node_id": g.ID,
 		"name":    "x",
@@ -118,7 +118,7 @@ func TestUserDeleteRuleBlocksCrossUser(t *testing.T) {
 	_, cookieB := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uidA, g.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	body, _ := json.Marshal(map[string]any{
 		"node_id": g.ID,

@@ -55,7 +55,7 @@ func TestReconcileOnConnect(t *testing.T) {
 // re-dispatches the affected nodes, so forwarding (and billing) actually stops.
 func TestRevokeNodeDeletesUserRules(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	n, _ := db.CreateNode(d, "granted", "https://p", "s")
 	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")

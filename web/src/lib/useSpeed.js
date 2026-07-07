@@ -21,11 +21,25 @@ export function useSpeed() {
   useEffect(() => {
     let unmounted = false
     let reconnectTimer = null
+    let delay = 3000
+    const initialDelay = 3000
+    const maxDelay = 30000
+    let visible = !document.hidden
+
+    function scheduleReconnect() {
+      if (unmounted) return
+      reconnectTimer = setTimeout(() => {
+        delay = Math.min(delay * 2, maxDelay)
+        connect()
+      }, visible ? delay : maxDelay)
+    }
 
     function connect() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(proto + '//' + location.host + '/api/ws/speed')
       wsRef.current = ws
+
+      ws.onopen = () => { delay = initialDelay }
 
       ws.onmessage = (e) => {
         try {
@@ -41,19 +55,26 @@ export function useSpeed() {
         } catch {}
       }
 
-      ws.onclose = () => {
-        if (!unmounted) {
-          reconnectTimer = setTimeout(connect, 3000)
-        }
-      }
+      ws.onclose = () => scheduleReconnect()
 
       ws.onerror = () => ws.close()
     }
+
+    const visibilityHandler = () => {
+      visible = !document.hidden
+      if (visible && reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+        connect()
+      }
+    }
+    document.addEventListener('visibilitychange', visibilityHandler)
 
     connect()
 
     return () => {
       unmounted = true
+      document.removeEventListener('visibilitychange', visibilityHandler)
       clearTimeout(reconnectTimer)
       if (wsRef.current) wsRef.current.close()
     }

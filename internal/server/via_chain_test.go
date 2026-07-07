@@ -56,7 +56,7 @@ func TestViaChainAssembly(t *testing.T) {
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRuleVia(t, s, cookie, entry.ID, []int64{mid.ID}, "r1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
@@ -101,7 +101,7 @@ func TestCompositeAsMiddleKeepsConfigMode(t *testing.T) {
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
 	_ = db.GrantNode(d, uid, tailVia.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	body, _ := json.Marshal(map[string]any{
 		"node_id": entry.ID, "via_node_ids": []int64{mid.ID, tailVia.ID},
 		"name": "r-mid", "proto": "tcp", "exit": "9.9.9.9:8443", "exit_mode": "kernel",
@@ -135,7 +135,7 @@ func TestViaChainValidation(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	// 有授权、有角色，但无绑定边 → 400
 	n, _ := db.GetNode(d, mid.ID)
@@ -172,7 +172,7 @@ func TestViaChainDuplicatePhysicalNodeConflict(t *testing.T) {
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, x.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRuleVia(t, s, cookie, entry.ID, []int64{x.ID}, "dup-node")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d %s", rec.Code, rec.Body.String())
@@ -190,7 +190,7 @@ func TestEntryRoleEnforced(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, viaOnly.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRuleVia(t, s, cookie, viaOnly.ID, nil, "r-entry-role")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("via-only as entry: want 400, got %d %s", rec.Code, rec.Body.String())
@@ -208,7 +208,7 @@ func TestEditWithoutViaFieldKeepsPath(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	rec := createMyRuleVia(t, s, cookie, entry.ID, []int64{mid.ID}, "r1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())

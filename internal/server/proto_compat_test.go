@@ -31,7 +31,7 @@ func TestCreateMyRuleAcceptsTCPUDP(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, g.ID, 5, 0)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	for _, tc := range []struct {
 		proto string
 		want  int

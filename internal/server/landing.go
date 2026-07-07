@@ -92,7 +92,7 @@ func (s *Server) syncLandingExits(u *db.User, nodes []landing.Node) {
 	if !synced || len(flipped) == 0 {
 		return
 	}
-	safeGo(func() {
+	s.goAsync(func() {
 		for _, k := range flipped {
 			s.redispatchUserExit(u.ID, k.Host, k.Port)
 		}
@@ -341,7 +341,7 @@ func (s *Server) apiSetLandingExitQuota(w http.ResponseWriter, r *http.Request) 
 	// A lowered quota may start excluding immediately; a raised/cleared one
 	// lifts the exclusion. Residual rows sit outside the exclusion — no push.
 	if present {
-		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
+		s.goAsync(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.set_exit_quota", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d bytes=%d", body.Host, body.Port, body.QuotaBytes))
@@ -370,7 +370,7 @@ func (s *Server) apiResetLandingExitTraffic(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if present {
-		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
+		s.goAsync(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.reset_exit_traffic", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))
@@ -402,7 +402,7 @@ func (s *Server) apiDeleteLandingExit(w http.ResponseWriter, r *http.Request) {
 	// If a present row was deleted, re-dispatch rules pointed at it so the
 	// data plane drops the forward.
 	if wasPresent {
-		safeGo(func() { s.redispatchUserExit(id, body.Host, body.Port) })
+		s.goAsync(func() { s.redispatchUserExit(id, body.Host, body.Port) })
 	}
 	db.WriteAudit(s.DB, u.ID, "user.delete_exit", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d", body.Host, body.Port))

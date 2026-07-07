@@ -1,8 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, Navigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { resolvedDark, getStoredTheme, setStoredTheme } from '../lib/theme'
 import { hasLocalURIs, hasLocalProxies } from '../lib/landing'
+import { Loading } from './ui'
 
 /* ---------- User context ---------- */
 const UserCtx = createContext(null)
@@ -24,6 +25,12 @@ export function UserProvider({ children }) {
       setPanelName(data?.panel_name || '')
       setVersion(data?.version || '')
     }).catch(() => setUser(null))
+  }, [])
+
+  useEffect(() => {
+    const handler = () => setUser(null)
+    window.addEventListener('nf-unauthorized', handler)
+    return () => window.removeEventListener('nf-unauthorized', handler)
   }, [])
 
   const toast = useCallback((msg, type) => {
@@ -93,7 +100,14 @@ export function Layout({ children }) {
     window.location.href = '/login'
   }
 
-  if (!user) return null
+  if (user === undefined) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-app">
+        <Loading />
+      </div>
+    )
+  }
+  if (user === null) return <Navigate to="/login" replace />
 
   const isAdmin = user.role === 'admin'
 

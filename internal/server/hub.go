@@ -666,10 +666,33 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 
 	type userNode struct{ userID, nodeID int64 }
 	touched := map[userNode]bool{}
-	// userCache holds each owning user loaded once per batch (nil on load error),
-	// serving both the cycle-reset check and the billing-rate lookup so the same
-	// user isn't queried twice per sample.
+
+	// Pre-load all owning users and run cycle-reset checks once per batch,
+	// outside the sample loop and outside the flush transaction. This removes
+	// per-sample GetUserByID/CheckAndResetTrafficCycle queries from the hot
+	// path while keeping the reset/redispatch behavior identical.
 	userCache := map[int64]*db.User{}
+	if len(ownerIDs) > 0 {
+		loaded, err := db.GetUsersByIDs(h.DB, ownerIDs)
+		if err != nil {
+			log.Printf("hub: node %d load users for counters: %v", nodeID, err)
+		} else {
+			for uid, u := range loaded {
+				if u == nil {
+					continue
+				}
+				if reset, _ := db.CheckAndResetTrafficCycle(h.DB, u); reset {
+					if u.Disabled && u.DisableReason.Valid && u.DisableReason.String == "流量超额" {
+						_ = db.SetUserDisabled(h.DB, uid, false, "")
+					}
+					if nodes, err := db.DistinctUserNodes(h.DB, uid); err == nil && h.Redispatch != nil {
+						go h.Redispatch(nodes)
+					}
+				}
+				userCache[uid] = u
+			}
+		}
+	}
 
 	// Accumulate all row mutations and flush them in one transaction after the
 	// loop. Reads, cycle resets and redispatch stay outside any tx: with
@@ -729,24 +752,6 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 		hasOwner := r != nil && r.OwnerID.Valid && billedDelta > 0
 		if hasOwner {
 			userID = r.OwnerID.Int64
-
-			u, cached := userCache[userID]
-			if !cached {
-				u, _ = db.GetUserByID(h.DB, userID) // nil on error; cache either way
-				userCache[userID] = u
-				if u != nil {
-					if reset, _ := db.CheckAndResetTrafficCycle(h.DB, u); reset {
-						if u.Disabled && u.DisableReason.Valid && u.DisableReason.String == "流量超额" {
-							_ = db.SetUserDisabled(h.DB, userID, false, "")
-						}
-						// Quota exclusions are evaluated at push time only; a
-						// fresh cycle must re-push or suppressed rules stay dead.
-						if nodes, err := db.DistinctUserNodes(h.DB, userID); err == nil && h.Redispatch != nil {
-							go h.Redispatch(nodes)
-						}
-					}
-				}
-			}
 
 			// Entry multiplier is kept only for the legacy rule_hops.billed_bytes
 			// admin metric; it does not affect user billing.

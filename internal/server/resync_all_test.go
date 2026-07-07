@@ -19,7 +19,7 @@ func TestResyncAllNodesSkipsComposite(t *testing.T) {
 	b, _ := db.CreateNode(d, "jp", "", "")
 	comp := makeComposite(t, d, "chain", a.ID, b.ID)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	req := httptest.NewRequest("POST", "/api/nodes/resync-all", nil)
 	req.AddCookie(admin)

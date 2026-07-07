@@ -116,7 +116,7 @@ func TestEnforceExitQuota(t *testing.T) {
 	createTestRuleDirectNode(t, d, uid, n1.ID)
 	seedLandingExit(t, d, uid, "8.8.8.8", 443, 100, 100)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	s.enforceExitQuota(uid)
 
 	keys, _ := db.ExitsExceedingQuota(d, uid)

@@ -28,7 +28,7 @@ func TestAPILandingExitQuotaLifecycle(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
 	db.SyncUserLandingExits(d, uid, []db.LandingExitInput{{Host: "1.2.3.4", Port: 443, Name: "HK", Protocol: "vless"}}, "", "")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	// list
@@ -92,7 +92,7 @@ func TestAPILandingExitQuotaLifecycle(t *testing.T) {
 func TestAPILandingExitsRequireAdmin(t *testing.T) {
 	d := openDB(t)
 	uid, userCookie := loginAsUser(t, d, 10)
-	s, _ := New(d)
+	s := newServer(t, d)
 	req := httptest.NewRequest("GET", "/api/users/"+itoa(uid)+"/landing-exits", nil)
 	req.AddCookie(userCookie)
 	rec := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestAPILandingExitRename(t *testing.T) {
 	db.SyncUserLandingExits(d, uid, []db.LandingExitInput{
 		{Host: "1.2.3.4", Port: 443, Name: "HK", Protocol: "vless", URI: "vless://u@1.2.3.4:443#HK"},
 	}, "", "")
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
 	rec := adminPost(t, s, admin, "/api/users/"+itoa(uid)+"/landing-exits/rename",
@@ -140,7 +140,7 @@ func TestAPILandingExitRename(t *testing.T) {
 func TestAPILandingExitRenameRequiresAdmin(t *testing.T) {
 	d := openDB(t)
 	uid, userCookie := loginAsUser(t, d, 10)
-	s, _ := New(d)
+	s := newServer(t, d)
 	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/landing-exits/rename",
 		bytes.NewReader([]byte(`{"host":"1.2.3.4","port":443,"name":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")

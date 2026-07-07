@@ -19,6 +19,18 @@ func openDB(t *testing.T) *sql.DB {
 	return d
 }
 
+// newServer creates a Server for tests and registers a cleanup that stops its
+// background goroutines before the database is closed.
+func newServer(t *testing.T, d *sql.DB) *Server {
+	t.Helper()
+	s, err := New(d)
+	if err != nil {
+		t.Fatalf("New server: %v", err)
+	}
+	t.Cleanup(func() { s.Stop() })
+	return s
+}
+
 func TestEnsureSelfNodeCreatesOneRow(t *testing.T) {
 	d := openDB(t)
 	n, err := EnsureSelfNode(d)

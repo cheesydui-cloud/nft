@@ -35,7 +35,7 @@ func createNodeViaAPI(t *testing.T, s *Server, admin *http.Cookie, body map[stri
 
 func TestCreateNodeGrantsUsers(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	u1, err := db.CreateUser(d, "alice", "x", "user")
 	if err != nil {
@@ -61,7 +61,7 @@ func TestCreateNodeGrantsUsers(t *testing.T) {
 
 func TestCreateNodeWithoutUserIDsGrantsNothing(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	uid, err := db.CreateUser(d, "alice", "x", "user")
 	if err != nil {
@@ -77,7 +77,7 @@ func TestCreateNodeWithoutUserIDsGrantsNothing(t *testing.T) {
 
 func TestCreateCompositeNodeGrantsUsers(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 	c1, _ := db.CreateNode(d, "c1", "", "t1")
 	c2, _ := db.CreateNode(d, "c2", "", "t2")

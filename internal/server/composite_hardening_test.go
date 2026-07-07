@@ -33,7 +33,7 @@ func TestNoDirectExitCompositeLastChild(t *testing.T) {
 
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	if rec := createMyRule(t, s, cookie, comp.ID, "r-comp-tail"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("composite whose last child forbids direct exit: want 400, got %d %s", rec.Code, rec.Body.String())
@@ -52,7 +52,7 @@ func TestRevokeViaNodeStopsChain(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	if rec := createMyRuleVia(t, s, cookie, entry.ID, []int64{mid.ID}, "r1"); rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestDeleteRulesUsingNodeReturnsCompositeChildren(t *testing.T) {
 	comp := makeComposite(t, d, "comp", c1.ID, c2.ID)
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	if rec := createMyRule(t, s, cookie, comp.ID, "r-comp"); rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -110,7 +110,7 @@ func TestDeleteCompositeEndpointRemovesRules(t *testing.T) {
 	comp := makeComposite(t, d, "comp", c1.ID, c2.ID)
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	createMyRule(t, s, cookie, comp.ID, "r-comp")
 
 	admin := loginAsAdmin(t, d)
@@ -133,7 +133,7 @@ func TestExplicitHopsRejectsNoDirectExitTail(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, b.ID, "2.2.2.2")
 	_ = db.UpdateNodeNoDirectExit(d, b.ID, true)
 	admin := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	body, _ := json.Marshal(map[string]any{
 		"name": "r", "proto": "tcp", "exit": "9.9.9.9:443",
@@ -161,7 +161,7 @@ func TestCompositeCannotNestComposite(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, c.ID, "3.3.3.3")
 	inner := makeComposite(t, d, "inner", a.ID, b.ID)
 	admin := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	// 建组合时以组合为子节点 → 400
 	body, _ := json.Marshal(map[string]any{
@@ -202,7 +202,7 @@ func TestCompositeProbeReportsEveryChild(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, c2.ID, "2.2.2.2")
 	comp := makeComposite(t, d, "comp", c1.ID, c2.ID)
 	admin := loginAsAdmin(t, d)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/probe?target=9.9.9.9:80&node=%d", comp.ID), nil)
 	req.AddCookie(admin)

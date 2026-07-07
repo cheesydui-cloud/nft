@@ -112,10 +112,13 @@ func TestGlobalQuotaStillDisablesUser(t *testing.T) {
 	// set global quota
 	d.Exec(`UPDATE users SET traffic_quota_bytes=2000, traffic_used_bytes=2000 WHERE id=?`, uid)
 
-	s, _ := New(d)
+	s := newServer(t, d)
 	s.enforceUserQuota(uid)
 
-	u, _ := db.GetUserByID(d, uid)
+	u, err := db.GetUserByID(d, uid)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
 	if !u.Disabled {
 		t.Fatal("user should be disabled when global quota exceeded")
 	}

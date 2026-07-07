@@ -289,10 +289,7 @@ func TestHubCountersAccumulatesUserTrafficAndNotifies(t *testing.T) {
 
 func TestEnforceUserQuotaDisablesOverQuotaUser(t *testing.T) {
 	d := openDB(t)
-	s, err := New(d)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newServer(t, d)
 	self, err := EnsureSelfNode(d)
 	if err != nil {
 		t.Fatal(err)
@@ -332,10 +329,7 @@ func TestEnforceUserQuotaDisablesOverQuotaUser(t *testing.T) {
 
 func TestEnforceUserQuotaLeavesUnderQuotaUserEnabled(t *testing.T) {
 	d := openDB(t)
-	s, err := New(d)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newServer(t, d)
 	hash, _ := HashPassword("pw")
 	uid, err := db.CreateUser(d, "under", hash, "user")
 	if err != nil {

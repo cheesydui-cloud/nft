@@ -15,7 +15,7 @@ func TestAPISetPerNodeRateLimit(t *testing.T) {
 	uid, _ := loginAsUser(t, d, 10)
 	n, _ := db.CreateNode(d, "rlnode", "", "")
 	db.GrantNode(d, uid, n.ID, 10, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"rate_limit_mbytes": 10})
@@ -47,7 +47,7 @@ func TestAPISetPerNodeRateLimit(t *testing.T) {
 
 func TestAPIRuleBandwidthEndpointRemoved(t *testing.T) {
 	d := openDB(t)
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	req := httptest.NewRequest("POST", "/api/rules/1/bandwidth", bytes.NewReader([]byte(`{"bandwidth_mbps":5}`)))
@@ -68,7 +68,7 @@ func TestAPIBatchApplyGrantsRateLimit(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
 	n, _ := db.CreateNode(d, "rlbatch", "", "")
-	s, _ := New(d)
+	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
 	payload := map[string]any{

@@ -21,7 +21,7 @@ func TestNoDirectExitEnforced(t *testing.T) {
 	uid, cookie := loginAsUser(t, d, 10)
 	_ = db.GrantNode(d, uid, entry.ID, 5, 0)
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0)
-	s, _ := New(d)
+	s := newServer(t, d)
 
 	// 入口开启开关、不带 via（前端绕过场景）→ 400
 	if err := db.UpdateNodeNoDirectExit(d, entry.ID, true); err != nil {
