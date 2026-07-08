@@ -230,6 +230,27 @@ func (s *Server) apiMyLandingNodes(w http.ResponseWriter, r *http.Request) {
 	stale := false
 	if ok {
 		s.syncLandingExits(u, nodes)
+		// Repo-imported exits are assigned by admins from the node pool and are
+		// deliberately not swept by source sync, but they are also not part of
+		// the subscription/URI source. Merge them in so the user-side landing
+		// list and rule picker see the complete admin-assigned set.
+		if exits, err := db.PresentLandingExitsForUser(s.DB, u.ID); err == nil {
+			seen := make(map[string]bool, len(nodes))
+			for _, n := range nodes {
+				seen[net.JoinHostPort(n.Host, strconv.Itoa(n.Port))] = true
+			}
+			for _, e := range exits {
+				if e.Source != "repo" {
+					continue
+				}
+				key := net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				nodes = append(nodes, landing.Node{Name: e.Name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, URI: e.URI})
+			}
+		}
 	} else {
 		// Only mark stale when the user actually has a source to resolve from.
 		// Users with only repo-imported exits (no sub URL or URIs) should not
