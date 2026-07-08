@@ -63,20 +63,9 @@ export default function MyRuleDetail() {
   // does — so the detail page can offer a copyable relay URI too.
   const rule = enrichRuleWithLanding(serverRule, allLandingIdx)
   const node = node_by_id[rule.node_id]
-  // Names resolve only through node_by_id — the granted-node map the page
-  // already has in scope — so an unresolvable via (rare: node revoked after
-  // the rule was built) silently drops from the chain instead of showing a
-  // bare id the user has no way to recognize.
-  const entryName = node?.name || `#${rule.node_id}`
-  // The backend chain is the deployed physical path (composites already
-  // flattened into their members); prefer it so display matches what actually
-  // runs. Fall back to entry + logical via names before the rule's first
-  // regeneration, when no physical hops exist yet.
-  const flatNames = (rule.chain || []).map(c => c.name).filter(Boolean)
-  const viaNames = (rule.via_node_ids || []).map(id => node_by_id[id]?.name).filter(Boolean)
-  const nodeChain = flatNames.length
-    ? flatNames.join(' → ')
-    : (viaNames.length ? [entryName, ...viaNames].join(' → ') : entryName)
+  // Show only the composite node name, not the flattened physical chain,
+  // to match the rules list and keep the detail page concise.
+  const nodeName = node?.name || `#${rule.node_id}`
 
   const exitOf = (r) => (r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : '')
 
@@ -108,7 +97,7 @@ export default function MyRuleDetail() {
             <span className="text-ink-soft font-semibold">名称</span>
             <span className="font-semibold">{rule.name}</span>
             <span className="text-ink-soft font-semibold">节点</span>
-            <span className="font-mono">{nodeChain}</span>
+            <span className="font-mono">{nodeName}</span>
             <span className="text-ink-soft font-semibold">协议</span>
             <span><ProtoBadge proto={rule.proto} /></span>
             <span className="text-ink-soft font-semibold">出口</span>
