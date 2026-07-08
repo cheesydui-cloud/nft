@@ -42,7 +42,14 @@ var (
 	agentArtCache *agentArtifact
 )
 
+// buildVersion is injected at link time via -ldflags in release builds so the
+// panel reports the release tag (e.g. v2.0.1) instead of a Go pseudo-version.
+var buildVersion = ""
+
 func serverVersion() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
 	bi, ok := debug.ReadBuildInfo()
 	if !ok || bi.Main.Version == "" || bi.Main.Version == "(devel)" {
 		return "dev"

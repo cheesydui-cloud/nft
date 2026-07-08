@@ -416,7 +416,7 @@ function LandingSourceForm({ userId, subURL, uris, nodes, blurred }) {
   const deleteExit = async (ex) => {
     try {
       await api.post(`/users/${userId}/landing-exits/delete`, { host: ex.host, port: ex.port })
-      toast('已删除'); loadExits()
+      toast('已删除'); reloadLanding()
     } catch (err) { toast(err.message, 'error') }
   }
 

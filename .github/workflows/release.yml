@@ -42,8 +42,10 @@ jobs:
 
       - name: Build binaries (linux/amd64)
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o nft-server ./cmd/nft-server
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o nft-agent ./cmd/nft-agent
+          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          LDFLAGS="-X nft/internal/server.buildVersion=$VERSION"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o nft-server ./cmd/nft-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o nft-agent ./cmd/nft-agent
 
       - name: Generate checksums
         run: sha256sum nft-server nft-agent > SHA256SUMS
