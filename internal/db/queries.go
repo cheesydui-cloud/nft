@@ -330,8 +330,8 @@ const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.di
 const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
 
 func GetSessionUser(d *sql.DB, token string) (*User, error) {
-	return scanUserPublic(d.QueryRow(`
-		SELECT `+userPublicColsQualified+`
+	return scanUser(d.QueryRow(`
+		SELECT `+userColsQualified+`
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > strftime('%s','now')`, HashToken(token)))
 }
