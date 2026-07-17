@@ -450,8 +450,8 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 	if users == nil {
 		users = map[int64]*db.User{}
 	}
+	shapes, _ := db.GrantShapes(d)
 
-	// Collect distinct rule IDs for a single bulk hop-count query
 	ruleIDSet := map[int64]bool{}
 	for _, rh := range ruleHops {
 		ruleIDSet[rh.RuleID] = true
@@ -464,7 +464,6 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 	if hopCounts == nil {
 		hopCounts = map[int64]int{}
 	}
-	shapes, _ := db.GrantShapes(d)
 
 	rules := make([]nft.Rule, 0, len(ruleHops))
 	for _, rh := range ruleHops {
@@ -487,11 +486,19 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 				// segment reads the entry grant, a middle-layer segment reads the
 				// layer grant — the same logical node its quota is tracked on.
 				if gs, ok := shapes[[2]int64{r.OwnerID.Int64, rh.ViaNodeID}]; ok {
-					rule.ShapeGroup = gs.GrantID
-					rule.RateMBytes = int(gs.RateLimitMBytes)
-					// Legacy mirror so pre-group agents still shape
-					// (per rule, approximate): MB/s (2^20 bytes) → Mbit/s.
-					rule.BandwidthMbps = int((gs.RateLimitMBytes*8388608 + 500000) / 1000000)
+					rate := int(gs.RateLimitMBytes)
+					if rate <= 0 {
+						if u := users[r.OwnerID.Int64]; u != nil && u.SpeedLimitMBytes > 0 {
+							rate = u.SpeedLimitMBytes
+						}
+					}
+					if rate > 0 {
+						rule.ShapeGroup = gs.GrantID
+						rule.RateMBytes = rate
+						// Legacy mirror so pre-group agents still shape
+						// (per rule, approximate): MB/s (2^20 bytes) → Mbit/s.
+						rule.BandwidthMbps = int((int64(rate)*8388608 + 500000) / 1000000)
+					}
 				}
 			}
 		}

@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN speed_limit_mbytes INTEGER NOT NULL DEFAULT 0;

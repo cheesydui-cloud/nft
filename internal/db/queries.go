@@ -15,33 +15,35 @@ const (
 	NodeRoleVia   int64 = 1 << 1
 )
 
-type User struct {
-	ID                int64          `json:"id"`
-	Username          string         `json:"username"`
-	PwHash            string         `json:"-"`
-	Role              string         `json:"role"`
-	Disabled          bool           `json:"disabled"`
-	DisableReason     sql.NullString `json:"disable_reason"`
-	MaxForwards       int            `json:"max_forwards"`
-	TrafficQuotaBytes int64          `json:"traffic_quota_bytes"`
-	TrafficUsedBytes  int64          `json:"traffic_used_bytes"`
-	TotalTrafficUsedBytes int64      `json:"total_traffic_used_bytes"`
-	// TrafficResetDays is the rolling window length in days; 0 means never auto-reset.
-	TrafficResetDays   int           `json:"traffic_reset_days"`
-	LastTrafficResetAt int64         `json:"last_traffic_reset_at"`
-	CreatedAt          int64         `json:"created_at"`
-	ExpiresAt          sql.NullInt64 `json:"expires_at"`
-	// LandingSubURL is an optional subscription URL; LandingURIs is an optional
-	// newline-separated list of proxy URIs. They combine into the user's set of
-	// landing nodes (see internal/landing). Both empty means no landing source.
-	LandingSubURL string  `json:"landing_sub_url"`
-	LandingURIs   string  `json:"landing_uris"`
-	AdminNote     string  `json:"admin_note"`
-	BillingRate   float64 `json:"billing_rate"`
-	// RuleCount is not a users-table column; it is filled by FillUserRuleCounts
-	// so the user list can show used/total rule quota.
-	RuleCount int `json:"rule_count"`
-}
+	type User struct {
+		ID                int64          `json:"id"`
+		Username          string         `json:"username"`
+		PwHash            string         `json:"-"`
+		Role              string         `json:"role"`
+		Disabled          bool           `json:"disabled"`
+		DisableReason     sql.NullString `json:"disable_reason"`
+		MaxForwards       int            `json:"max_forwards"`
+		TrafficQuotaBytes int64          `json:"traffic_quota_bytes"`
+		TrafficUsedBytes  int64          `json:"traffic_used_bytes"`
+		TotalTrafficUsedBytes int64      `json:"total_traffic_used_bytes"`
+		// TrafficResetDays is the rolling window length in days; 0 means never auto-reset.
+		TrafficResetDays   int           `json:"traffic_reset_days"`
+		LastTrafficResetAt int64         `json:"last_traffic_reset_at"`
+		CreatedAt          int64         `json:"created_at"`
+		ExpiresAt          sql.NullInt64 `json:"expires_at"`
+		SpeedLimitMBytes   int           `json:"speed_limit_mbytes"`
+		// LandingSubURL is an optional subscription URL; LandingURIs is an optional
+		// newline-separated list of proxy URIs. They combine into the user's set of
+		// landing nodes (see internal/landing). Both empty means no landing source.
+		LandingSubURL string  `json:"landing_sub_url"`
+		LandingURIs   string  `json:"landing_uris"`
+		AdminNote     string  `json:"admin_note"`
+		BillingRate   float64 `json:"billing_rate"`
+		// RuleCount is not a users-table column; it is filled by FillUserRuleCounts
+		// so the user list can show used/total rule quota.
+		RuleCount int `json:"rule_count"`
+	}
+
 
 type Node struct {
 	ID       int64  `json:"id"`
@@ -210,7 +212,7 @@ func CreateUser(d *sql.DB, username, pwHash, role string) (int64, error) {
 func scanUser(r rowScanner) (*User, error) {
 	u := &User{}
 	var disabled int
-	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
 		return nil, err
 	}
 	u.Disabled = disabled == 1
@@ -220,16 +222,16 @@ func scanUser(r rowScanner) (*User, error) {
 func scanUserPublic(r rowScanner) (*User, error) {
 	u := &User{}
 	var disabled int
-	if err := r.Scan(&u.ID, &u.Username, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate); err != nil {
 		return nil, err
 	}
 	u.Disabled = disabled == 1
 	return u, nil
 }
 
-const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
+const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate`
 
-const userPublicCols = `id, username, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, landing_sub_url, landing_uris, admin_note, billing_rate`
+const userPublicCols = `id, username, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate`
 
 func ListUsers(d *sql.DB) ([]*User, error) {
 	return queryAll(d, `SELECT `+userPublicCols+` FROM users ORDER BY id`, scanUserPublic)

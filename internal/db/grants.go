@@ -236,11 +236,11 @@ type GrantShape struct {
 	RateLimitMBytes int64
 }
 
-// GrantShapes returns every rate-limited grant keyed by {user_id, node_id}.
-// Unlimited grants (rate 0) are omitted so callers can treat absence as "no
-// shaping".
+// GrantShapes returns every grant keyed by {user_id, node_id}.
+// Callers decide whether a 0 rate means "no shaping" or whether to fall back
+// to a user-level default.
 func GrantShapes(d *sql.DB) (map[[2]int64]GrantShape, error) {
-	rows, err := d.Query(`SELECT rowid, user_id, node_id, rate_limit_mbytes FROM user_nodes WHERE rate_limit_mbytes > 0`)
+	rows, err := d.Query(`SELECT rowid, user_id, node_id, rate_limit_mbytes FROM user_nodes`)
 	if err != nil {
 		return nil, err
 	}

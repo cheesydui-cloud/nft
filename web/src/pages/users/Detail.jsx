@@ -113,6 +113,7 @@ export default function UserDetail() {
               resetDays={user.traffic_reset_days}
               adminNote={user.admin_note || ''}
               billingRate={user.billing_rate}
+              speedLimitMBytes={user.speed_limit_mbytes || 0}
               onDone={load}
             />
           )}
@@ -128,7 +129,7 @@ export default function UserDetail() {
 
       {/* Node grants (regular users only) */}
       {isRegularUser && (
-        <GrantedNodesCard userId={id} nodes={nodes} grants={grants} allNodes={all_nodes} allUsers={allUsers} onDone={load} />
+        <GrantedNodesCard userId={id} nodes={nodes} grants={grants} allNodes={all_nodes} allUsers={allUsers} userSpeedLimitMBytes={user.speed_limit_mbytes || 0} onDone={load} />
       )}
 
       {/* Landing-node source (regular users only) */}
@@ -199,7 +200,7 @@ function CopyButton({ text }) {
   )
 }
 
-function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays, adminNote, billingRate, onDone }) {
+function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays, adminNote, billingRate, speedLimitMBytes, onDone }) {
   const [form, setForm] = useState({
     expiresAt: expiresAt ? fmtDateInput(expiresAt) : '',
     maxForwards: String(maxForwards || 0),
@@ -207,6 +208,7 @@ function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays
     resetDays: String(resetDays || 0),
     adminNote: adminNote,
     billingRate: String(billingRate ?? 1),
+    speedLimitMBytes: String(speedLimitMBytes || 0),
   })
   const [saving, setSaving] = useState(false)
   const toast = useToast()
@@ -234,6 +236,7 @@ function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays
         traffic_reset_days: Math.max(0, Math.round(Number(form.resetDays) || 0)),
         admin_note: form.adminNote,
         billing_rate: Math.max(0, Number(form.billingRate) || 1),
+        speed_limit_mbytes: Math.max(0, Math.round(Number(form.speedLimitMBytes) || 0)),
       })
       toast('已保存')
       onDone()
@@ -277,6 +280,12 @@ function UserProfileForm({ userId, expiresAt, maxForwards, quotaBytes, resetDays
         <div className="flex items-center gap-1.5">
           <input className="input-field font-mono flex-1" type="number" min="0" step="0.1" value={form.billingRate} onChange={set('billingRate')} title="1.0 = 原价，<1 折扣，>1 加价" />
           <span className="text-xs text-ink-mut">×</span>
+        </div>
+
+        <label className="fl">全局限速</label>
+        <div className="flex items-center gap-1.5">
+          <input className="input-field font-mono flex-1" type="number" min="0" step="1" value={form.speedLimitMBytes} onChange={set('speedLimitMBytes')} title="0 = 不限；当节点授权限速为 0 时作为默认值" />
+          <span className="text-xs text-ink-mut">MB/s</span>
         </div>
 
         <label className="fl">管理备注</label>
@@ -715,7 +724,7 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
-function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, onDone }) {
+function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeedLimitMBytes, onDone }) {
   const [tab, setTab] = useState('single')
   const [selected, setSelected] = useState(new Set())
   const [revoking, setRevoking] = useState(false)
@@ -826,6 +835,9 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, onDone })
                 </td>
                 <td className="px-3 py-2">
                   <PerNodeRateForm userId={userId} nodeId={n.id} rateMBytes={grantByNode[n.id]?.rate_limit_mbytes} onDone={onDone} />
+                  {!grantByNode[n.id]?.rate_limit_mbytes && userSpeedLimitMBytes > 0 && (
+                    <div className="mt-1 text-[11px] text-ink-mut">取用户全局值 {userSpeedLimitMBytes} MB/s</div>
+                  )}
                 </td>
                 <td className="px-3 py-2 font-mono text-sm">
                   {fmtTrafficGB(grantByNode[n.id]?.traffic_used_bytes, grantByNode[n.id]?.traffic_quota_bytes)}

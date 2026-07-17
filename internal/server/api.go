@@ -2202,6 +2202,7 @@ func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
 		Role              string `json:"role"`
 		MaxForwards       int    `json:"max_forwards"`
 		TrafficQuotaBytes int64  `json:"traffic_quota_bytes"`
+		SpeedLimitMBytes  int    `json:"speed_limit_mbytes"`
 		ExpiresAt         string `json:"expires_at"`
 		LandingSubURL     string `json:"landing_sub_url"`
 		AdminNote         string `json:"admin_note"`
@@ -2237,8 +2238,8 @@ func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
 	if maxFwd <= 0 {
 		maxFwd = 100
 	}
-	if _, err := s.DB.Exec(`UPDATE users SET max_forwards=?, traffic_quota_bytes=? WHERE id=?`,
-		maxFwd, body.TrafficQuotaBytes, id); err != nil {
+	if _, err := s.DB.Exec(`UPDATE users SET max_forwards=?, traffic_quota_bytes=?, speed_limit_mbytes=? WHERE id=?`,
+		maxFwd, body.TrafficQuotaBytes, body.SpeedLimitMBytes, id); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -2484,14 +2485,16 @@ func (s *Server) apiUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
-	var body struct {
-		ExpiresAt        string  `json:"expires_at"`
-		MaxForwards      int     `json:"max_forwards"`
-		TrafficQuotaGB   float64 `json:"traffic_quota_gb"`
-		TrafficResetDays int     `json:"traffic_reset_days"`
-		AdminNote        string  `json:"admin_note"`
-		BillingRate      float64 `json:"billing_rate"`
-	}
+		var body struct {
+			ExpiresAt         string  `json:"expires_at"`
+			MaxForwards       int     `json:"max_forwards"`
+			TrafficQuotaGB    float64 `json:"traffic_quota_gb"`
+			TrafficResetDays  int     `json:"traffic_reset_days"`
+			SpeedLimitMBytes  int     `json:"speed_limit_mbytes"`
+			AdminNote         string  `json:"admin_note"`
+			BillingRate       float64 `json:"billing_rate"`
+		}
+
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
@@ -2504,36 +2507,40 @@ func (s *Server) apiUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "流量配额无效")
 		return
 	}
-	if body.TrafficResetDays < 0 {
-		jsonErr(w, http.StatusBadRequest, "天数无效")
-		return
-	}
-
-	var expiresAt int64
-	raw := strings.TrimSpace(body.ExpiresAt)
-	if raw != "" {
-		t, err := time.Parse("2006-01-02", raw)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, "日期格式无效（需 YYYY-MM-DD）")
+		if body.TrafficResetDays < 0 {
+			jsonErr(w, http.StatusBadRequest, "天数无效")
 			return
 		}
-		expiresAt = t.Unix()
-	}
+		if body.SpeedLimitMBytes < 0 {
+			jsonErr(w, http.StatusBadRequest, "限速不能为负")
+			return
+		}
 
-	trafficQuotaBytes := int64(body.TrafficQuotaGB * 1073741824)
-	if trafficQuotaBytes < 0 {
-		trafficQuotaBytes = 0
-	}
+		var expiresAt int64
+		raw := strings.TrimSpace(body.ExpiresAt)
+		if raw != "" {
+			t, err := time.Parse("2006-01-02", raw)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, "日期格式无效（需 YYYY-MM-DD）")
+				return
+			}
+			expiresAt = t.Unix()
+		}
 
-	billingRate := body.BillingRate
-	if billingRate <= 0 {
-		billingRate = 1.0
-	}
-	if _, err := s.DB.Exec(
-		`UPDATE users SET expires_at=?, max_forwards=?, traffic_quota_bytes=?, traffic_reset_days=?, admin_note=?, billing_rate=? WHERE id=?`,
-		expiresAt, body.MaxForwards, trafficQuotaBytes, body.TrafficResetDays, strings.TrimSpace(body.AdminNote), billingRate, id,
-	); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
+		trafficQuotaBytes := int64(body.TrafficQuotaGB * 1073741824)
+		if trafficQuotaBytes < 0 {
+			trafficQuotaBytes = 0
+		}
+
+		billingRate := body.BillingRate
+		if billingRate <= 0 {
+			billingRate = 1.0
+		}
+		if _, err := s.DB.Exec(
+			`UPDATE users SET expires_at=?, max_forwards=?, traffic_quota_bytes=?, traffic_reset_days=?, speed_limit_mbytes=?, admin_note=?, billing_rate=? WHERE id=?`,
+			expiresAt, body.MaxForwards, trafficQuotaBytes, body.TrafficResetDays, body.SpeedLimitMBytes, strings.TrimSpace(body.AdminNote), billingRate, id,
+		); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
