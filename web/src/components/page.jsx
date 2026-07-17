@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 /* Shared list-page shell: rounded panel, page header, toolbar with search.
    One look across admin and user pages so the two never drift apart again.
    Colors use semantic tokens (surface/ink/line) so dark mode comes for free. */
@@ -56,6 +58,75 @@ export function SearchInput({ value, onChange, placeholder }) {
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-[9px] outline-none text-ink focus:border-blue-600 focus:ring-3 focus:ring-blue-600/10 transition-colors" />
     </div>
+  )
+}
+
+/* ---------- DetailHeader: 详情页顶部统一标题区 ---------- */
+export function DetailHeader({ title, badge, meta, actions, backTo, backLabel }) {
+  return (
+    <div className="mb-[22px]">
+      {backTo && (
+        <a href={backTo} className="inline-flex items-center gap-1 text-blue-600 text-[13px] font-semibold hover:underline mb-3">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          {backLabel || '返回列表'}
+        </a>
+      )}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="m-0 text-2xl font-bold text-ink">{title}</h1>
+            {badge}
+          </div>
+          {meta && <p className="mt-1.5 text-[13px] text-ink-soft">{meta}</p>}
+        </div>
+        {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- SectionCard: 详情页统一 section 容器 ---------- */
+export function SectionCard({ title, subtitle, actions, children, className = '', collapsible = false, defaultOpen = true }) {
+  const [open, setOpen] = useState(collapsible ? defaultOpen : true)
+  return (
+    <div className={`card mb-5 ${className}`}>
+      <div className="card-header justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          {collapsible && (
+            <button onClick={() => setOpen(o => !o)}
+              className="text-ink-mut hover:text-ink p-0.5 -ml-0.5 transition-colors"
+              aria-label={open ? '收起' : '展开'}>
+              <svg className={`w-4 h-4 transition-transform ${open ? '' : '-rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          )}
+          <h3 className="text-[15px] font-bold">{title}</h3>
+          {subtitle && <span className="text-[13px] text-ink-mut">{subtitle}</span>}
+        </div>
+        {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
+/* ---------- InfoGrid: 键值对信息展示区 ---------- */
+export function InfoGrid({ items, className = '', labelWidth = '120px' }) {
+  return (
+    <div className={`grid gap-x-4 gap-y-3 items-center text-[13.5px] ${className}`}
+      style={{ gridTemplateColumns: `${labelWidth} 1fr` }}>
+      {items.map((it, i) => (
+        <InfoRow key={i} label={it.label} accent={it.accent} mono={it.mono}>{it.value}</InfoRow>
+      ))}
+    </div>
+  )
+}
+
+function InfoRow({ label, accent, mono, children }) {
+  return (
+    <>
+      <span className="fl">{label}</span>
+      <span className={`${mono ? 'font-mono' : ''} ${accent ? 'font-semibold' : ''}`}>{children}</span>
+    </>
   )
 }
 

@@ -133,6 +133,25 @@ html, body { background: var(--color-app); color: var(--color-ink); }
   @apply flex items-center gap-3 px-[22px] py-[18px];
   border-bottom: 1px solid var(--color-line-soft);
 }
+.card-header + * {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 96%, transparent) 0%, var(--color-surface) 100%);
+}
+
+/* Visual polish helpers: slightly softer separators, calmer raised surfaces,
+   and richer focus/hover states so the UI reads more premium without changing
+   the token system. */
+.section-surface {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 98%, white 2%) 0%, var(--color-surface) 100%);
+}
+.soft-panel {
+  @apply rounded-[14px];
+  background: color-mix(in srgb, var(--color-surface) 96%, var(--color-app) 4%);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 30px rgba(16,24,40,.04);
+}
+.focus-ring {
+  box-shadow: 0 0 0 3px color-mix(in srgb, rgb(37 99 235) 12%, transparent);
+}
 
 /* Overview stat cards layer flex/h-full onto .card (pair both in markup) so
    every card in a row keeps the same height — h-full fills the grid cell and

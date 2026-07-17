@@ -9,7 +9,7 @@ export function Modal({ open, onClose, title, children, wide }) {
       <div className={`bg-surface border border-line rounded-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.7)] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} animate-in`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-[26px] py-5 border-b border-line-soft">
           <h3 className="text-[17px] font-bold text-ink">{title}</h3>
-          <button onClick={onClose} className="text-ink-mut hover:text-ink text-lg leading-none">&times;</button>
+          <button onClick={onClose} className="text-ink-mut hover:text-ink text-lg leading-none" aria-label="关闭弹窗">&times;</button>
         </div>
         <div className="px-[26px] py-[26px]">{children}</div>
       </div>
