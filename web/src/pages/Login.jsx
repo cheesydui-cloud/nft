@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import { useUser } from '../components/Layout'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -9,6 +10,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [panelName, setPanelName] = useState('')
   const navigate = useNavigate()
+  const { refreshUser } = useUser()
 
   useEffect(() => {
     api.get('/branding').then(d => setPanelName(d?.panel_name || '')).catch(() => {})
@@ -20,7 +22,8 @@ export default function Login() {
     setLoading(true)
     try {
       await api.post('/login', { username, password })
-      window.location.href = '/'
+      await refreshUser()
+      navigate('/', { replace: true })
     } catch (err) {
       setError(err.message || '登录失败')
     } finally {

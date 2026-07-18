@@ -94,7 +94,13 @@ func (s *Server) requireAPIAuth(next http.Handler) http.Handler {
 		}
 		u, err := db.GetSessionUser(s.DB, c.Value)
 		if err != nil || u == nil {
-			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookie,
+				Value:    "",
+				Path:     "/",
+				SameSite: http.SameSiteLaxMode,
+				MaxAge:   -1,
+			})
 			jsonErr(w, http.StatusUnauthorized, "会话已过期")
 			return
 		}
@@ -201,10 +207,14 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "登录失败")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: token, Path: "/",
-		HttpOnly: true, MaxAge: int(sessionTTL.Seconds()),
-	})
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookie,
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(sessionTTL.Seconds()),
+		})
 	db.WriteAudit(s.DB, u.ID, "login", "", "")
 	jsonOK(w, map[string]any{"user": apiUserView(u)})
 }
@@ -213,7 +223,13 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = db.DeleteSession(s.DB, c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
 	jsonOK(w, map[string]any{"ok": true})
 }
 

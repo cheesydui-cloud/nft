@@ -48,7 +48,13 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		u, err := db.GetSessionUser(s.DB, c.Value)
 		if err != nil || u == nil {
-			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookie,
+				Value:    "",
+				Path:     "/",
+				SameSite: http.SameSiteLaxMode,
+				MaxAge:   -1,
+			})
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}

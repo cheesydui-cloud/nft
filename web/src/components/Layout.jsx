@@ -20,13 +20,18 @@ export function UserProvider({ children }) {
   const idRef = useRef(0)
   const timersRef = useRef([])
 
-  useEffect(() => {
-    api.get('/me').then(data => {
+  const refreshUser = useCallback(async () => {
+    try {
+      const data = await api.get('/me')
       setUser(data?.user ?? null)
       setPanelName(data?.panel_name || '')
       setVersion(data?.version || '')
-    }).catch(() => setUser(null))
+    } catch {
+      setUser(null)
+    }
   }, [])
+
+  useEffect(() => { refreshUser() }, [refreshUser])
 
   useEffect(() => {
     const handler = () => setUser(null)
@@ -47,7 +52,7 @@ export function UserProvider({ children }) {
   }, [])
 
   return (
-    <UserCtx.Provider value={{ user, setUser, panelName, version }}>
+	    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser }}>
       <ToastCtx.Provider value={toast}>
         {children}
         {/* Toast stack */}
