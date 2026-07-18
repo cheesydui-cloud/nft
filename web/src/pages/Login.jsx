@@ -21,8 +21,16 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      await api.post('/login', { username, password })
-      await refreshUser()
+      const data = await api.post('/login', { username, password })
+      // Login API returns {user: {...}} — set user directly from the response
+      // so that by the time navigate() triggers the route re-render, the
+      // user state is already committed.  If we waited for a second /api/me
+      // call instead, React state would still be pending when RootRedirect
+      // reads it, causing it to see null and bounce back to /login.
+      if (data?.user) {
+        const { setUser } = useUser()
+        setUser(data.user)
+      }
       navigate('/', { replace: true })
     } catch (err) {
       setError(err.message || '登录失败')

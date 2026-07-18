@@ -26,8 +26,10 @@ export function UserProvider({ children }) {
       setUser(data?.user ?? null)
       setPanelName(data?.panel_name || '')
       setVersion(data?.version || '')
+      return data
     } catch {
       setUser(null)
+      return null
     }
   }, [])
 
