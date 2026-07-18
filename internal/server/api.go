@@ -3242,6 +3242,7 @@ func apiUserFullView(u *db.User) map[string]any {
 	m["last_traffic_reset_at"] = u.LastTrafficResetAt
 	m["admin_note"] = u.AdminNote
 	m["billing_rate"] = u.BillingRate
+	m["speed_limit_mbytes"] = u.SpeedLimitMBytes
 	return m
 }
 
