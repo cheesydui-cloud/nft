@@ -10,7 +10,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [panelName, setPanelName] = useState('')
   const navigate = useNavigate()
-  const { refreshUser } = useUser()
+  const { refreshUser, setUser } = useUser()
 
   useEffect(() => {
     api.get('/branding').then(d => setPanelName(d?.panel_name || '')).catch(() => {})
@@ -28,7 +28,6 @@ export default function Login() {
       // call instead, React state would still be pending when RootRedirect
       // reads it, causing it to see null and bounce back to /login.
       if (data?.user) {
-        const { setUser } = useUser()
         setUser(data.user)
       }
       navigate('/', { replace: true })

@@ -9,7 +9,11 @@ import { Loading } from './ui'
 const UserCtx = createContext(null)
 const ToastCtx = createContext(() => {})
 
-export function useUser() { return useContext(UserCtx) }
+export function useUser() {
+  const ctx = useContext(UserCtx)
+  if (!ctx) throw new Error('useUser must be used within UserProvider')
+  return ctx
+}
 export function useToast() { return useContext(ToastCtx) }
 
 export function UserProvider({ children }) {
