@@ -22,7 +22,7 @@ func createOwnedRule(t *testing.T, s *Server, d *sql.DB, uid int64, cookie *http
 	body, _ := json.Marshal(map[string]any{
 		"node_id": g.ID, "name": "r", "proto": "tcp", "exit": "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func createOwnedRule(t *testing.T, s *Server, d *sql.DB, uid int64, cookie *http
 
 func probeChainStatus(t *testing.T, s *Server, ruleID int64, cookie *http.Cookie) int {
 	t.Helper()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/probe-chain?rule_id=%d", ruleID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/probe-chain?rule_id=%d", ruleID), nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

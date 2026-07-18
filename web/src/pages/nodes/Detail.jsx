@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur } from '../../components/Layout'
-import { Loading, Empty, Badge, ProtoBadge, ModeBadge, SensText, NodeTypeBadge, NodeTypeIcon, NodeStackBadge, useConfirm, Select } from '../../components/ui'
+import { Loading, Empty, Badge, ProtoBadge, ModeBadge, SensText, NodeTypeBadge, NodeTypeIcon, NodeStackBadge, useConfirm, Select, Modal, CopyText } from '../../components/ui'
 import { TableBox } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
 
@@ -50,6 +50,9 @@ export default function NodeDetail() {
   const [ghProxy, setGhProxy] = useState('https://gh-proxy.com/')
   const [cmdRelayHost, setCmdRelayHost] = useState('')
   const [cmdRelayHostV6, setCmdRelayHostV6] = useState('')
+  // revealedSecret holds the one-time plaintext token returned by a reset; it
+  // is never persisted server-side and is cleared when the reveal modal closes.
+  const [revealedSecret, setRevealedSecret] = useState('')
   const toast = useToast()
   const blurred = useBlur()
   const confirm = useConfirm()
@@ -140,6 +143,14 @@ export default function NodeDetail() {
     const next = !noDirectExit
     try { await api.post(`/nodes/${id}/no-direct-exit`, { no_direct_exit: next }); setNoDirectExit(next); toast(next ? '已禁止直接转发' : '已允许直接转发') } catch (err) { toast(err.message, 'error') }
   }
+  const resetToken = async () => {
+    if (!(await confirm({ title: '重置 Token', message: '重置后旧 Token 立即失效，正在运行的 Agent 会在下次重连时被拒绝，需用新 Token 重新配置。新 Token 只显示这一次。', confirmText: '重置', danger: true }))) return
+    try {
+      const d = await api.post(`/nodes/${id}/reset-token`)
+      setRevealedSecret(d.secret || '')
+      toast('Token 已重置')
+    } catch (err) { toast(err.message, 'error') }
+  }
   const resync = async () => {
     try { await api.post(`/nodes/${id}/resync`); toast('已发起同步') } catch (err) { toast(err.message, 'error') }
   }
@@ -201,7 +212,11 @@ export default function NodeDetail() {
   const relayHostV6Part = cmdRelayHostV6.trim() ? ` \\\n  --relay-host-v6 ${cmdRelayHostV6.trim()}` : ''
   const insecurePart = needsInsecure ? ' \\\n  --insecure' : ''
   const ghProxyPart = proxyPrefix ? ` \\\n  --gh-proxy ${proxyPrefix}` : ''
-  const installCmd = `curl -fsSL ${proxyPrefix}https://raw.githubusercontent.com/cheesydui-cloud/nft/main/install.sh | bash -s agent \\\n  --panel-url ${normalizedPanelUrl} \\\n  --token ${node.secret}${portRangePart}${relayHostPart}${relayHostV6Part}${insecurePart}${ghProxyPart}`
+  // The secret is stored hashed and cannot be read back, so the install command
+  // shows the real token only right after a reset (revealedSecret); otherwise it
+  // falls back to a placeholder prompting the operator to reset to reveal one.
+  const tokenForCmd = revealedSecret || '<重置 Token 以显示>'
+  const installCmd = `curl -fsSL ${proxyPrefix}https://raw.githubusercontent.com/cheesydui-cloud/nft/main/install.sh | bash -s agent \\\n  --panel-url ${normalizedPanelUrl} \\\n  --token ${tokenForCmd}${portRangePart}${relayHostPart}${relayHostV6Part}${insecurePart}${ghProxyPart}`
 
   return (
     <Layout>
@@ -307,7 +322,10 @@ export default function NodeDetail() {
                 {node.relay_host_v6 ? <SensText blurred={blurred}>{node.relay_host_v6}</SensText> : <span className="text-ink-mut">未设置</span>}
               </InfoRow>
               <InfoRow label="Token" mono valueClass="text-[12.5px] break-all leading-relaxed">
-                <SensText blurred={blurred}>{node.secret}</SensText>
+                <span className="inline-flex items-center gap-2 flex-wrap">
+                  <span className="text-ink-mut">{node.secret_set ? '已设置（哈希存储，不可回显）' : '未设置'}</span>
+                  <button onClick={resetToken} className="inline-flex items-center px-2.5 py-[3px] rounded-[7px] text-[12px] font-semibold bg-surface text-ink-soft border border-[#d7dce3] hover:bg-[#f7f9fc] transition-colors cursor-pointer">重置 Token</button>
+                </span>
               </InfoRow>
               <InfoRow label="最近心跳">
                 {fmtTime(node.last_seen ?? null)}
@@ -528,6 +546,17 @@ export default function NodeDetail() {
         </section>
 
       </div>
+
+      {/* One-time reveal of a freshly reset Token. Closing clears it from memory. */}
+      <Modal open={!!revealedSecret} onClose={() => setRevealedSecret('')} title="新的 Token">
+        <div className="text-[13px] text-ink-soft mb-3">请立即复制并保存。关闭后无法再次查看，只能重新重置。</div>
+        <div className="rounded-[10px] border border-line bg-[#f7f9fc] px-3.5 py-3 font-mono text-[13px] break-all">
+          <CopyText text={revealedSecret} />
+        </div>
+        <div className="flex justify-end mt-5">
+          <button onClick={() => setRevealedSecret('')} className="btn-primary px-5">我已保存</button>
+        </div>
+      </Modal>
     </Layout>
   )
 }

@@ -37,7 +37,7 @@ func createMyRule(t *testing.T, s *Server, cookie *http.Cookie, nodeID int64, na
 	body, _ := json.Marshal(map[string]any{
 		"node_id": nodeID, "name": name, "proto": "tcp", "exit": "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestMyListRulesItemShapeIsFlat(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	lreq := httptest.NewRequest("GET", "/api/my/rules", nil)
+	lreq := newTestRequest("GET", "/api/my/rules", nil)
 	lreq.AddCookie(cookie)
 	lrec := httptest.NewRecorder()
 	s.Router().ServeHTTP(lrec, lreq)
@@ -164,7 +164,7 @@ func TestMyRulesCarriesGrantedBindings(t *testing.T) {
 	_ = db.GrantNode(d, uid, mid.ID, 5, 0) // other 未授权 → 其边不下发
 
 	s := newServer(t, d)
-	req := httptest.NewRequest("GET", "/api/my/rules", nil)
+	req := newTestRequest("GET", "/api/my/rules", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	s.Router().ServeHTTP(w, req)

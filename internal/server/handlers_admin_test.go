@@ -38,7 +38,7 @@ func TestDeleteNodeSucceeds(t *testing.T) {
 
 	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
+	req := newTestRequest("DELETE", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -56,7 +56,7 @@ func TestDeleteNodeSucceeds(t *testing.T) {
 func setNodeRelayHost(t *testing.T, s *Server, admin *http.Cookie, nodeID int64, host string) int {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"relay_host": host})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host", nodeID), bytes.NewReader(body))
+	req := newTestRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host", nodeID), bytes.NewReader(body))
 	req.AddCookie(admin)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestSetNodeRelayHostV6RejectsWhenDeclared(t *testing.T) {
 	admin := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]string{"relay_host_v6": "2001:db8::99"})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host-v6", n.ID), bytes.NewReader(body))
+	req := newTestRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host-v6", n.ID), bytes.NewReader(body))
 	req.AddCookie(admin)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestNodeRolesAndBindingsEndpoints(t *testing.T) {
 	s := newServer(t, d)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
+		req := newTestRequest(method, path, bytes.NewReader([]byte(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		w := httptest.NewRecorder()
@@ -224,7 +224,7 @@ func TestNodeBindingsModeDefaultValidationAndDuplicates(t *testing.T) {
 	s := newServer(t, d)
 
 	do := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/bindings", mid.ID), bytes.NewReader([]byte(body)))
+		req := newTestRequest("POST", fmt.Sprintf("/api/nodes/%d/bindings", mid.ID), bytes.NewReader([]byte(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		w := httptest.NewRecorder()
@@ -266,7 +266,7 @@ func TestDownstreamBindingsFromUpstream(t *testing.T) {
 	cookie := loginAsAdmin(t, d)
 	s := newServer(t, d)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
+		req := newTestRequest(method, path, bytes.NewReader([]byte(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		w := httptest.NewRecorder()

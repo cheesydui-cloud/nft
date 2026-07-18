@@ -14,7 +14,7 @@ import (
 func createNodeViaAPI(t *testing.T, s *Server, admin *http.Cookie, body map[string]any) int64 {
 	t.Helper()
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest("POST", "/api/nodes", bytes.NewReader(b))
+	req := newTestRequest("POST", "/api/nodes", bytes.NewReader(b))
 	req.AddCookie(admin)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

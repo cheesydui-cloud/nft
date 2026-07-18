@@ -91,7 +91,18 @@ func (d *Daemon) reAddCounters(samples []wsproto.CounterSample) {
 	for _, s := range samples {
 		key := s.Proto + "/" + strconv.Itoa(s.ListenPort)
 		if last, ok := d.lastCounters[key]; ok {
-			d.lastCounters[key] = [2]int64{last[0] - s.BytesUp, last[1] - s.BytesDown}
+			up := last[0] - s.BytesUp
+			down := last[1] - s.BytesDown
+			// Clamp at 0: a negative cursor would make the next sample's
+			// "cur < last" wrap-detection misfire and double-count the rewound
+			// bytes if the kernel counter resets (reconcile flush) in between.
+			if up < 0 {
+				up = 0
+			}
+			if down < 0 {
+				down = 0
+			}
+			d.lastCounters[key] = [2]int64{up, down}
 		}
 	}
 }

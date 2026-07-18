@@ -26,7 +26,7 @@ func TestNodeSecretNotLeakedToUser(t *testing.T) {
 	_ = db.GrantNode(d, uid, n.ID, 5, 0)
 
 	for _, path := range []string{"/api/my", "/api/my/rules"} {
-		req := httptest.NewRequest("GET", path, nil)
+		req := newTestRequest("GET", path, nil)
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		s.Router().ServeHTTP(rec, req)
@@ -35,13 +35,20 @@ func TestNodeSecretNotLeakedToUser(t *testing.T) {
 		}
 	}
 
+	// Secrets are hashed at rest and never echoed back — not even to admins.
+	// The plaintext is shown once at create/reset time only; the detail view
+	// exposes only whether a secret is set (secret_set).
 	admin := loginAsAdmin(t, d)
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
-	if !strings.Contains(rec.Body.String(), secret) {
-		t.Errorf("admin node detail should expose secret for the install command, body=%s", rec.Body.String())
+	body := rec.Body.String()
+	if strings.Contains(body, secret) {
+		t.Errorf("admin node detail leaked plaintext secret, body=%s", body)
+	}
+	if !strings.Contains(body, `"secret_set":true`) {
+		t.Errorf("admin node detail should report secret_set=true, body=%s", body)
 	}
 }
 
@@ -63,7 +70,7 @@ func TestProbeNodeAuthorization(t *testing.T) {
 		if node != "" {
 			url += "&node=" + node
 		}
-		req := httptest.NewRequest("GET", url, nil)
+		req := newTestRequest("GET", url, nil)
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		s.Router().ServeHTTP(rec, req)

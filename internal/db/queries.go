@@ -327,9 +327,9 @@ func CreateSession(d *sql.DB, userID int64, ttl time.Duration) (string, error) {
 	return token, nil
 }
 
-const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
+const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
 
-const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
+const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate`
 
 func GetSessionUser(d *sql.DB, token string) (*User, error) {
 	return scanUser(d.QueryRow(`
@@ -367,21 +367,51 @@ func SetSetting(d *sql.DB, key, value string) error {
 
 // Nodes
 
+// CreateNode inserts a node, storing the secret hashed at rest. The returned
+// Node carries the PLAINTEXT secret so the caller can show it once (install
+// command); it is never persisted or readable again. A composite/self node
+// passes secret="" and gets no credential (empty secret, hashed flag set).
 func CreateNode(d *sql.DB, name, address, secret string) (*Node, error) {
-	if secret == "" {
-		secret = RandToken(32)
+	plaintext := secret
+	if plaintext == "" && address != "" {
+		// Remote agent nodes need a credential; composite nodes (address "")
+		// legitimately have none.
+		plaintext = RandToken(32)
+	}
+	stored := ""
+	if plaintext != "" {
+		stored = HashToken(plaintext)
 	}
 	// New agent nodes default to both roles (entry|via = 3) so a freshly
 	// registered node can be picked as an entry or bound as a middle layer
 	// without an extra edit; the numeric literal mirrors NodeRoleEntry|NodeRoleVia.
-	res, err := d.Exec(`INSERT INTO nodes(name, address, secret, roles, sort_order, created_at)
-		VALUES (?,?,?,3, (SELECT COALESCE(MAX(sort_order),0)+1 FROM nodes), ?)`,
-		name, address, secret, now())
+	res, err := d.Exec(`INSERT INTO nodes(name, address, secret, secret_hashed, roles, sort_order, created_at)
+		VALUES (?,?,?,1,3, (SELECT COALESCE(MAX(sort_order),0)+1 FROM nodes), ?)`,
+		name, address, stored, now())
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	return GetNode(d, id)
+	n, err := GetNode(d, id)
+	if err != nil {
+		return nil, err
+	}
+	// Hand back the plaintext (not the stored hash) so the caller can display
+	// it this one time.
+	n.Secret = plaintext
+	return n, nil
+}
+
+// ResetNodeSecret generates a fresh secret for a node, stores its hash, and
+// returns the new PLAINTEXT for one-time display. The old secret stops working
+// immediately (the agent must reconnect with the new one).
+func ResetNodeSecret(d *sql.DB, id int64) (string, error) {
+	plaintext := RandToken(32)
+	if _, err := d.Exec(`UPDATE nodes SET secret=?, secret_hashed=1 WHERE id=?`,
+		HashToken(plaintext), id); err != nil {
+		return "", err
+	}
+	return plaintext, nil
 }
 
 // NOTE: scanNode and the inline scan in grants.go (ListNodesForUser) read these

@@ -543,6 +543,7 @@ func (s *Server) Router() http.Handler {
 
 	// --- JSON API ---
 	r.Route("/api", func(r chi.Router) {
+		r.Use(s.csrfProtect)
 		r.Post("/login", s.apiLogin)
 		r.Post("/logout", s.apiLogout)
 		r.Get("/branding", s.apiBranding)
@@ -570,6 +571,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/relay-host-v6", s.apiSetNodeRelayHostV6)
 			r.Post("/nodes/{id}/port-range", s.apiUpdateNodePortRange)
 			r.Post("/nodes/{id}/resync", s.apiResyncNode)
+			r.Post("/nodes/{id}/reset-token", s.apiResetNodeToken)
 			r.Post("/nodes/{id}/upgrade", s.apiUpgradeNode)
 			r.Delete("/nodes/{id}", s.apiDeleteNode)
 			r.Post("/nodes/{id}/toggle", s.apiToggleNode)

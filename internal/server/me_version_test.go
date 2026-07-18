@@ -13,7 +13,7 @@ func TestMeIncludesServerVersion(t *testing.T) {
 	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
 
-	req := httptest.NewRequest("GET", "/api/me", nil)
+	req := newTestRequest("GET", "/api/me", nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

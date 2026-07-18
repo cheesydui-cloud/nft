@@ -94,13 +94,7 @@ func (s *Server) requireAPIAuth(next http.Handler) http.Handler {
 		}
 		u, err := db.GetSessionUser(s.DB, c.Value)
 		if err != nil || u == nil {
-			http.SetCookie(w, &http.Cookie{
-				Name:     sessionCookie,
-				Value:    "",
-				Path:     "/",
-				SameSite: http.SameSiteLaxMode,
-				MaxAge:   -1,
-			})
+			http.SetCookie(w, newSessionCookie(r, "", -1))
 			jsonErr(w, http.StatusUnauthorized, "会话已过期")
 			return
 		}
@@ -182,6 +176,10 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := db.GetUserByUsername(s.DB, body.Username)
 	if err != nil {
+		// Run a comparison against a dummy hash so the response time matches
+		// the "user exists but wrong password" path, defeating username
+		// enumeration via timing.
+		_ = bcrypt.CompareHashAndPassword(dummyPwHash, []byte(body.Password))
 		if s.loginLimiter != nil {
 			s.loginLimiter.recordFailure(limitKey)
 		}
@@ -207,14 +205,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "登录失败")
 		return
 	}
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookie,
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(sessionTTL.Seconds()),
-		})
+	http.SetCookie(w, newSessionCookie(r, token, int(sessionTTL.Seconds())))
 	db.WriteAudit(s.DB, u.ID, "login", "", "")
 	jsonOK(w, map[string]any{"user": apiUserView(u)})
 }
@@ -223,13 +214,7 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = db.DeleteSession(s.DB, c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    "",
-		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, newSessionCookie(r, "", -1))
 	jsonOK(w, map[string]any{"ok": true})
 }
 
@@ -287,7 +272,7 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	cur, _ := r.Cookie(sessionCookie)
 	if cur != nil {
-		_, _ = s.DB.Exec(`DELETE FROM sessions WHERE user_id=? AND token<>?`, u.ID, cur.Value)
+		_, _ = s.DB.Exec(`DELETE FROM sessions WHERE user_id=? AND token<>?`, u.ID, db.HashToken(cur.Value))
 	}
 	db.WriteAudit(s.DB, u.ID, "user.change_password", "", "")
 	jsonOK(w, map[string]any{"ok": true})
@@ -485,6 +470,7 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		n, _ = db.GetNode(s.DB, n.ID)
 		db.WriteAudit(s.DB, u.ID, "node.create_composite", strconv.FormatInt(n.ID, 10), body.Name)
 		s.grantInitialUsers(u.ID, n.ID, body.UserIDs)
+		// Composite nodes have no agent credential, so no secret to reveal.
 		jsonOK(w, map[string]any{"node": n})
 		return
 	}
@@ -495,6 +481,9 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// CreateNode hands back the plaintext secret this one time; capture it now
+	// because the GetNode refresh below reloads the hashed value from the DB.
+	plaintextSecret := n.Secret
 	// Absent field and explicit 0 are indistinguishable on create, so 0 keeps
 	// the default 1.0; free (0) is set later via the dedicated endpoint.
 	if body.RateMultiplier > 0 && body.RateMultiplier != 1.0 {
@@ -519,17 +508,19 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 	db.WriteAudit(s.DB, u.ID, "node.create", strconv.FormatInt(n.ID, 10), body.Name)
 	s.grantInitialUsers(u.ID, n.ID, body.UserIDs)
 	_ = s.apiDispatch(n.ID)
-	jsonOK(w, map[string]any{"node": n})
+	// Return the plaintext secret once so the operator can copy the install
+	// command; it is stored hashed and can never be read back after this.
+	jsonOK(w, map[string]any{"node": n, "secret": plaintextSecret})
 }
 
-// nodeWithSecret re-exposes a node's secret on the admin node-detail response
-// only. db.Node.Secret is json:"-" so it never leaks elsewhere; the embedded
-// pointer promotes every other node field, and the explicit Secret field (at
-// depth 0) shadows the hidden embedded one, serializing back as "secret" for
-// the install-command view.
+// nodeWithSecret annotates the admin node-detail response. Secrets are now
+// stored hashed at rest and cannot be recovered, so we no longer echo the
+// secret itself (db.Node.Secret is json:"-"). SecretSet just tells the UI
+// whether a credential exists, so it can show a "reset to reveal" affordance
+// instead of a stale/hashed value.
 type nodeWithSecret struct {
 	*db.Node
-	Secret string `json:"secret"`
+	SecretSet bool `json:"secret_set"`
 }
 
 func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
@@ -597,7 +588,7 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	lv := serverVersion()
 	normalizeAgentVersion(n, lv, latestAgentSHA)
 	resp := map[string]any{
-		"node": nodeWithSecret{Node: n, Secret: n.Secret}, "rule_hops": views, "panel_url": panelURL,
+		"node": nodeWithSecret{Node: n, SecretSet: n.Secret != ""}, "rule_hops": views, "panel_url": panelURL,
 		"panel_url_configured": panelURL != "",
 		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,
@@ -1202,6 +1193,35 @@ func (s *Server) apiResyncNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+// apiResetNodeToken rotates a node's agent credential, returning the fresh
+// plaintext secret one time. The old secret is invalidated immediately, so a
+// running agent will be rejected on its next reconnect until reconfigured with
+// the new token.
+func (s *Server) apiResetNodeToken(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	n, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if n.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点没有 Agent 凭证")
+		return
+	}
+	secret, err := db.ResetNodeSecret(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, u.ID, "node.reset_token", strconv.FormatInt(id, 10), n.Name)
+	jsonOK(w, map[string]any{"secret": secret})
 }
 
 func (s *Server) apiUpgradeNode(w http.ResponseWriter, r *http.Request) {

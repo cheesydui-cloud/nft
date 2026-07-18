@@ -27,7 +27,7 @@ func TestAdminUserCannotBeResetOrDeleted(t *testing.T) {
 	}
 
 	do := func(method, path string) int {
-		req := httptest.NewRequest(method, path, nil)
+		req := newTestRequest(method, path, nil)
 		req.AddCookie(admin)
 		rec := httptest.NewRecorder()
 		s.Router().ServeHTTP(rec, req)

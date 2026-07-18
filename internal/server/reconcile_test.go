@@ -68,7 +68,7 @@ func TestRevokeNodeDeletesUserRules(t *testing.T) {
 	}
 
 	admin := loginAsAdmin(t, d)
-	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%d/grants/%d", uid, n.ID), nil)
+	req := newTestRequest("DELETE", fmt.Sprintf("/api/users/%d/grants/%d", uid, n.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -89,7 +89,7 @@ func TestRevokeNodeDeletesUserRules(t *testing.T) {
 func createOwnedRuleOnNode(t *testing.T, s *Server, uid, nodeID int64, cookie *http.Cookie) {
 	t.Helper()
 	body := []byte(fmt.Sprintf(`{"node_id":%d,"name":"r","proto":"tcp","exit":"9.9.9.9:8443"}`, nodeID))
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()

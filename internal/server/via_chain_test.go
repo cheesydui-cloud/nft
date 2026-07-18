@@ -31,7 +31,7 @@ func createMyRuleVia(t *testing.T, s *Server, cookie *http.Cookie, nodeID int64,
 		"node_id": nodeID, "via_node_ids": vias, "name": name, "proto": "tcp",
 		"exit": "9.9.9.9:8443", "exit_mode": "userspace",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -106,7 +106,7 @@ func TestCompositeAsMiddleKeepsConfigMode(t *testing.T) {
 		"node_id": entry.ID, "via_node_ids": []int64{mid.ID, tailVia.ID},
 		"name": "r-mid", "proto": "tcp", "exit": "9.9.9.9:8443", "exit_mode": "kernel",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -218,7 +218,7 @@ func TestEditWithoutViaFieldKeepsPath(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"node_id": entry.ID, "name": "r1-renamed", "proto": "tcp", "exit": "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("PUT", "/api/my/rules/"+strconv.FormatInt(rules[0].ID, 10), bytes.NewReader(body))
+	req := newTestRequest("PUT", "/api/my/rules/"+strconv.FormatInt(rules[0].ID, 10), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
@@ -234,7 +234,7 @@ func TestEditWithoutViaFieldKeepsPath(t *testing.T) {
 	body2, _ := json.Marshal(map[string]any{
 		"node_id": entry.ID, "via_node_ids": []int64{}, "name": "r1", "proto": "tcp", "exit": "9.9.9.9:8443",
 	})
-	req2 := httptest.NewRequest("PUT", "/api/my/rules/"+strconv.FormatInt(rules[0].ID, 10), bytes.NewReader(body2))
+	req2 := newTestRequest("PUT", "/api/my/rules/"+strconv.FormatInt(rules[0].ID, 10), bytes.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	req2.AddCookie(cookie)
 	w2 := httptest.NewRecorder()

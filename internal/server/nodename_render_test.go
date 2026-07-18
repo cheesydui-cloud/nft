@@ -27,7 +27,7 @@ func TestRulesListShowsNodeName(t *testing.T) {
 		"proto":   "tcp",
 		"exit":    "10.0.0.9:443",
 	})
-	createReq := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+	createReq := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.AddCookie(admin)
 	createRec := httptest.NewRecorder()
@@ -36,7 +36,7 @@ func TestRulesListShowsNodeName(t *testing.T) {
 		t.Fatalf("POST /api/rules: status %d body=%s", createRec.Code, createRec.Body.String())
 	}
 
-	req := httptest.NewRequest("GET", "/api/rules", nil)
+	req := newTestRequest("GET", "/api/rules", nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

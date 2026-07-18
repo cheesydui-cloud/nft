@@ -11,7 +11,7 @@ import (
 
 func postAdmin(t *testing.T, s *Server, admin *http.Cookie, path string) {
 	t.Helper()
-	req := httptest.NewRequest("POST", path, nil)
+	req := newTestRequest("POST", path, nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

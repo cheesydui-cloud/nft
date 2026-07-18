@@ -583,8 +583,10 @@ func lookupNodeBySecret(d *sql.DB, secret string) (*db.Node, error) {
 	if secret == "" {
 		return nil, errors.New("empty secret")
 	}
+	// Secrets are stored hashed at rest; the agent presents the plaintext, so
+	// hash it before the equality lookup (same model as session/API tokens).
 	var id int64
-	err := d.QueryRow(`SELECT id FROM nodes WHERE secret=? AND disabled=0`, secret).Scan(&id)
+	err := d.QueryRow(`SELECT id FROM nodes WHERE secret=? AND disabled=0`, db.HashToken(secret)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

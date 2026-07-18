@@ -21,7 +21,7 @@ func TestResyncAllNodesSkipsComposite(t *testing.T) {
 
 	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
-	req := httptest.NewRequest("POST", "/api/nodes/resync-all", nil)
+	req := newTestRequest("POST", "/api/nodes/resync-all", nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

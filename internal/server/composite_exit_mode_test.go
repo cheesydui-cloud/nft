@@ -76,7 +76,7 @@ func wantModes(t *testing.T, got []string, want ...string) {
 func userJSON(t *testing.T, s *Server, cookie *http.Cookie, method, url string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(method, url, bytes.NewReader(b))
+	req := newTestRequest(method, url, bytes.NewReader(b))
 	req.AddCookie(cookie)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -226,7 +226,7 @@ func TestRuleListItemExposesExitMode(t *testing.T) {
 		"node_id": comp.ID, "name": "vless", "proto": "tcp", "exit": "9.9.9.9:8443", "exit_mode": "userspace",
 	})
 
-	lreq := httptest.NewRequest("GET", "/api/my/rules", nil)
+	lreq := newTestRequest("GET", "/api/my/rules", nil)
 	lreq.AddCookie(cookie)
 	lrec := httptest.NewRecorder()
 	s.Router().ServeHTTP(lrec, lreq)

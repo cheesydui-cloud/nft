@@ -139,7 +139,7 @@ func TestExplicitHopsRejectsNoDirectExitTail(t *testing.T) {
 		"name": "r", "proto": "tcp", "exit": "9.9.9.9:443",
 		"hops": []map[string]any{{"node_id": a.ID, "mode": "kernel"}, {"node_id": b.ID, "mode": "kernel"}},
 	})
-	req := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestCompositeCannotNestComposite(t *testing.T) {
 		"name": "outer", "node_type": "composite",
 		"hops": []map[string]any{{"node_id": inner.ID, "mode": "kernel"}, {"node_id": c.ID, "mode": "kernel"}},
 	})
-	req := httptest.NewRequest("POST", "/api/nodes", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/nodes", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
@@ -182,7 +182,7 @@ func TestCompositeCannotNestComposite(t *testing.T) {
 	body2, _ := json.Marshal(map[string]any{
 		"hops": []map[string]any{{"node_id": inner.ID, "mode": "kernel"}, {"node_id": c.ID, "mode": "kernel"}},
 	})
-	req2 := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/hops", outer.ID), bytes.NewReader(body2))
+	req2 := newTestRequest("POST", fmt.Sprintf("/api/nodes/%d/hops", outer.ID), bytes.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	req2.AddCookie(admin)
 	rec2 := httptest.NewRecorder()
@@ -204,7 +204,7 @@ func TestCompositeProbeReportsEveryChild(t *testing.T) {
 	admin := loginAsAdmin(t, d)
 	s := newServer(t, d)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/probe?target=9.9.9.9:80&node=%d", comp.ID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/probe?target=9.9.9.9:80&node=%d", comp.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

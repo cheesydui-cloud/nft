@@ -99,7 +99,7 @@ func TestApiUpgradeNodeRecordsError(t *testing.T) {
 	defer func() { agentArtMu.Lock(); agentArtCache = nil; agentArtMu.Unlock() }()
 
 	// Node not connected -> SendUpgrade fails -> must be recorded as error.
-	req := httptest.NewRequest("POST", "/api/nodes/"+strconv.FormatInt(n.ID, 10)+"/upgrade", bytes.NewReader([]byte("{}")))
+	req := newTestRequest("POST", "/api/nodes/"+strconv.FormatInt(n.ID, 10)+"/upgrade", bytes.NewReader([]byte("{}")))
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -109,7 +109,7 @@ func TestApiUpgradeNodeRecordsError(t *testing.T) {
 	}
 
 	// apiGetNode must expose a derived upgrade object.
-	req2 := httptest.NewRequest("GET", "/api/nodes/"+strconv.FormatInt(n.ID, 10), nil)
+	req2 := newTestRequest("GET", "/api/nodes/"+strconv.FormatInt(n.ID, 10), nil)
 	req2.AddCookie(cookie)
 	rec2 := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec2, req2)

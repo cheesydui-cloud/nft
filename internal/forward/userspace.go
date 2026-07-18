@@ -20,6 +20,11 @@ import (
 // Bound per-port goroutine fan-out so a connection flood cannot exhaust memory.
 const maxConnsPerPort = 1024
 
+// Upper bound for the pre-connect pool size. The panel pushes this value over
+// the wire, so clamp it to keep a bogus/malicious value from allocating a
+// giant channel and dialing storms per listener.
+const maxPoolSize = 1024
+
 // listener is one userspace TCP forward: a net.Listener plus the hot-updatable
 // dial target and rate limiter shared by all of its connections.
 type listener struct {
@@ -335,6 +340,11 @@ func (b *userspaceBackend) Close() {
 }
 
 func (b *userspaceBackend) SetPoolSize(n int) {
+	if n < 0 {
+		n = 0
+	} else if n > maxPoolSize {
+		n = maxPoolSize
+	}
 	b.mu.Lock()
 	b.poolSize = n
 	b.mu.Unlock()

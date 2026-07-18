@@ -16,7 +16,7 @@ func adminPost(t *testing.T, s *Server, cookie *http.Cookie, path string, body a
 	if body != nil {
 		buf, _ = json.Marshal(body)
 	}
-	req := httptest.NewRequest("POST", path, bytes.NewReader(buf))
+	req := newTestRequest("POST", path, bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -32,7 +32,7 @@ func TestAPILandingExitQuotaLifecycle(t *testing.T) {
 	admin := loginAsAdmin(t, d)
 
 	// list
-	req := httptest.NewRequest("GET", "/api/users/"+itoa(uid)+"/landing-exits", nil)
+	req := newTestRequest("GET", "/api/users/"+itoa(uid)+"/landing-exits", nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -93,7 +93,7 @@ func TestAPILandingExitsRequireAdmin(t *testing.T) {
 	d := openDB(t)
 	uid, userCookie := loginAsUser(t, d, 10)
 	s := newServer(t, d)
-	req := httptest.NewRequest("GET", "/api/users/"+itoa(uid)+"/landing-exits", nil)
+	req := newTestRequest("GET", "/api/users/"+itoa(uid)+"/landing-exits", nil)
 	req.AddCookie(userCookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -141,7 +141,7 @@ func TestAPILandingExitRenameRequiresAdmin(t *testing.T) {
 	d := openDB(t)
 	uid, userCookie := loginAsUser(t, d, 10)
 	s := newServer(t, d)
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/landing-exits/rename",
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/landing-exits/rename",
 		bytes.NewReader([]byte(`{"host":"1.2.3.4","port":443,"name":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(userCookie)

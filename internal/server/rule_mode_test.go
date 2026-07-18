@@ -26,7 +26,7 @@ func singleHopMode(t *testing.T, s *Server, ruleID int64) string {
 func adminJSON(t *testing.T, s *Server, admin *http.Cookie, method, url string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(method, url, bytes.NewReader(b))
+	req := newTestRequest(method, url, bytes.NewReader(b))
 	req.AddCookie(admin)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
