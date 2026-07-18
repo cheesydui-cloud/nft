@@ -405,8 +405,8 @@ function AddNodeModal({ open, onClose, onDone }) {
 
   if (created) {
     return (
-      <Modal open={open} onClose={() => { const cid = created.id; setCreated(null); navigate(`/nodes/${cid}`) }} title="节点已创建 · 保存 Token">
-        <div className="text-[13px] text-ink-soft mb-3">这是该节点的 Token，只显示这一次。请立即复制并保存到安装命令中；关闭后无法再次查看，只能重置。</div>
+      <Modal open={open} onClose={() => { const cid = created.id; setCreated(null); navigate(`/nodes/${cid}`) }} title="节点已创建 · Token">
+        <div className="text-[13px] text-ink-soft mb-3">这是该节点的 Token，可点击复制。在节点详情页也能随时查看它和完整安装命令。</div>
         <div className="rounded-[10px] border border-line bg-[#f7f9fc] px-3.5 py-3 font-mono text-[13px] break-all">
           <CopyText text={created.secret} />
         </div>

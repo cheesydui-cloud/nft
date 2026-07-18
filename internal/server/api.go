@@ -481,8 +481,8 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// CreateNode hands back the plaintext secret this one time; capture it now
-	// because the GetNode refresh below reloads the hashed value from the DB.
+	// Secrets are stored in plaintext, so GetNode reloads carry it too; capturing
+	// it here keeps things clear regardless of whether the refresh below runs.
 	plaintextSecret := n.Secret
 	// Absent field and explicit 0 are indistinguishable on create, so 0 keeps
 	// the default 1.0; free (0) is set later via the dedicated endpoint.
@@ -508,19 +508,21 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 	db.WriteAudit(s.DB, u.ID, "node.create", strconv.FormatInt(n.ID, 10), body.Name)
 	s.grantInitialUsers(u.ID, n.ID, body.UserIDs)
 	_ = s.apiDispatch(n.ID)
-	// Return the plaintext secret once so the operator can copy the install
-	// command; it is stored hashed and can never be read back after this.
+	// Return the plaintext secret so the operator can copy the install command.
 	jsonOK(w, map[string]any{"node": n, "secret": plaintextSecret})
 }
 
-// nodeWithSecret annotates the admin node-detail response. Secrets are now
-// stored hashed at rest and cannot be recovered, so we no longer echo the
-// secret itself (db.Node.Secret is json:"-"). SecretSet just tells the UI
-// whether a credential exists, so it can show a "reset to reveal" affordance
-// instead of a stale/hashed value.
+// nodeWithSecret re-exposes a node's secret on the admin node-detail response
+// only. db.Node.Secret is json:"-" so it never leaks elsewhere; the embedded
+// pointer promotes every other node field, and the explicit Secret field (at
+// depth 0) shadows the hidden embedded one, serializing as "secret" for the
+// install-command view. Secret is empty for legacy v3.0.0 rows whose stored
+// value is a non-recoverable hash (SecretHashed true) — the UI then prompts a
+// reset instead of showing an unusable value.
 type nodeWithSecret struct {
 	*db.Node
-	SecretSet bool `json:"secret_set"`
+	Secret       string `json:"secret"`
+	SecretLegacy bool   `json:"secret_legacy"`
 }
 
 func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
@@ -587,8 +589,18 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 	lv := serverVersion()
 	normalizeAgentVersion(n, lv, latestAgentSHA)
+	// Node secrets are plaintext (secret_hashed=0) and shown for the install
+	// command. Legacy v3.0.0 rows stored a SHA-256 hash (secret_hashed=1) that
+	// can't be turned back into a usable token, so suppress it and flag the row
+	// so the UI prompts a reset.
+	var secretHashed int
+	s.DB.QueryRow(`SELECT secret_hashed FROM nodes WHERE id=?`, n.ID).Scan(&secretHashed)
+	shownSecret := n.Secret
+	if secretHashed == 1 {
+		shownSecret = ""
+	}
 	resp := map[string]any{
-		"node": nodeWithSecret{Node: n, SecretSet: n.Secret != ""}, "rule_hops": views, "panel_url": panelURL,
+		"node": nodeWithSecret{Node: n, Secret: shownSecret, SecretLegacy: secretHashed == 1}, "rule_hops": views, "panel_url": panelURL,
 		"panel_url_configured": panelURL != "",
 		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,

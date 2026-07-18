@@ -144,10 +144,12 @@ export default function NodeDetail() {
     try { await api.post(`/nodes/${id}/no-direct-exit`, { no_direct_exit: next }); setNoDirectExit(next); toast(next ? '已禁止直接转发' : '已允许直接转发') } catch (err) { toast(err.message, 'error') }
   }
   const resetToken = async () => {
-    if (!(await confirm({ title: '重置 Token', message: '重置后旧 Token 立即失效，正在运行的 Agent 会在下次重连时被拒绝，需用新 Token 重新配置。新 Token 只显示这一次。', confirmText: '重置', danger: true }))) return
+    if (!(await confirm({ title: '重置 Token', message: '重置后旧 Token 立即失效，正在运行的 Agent 会在下次重连时被拒绝，需用新 Token 重新配置并重装。', confirmText: '重置', danger: true }))) return
     try {
       const d = await api.post(`/nodes/${id}/reset-token`)
       setRevealedSecret(d.secret || '')
+      // Reload so the Token row and install command pick up the new plaintext.
+      reloadSilent()
       toast('Token 已重置')
     } catch (err) { toast(err.message, 'error') }
   }
@@ -212,10 +214,11 @@ export default function NodeDetail() {
   const relayHostV6Part = cmdRelayHostV6.trim() ? ` \\\n  --relay-host-v6 ${cmdRelayHostV6.trim()}` : ''
   const insecurePart = needsInsecure ? ' \\\n  --insecure' : ''
   const ghProxyPart = proxyPrefix ? ` \\\n  --gh-proxy ${proxyPrefix}` : ''
-  // The secret is stored hashed and cannot be read back, so the install command
-  // shows the real token only right after a reset (revealedSecret); otherwise it
-  // falls back to a placeholder prompting the operator to reset to reveal one.
-  const tokenForCmd = revealedSecret || '<重置 Token 以显示>'
+  // Tokens are stored in plaintext, so node.secret carries the real value for
+  // the command. revealedSecret (a fresh reset) takes priority before the reload
+  // lands. Legacy v3.0.0 nodes (secret_legacy) have an unusable hashed value —
+  // node.secret is empty there, so prompt a reset instead.
+  const tokenForCmd = revealedSecret || node.secret || (node.secret_legacy ? '<请先点“重置 Token”>' : '')
   const installCmd = `curl -fsSL ${proxyPrefix}https://raw.githubusercontent.com/cheesydui-cloud/nft/main/install.sh | bash -s agent \\\n  --panel-url ${normalizedPanelUrl} \\\n  --token ${tokenForCmd}${portRangePart}${relayHostPart}${relayHostV6Part}${insecurePart}${ghProxyPart}`
 
   return (
@@ -323,7 +326,9 @@ export default function NodeDetail() {
               </InfoRow>
               <InfoRow label="Token" mono valueClass="text-[12.5px] break-all leading-relaxed">
                 <span className="inline-flex items-center gap-2 flex-wrap">
-                  <span className="text-ink-mut">{node.secret_set ? '已设置（哈希存储，不可回显）' : '未设置'}</span>
+                  {node.secret
+                    ? <SensText blurred={blurred}><CopyText text={node.secret} /></SensText>
+                    : <span className="text-ink-mut">{node.secret_legacy ? '旧版哈希 Token，无法显示，请重置' : '未设置'}</span>}
                   <button onClick={resetToken} className="inline-flex items-center px-2.5 py-[3px] rounded-[7px] text-[12px] font-semibold bg-surface text-ink-soft border border-[#d7dce3] hover:bg-[#f7f9fc] transition-colors cursor-pointer">重置 Token</button>
                 </span>
               </InfoRow>

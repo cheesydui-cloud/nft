@@ -54,10 +54,6 @@ func Open(path string) (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
-	if err := hashLegacyNodeSecrets(d); err != nil {
-		d.Close()
-		return nil, err
-	}
 	if err := stripLegacyExitNameSuffixes(d); err != nil {
 		d.Close()
 		return nil, err
@@ -144,48 +140,6 @@ func hashLegacyAPITokens(d *sql.DB) error {
 	return nil
 }
 
-// hashLegacyNodeSecrets converts pre-0048 plaintext node secrets to hash-at-rest
-// form in place, preserving each secret's hash so already-connected agents (which
-// still hold the plaintext) keep authenticating: the hub hashes the incoming
-// plaintext and compares. secret_hashed=0 marks a not-yet-migrated row; after
-// conversion it's set to 1, so this is idempotent. Empty secrets (composite and
-// self nodes, which don't authenticate by secret) are skipped. SHA-256 can't run
-// in modernc SQLite, so the backfill runs in Go.
-func hashLegacyNodeSecrets(d *sql.DB) error {
-	rows, err := d.Query(`SELECT id, secret FROM nodes WHERE secret_hashed = 0 AND secret <> ''`)
-	if err != nil {
-		return err
-	}
-	type legacy struct {
-		id     int64
-		secret string
-	}
-	var pending []legacy
-	for rows.Next() {
-		var l legacy
-		if err := rows.Scan(&l.id, &l.secret); err != nil {
-			rows.Close()
-			return err
-		}
-		pending = append(pending, l)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, l := range pending {
-		if _, err := d.Exec(`UPDATE nodes SET secret=?, secret_hashed=1 WHERE id=?`,
-			HashToken(l.secret), l.id); err != nil {
-			return err
-		}
-	}
-	// Mark empty-secret rows migrated too so they don't get re-scanned.
-	if _, err := d.Exec(`UPDATE nodes SET secret_hashed=1 WHERE secret_hashed=0 AND secret=''`); err != nil {
-		return err
-	}
-	return nil
-}
 
 func migrate(d *sql.DB) error {
 	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {

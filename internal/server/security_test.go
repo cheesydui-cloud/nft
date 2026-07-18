@@ -35,20 +35,20 @@ func TestNodeSecretNotLeakedToUser(t *testing.T) {
 		}
 	}
 
-	// Secrets are hashed at rest and never echoed back — not even to admins.
-	// The plaintext is shown once at create/reset time only; the detail view
-	// exposes only whether a secret is set (secret_set).
+	// Node secrets are stored in plaintext (secret_hashed=0) and echoed back to
+	// admins for the install command. Legacy v3.0.0 rows (secret_hashed=1) suppress
+	// the secret and flag secret_legacy=true instead.
 	admin := loginAsAdmin(t, d)
 	req := newTestRequest("GET", fmt.Sprintf("/api/nodes/%d", n.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	if strings.Contains(body, secret) {
-		t.Errorf("admin node detail leaked plaintext secret, body=%s", body)
+	if !strings.Contains(body, secret) {
+		t.Errorf("admin node detail should contain the plaintext secret, body=%s", body)
 	}
-	if !strings.Contains(body, `"secret_set":true`) {
-		t.Errorf("admin node detail should report secret_set=true, body=%s", body)
+	if !strings.Contains(body, `"secret_legacy":false`) {
+		t.Errorf("admin node detail should report secret_legacy=false for plaintext nodes, body=%s", body)
 	}
 }
 
