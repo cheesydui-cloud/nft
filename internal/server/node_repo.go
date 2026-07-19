@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"nft/internal/db"
 )
@@ -31,6 +32,7 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		URI       string `json:"uri"`
 		Remark    string `json:"remark"`
 		ExpiresAt int64  `json:"expires_at"`
+		GroupName string `json:"group_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -40,7 +42,7 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt)
+	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, strings.TrimSpace(body.GroupName))
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -64,6 +66,7 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		URI       string `json:"uri"`
 		Remark    string `json:"remark"`
 		ExpiresAt int64  `json:"expires_at"`
+		GroupName string `json:"group_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -73,11 +76,32 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt); err != nil {
+	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, strings.TrimSpace(body.GroupName)); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+// apiBatchSetNodeRepoGroup assigns a group label to many repo entries.
+func (s *Server) apiBatchSetNodeRepoGroup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs       []int64 `json:"ids"`
+		GroupName string  `json:"group_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.IDs) == 0 {
+		jsonErr(w, http.StatusBadRequest, "no nodes selected")
+		return
+	}
+	if err := db.SetNodeRepoGroupsBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true, "count": len(body.IDs)})
 }
 
 // apiDeleteNodeRepoEntry deletes a node from the repository.

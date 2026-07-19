@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
-import { Layout, useToast, useBlur } from '../../components/Layout'
+import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
+import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
+import { uriToClashYaml } from '../../lib/yaml-convert'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
 import LandingSourceCard from './LandingSourceCard'
@@ -15,6 +17,8 @@ export default function UserDetail() {
   const navigate = useNavigate()
   const toast = useToast()
   const blurred = useBlur()
+  const { copyFmt } = useCopyFmt()
+  const speeds = useSpeed()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [allUsers, setAllUsers] = useState([])
@@ -115,6 +119,7 @@ export default function UserDetail() {
     ? [
         { label: '用户名', value: user.username, accent: true },
         { label: '角色', value: <span className="font-mono">{user.role}</span> },
+        { label: '分组', value: user.group_name ? <Badge color="blue">{user.group_name}</Badge> : <span className="text-ink-mut">未分组</span> },
         { label: '规则配额', value: <span className="font-mono">{rules.length} / {user.max_forwards || '∞'}</span> },
         { label: '真实流量', value: (
             <span className="font-mono">
@@ -281,25 +286,55 @@ export default function UserDetail() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>ID</th><th>名称</th><th>节点</th><th>入口</th><th>出口</th>
+                    <th>ID</th><th>名称</th><th>节点</th><th>网速</th>
                     <th className="text-right">真实用量</th>
                     <th className="text-right">显示用量(×{rate})</th>
+                    <th className="text-right">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rules.map(r => (
-                    <tr key={r.id}>
-                      <td className="font-mono text-xs text-ink-mut">{r.id}</td>
-                      <td className="font-semibold">
-                        <Link to={`/rules/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link>
-                      </td>
-                      <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
-                      <td className="font-mono text-xs">--</td>
-                      <td className="font-mono text-xs">--</td>
-                      <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
-                      <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
-                    </tr>
-                  ))}
+                  {rules.map(r => {
+                    const sp = speeds[r.node_id]
+                    const copyRuleLink = async () => {
+                      const parts = []
+                      if (r.relay_uri) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri) : r.relay_uri)
+                      if (r.relay_uri_v6) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri_v6) : r.relay_uri_v6)
+                      if (!parts.length) {
+                        if (r.entry) parts.push(r.entry)
+                        if (r.entry_v6) parts.push(r.entry_v6)
+                      }
+                      const text = parts.filter(Boolean).join('\n').trim()
+                      if (!text) { toast('该规则没有可复制的链接', 'error'); return }
+                      try {
+                        await copyToClipboard(text)
+                        toast('规则链接已复制')
+                      } catch {
+                        toast('复制失败', 'error')
+                      }
+                    }
+                    return (
+                      <tr key={r.id}>
+                        <td className="font-mono text-xs text-ink-mut">{r.id}</td>
+                        <td className="font-semibold">
+                          <Link to={`/rules/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link>
+                        </td>
+                        <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
+                        <td className="font-mono text-xs whitespace-nowrap">
+                          {sp ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
+                              <span className="text-blue-600">↓{fmtSpeed(sp.down)}</span>
+                            </span>
+                          ) : <span className="text-ink-mut">—</span>}
+                        </td>
+                        <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
+                        <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
+                        <td className="text-right">
+                          <button onClick={copyRuleLink} className="text-blue-600 text-xs font-semibold hover:underline">复制</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </TableBox>

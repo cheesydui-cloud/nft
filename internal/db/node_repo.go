@@ -13,13 +13,15 @@ type NodeRepoEntry struct {
 	Remark    string `json:"remark"`
 	ExpiresAt int64  `json:"expires_at"`
 	CreatedAt int64  `json:"created_at"`
+	// GroupName is a free-form admin label for filtering the pool; empty = ungrouped.
+	GroupName string `json:"group_name"`
 }
 
-const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at`
+const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name`
 
 func scanNodeRepo(rows *sql.Rows) (NodeRepoEntry, error) {
 	var n NodeRepoEntry
-	err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt)
+	err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName)
 	return n, err
 }
 
@@ -42,10 +44,10 @@ func ListNodeRepo(d *sql.DB) ([]NodeRepoEntry, error) {
 }
 
 // CreateNodeRepoEntry inserts a new node into the repository.
-func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, remark string, expiresAt int64) (NodeRepoEntry, error) {
-	n := NodeRepoEntry{Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark, ExpiresAt: expiresAt, CreatedAt: now()}
-	res, err := d.Exec(`INSERT INTO node_repo (name, protocol, host, port, uri, remark, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt)
+func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) (NodeRepoEntry, error) {
+	n := NodeRepoEntry{Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark, ExpiresAt: expiresAt, CreatedAt: now(), GroupName: groupName}
+	res, err := d.Exec(`INSERT INTO node_repo (name, protocol, host, port, uri, remark, expires_at, created_at, group_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt, n.GroupName)
 	if err != nil {
 		return n, err
 	}
@@ -54,9 +56,34 @@ func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, 
 }
 
 // UpdateNodeRepoEntry updates an existing node in the repository.
-func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64) error {
-	_, err := d.Exec(`UPDATE node_repo SET name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=? WHERE id=?`,
-		name, protocol, host, port, uri, remark, expiresAt, id)
+func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) error {
+	_, err := d.Exec(`UPDATE node_repo SET name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=?, group_name=? WHERE id=?`,
+		name, protocol, host, port, uri, remark, expiresAt, groupName, id)
+	return err
+}
+
+// SetNodeRepoGroup assigns a free-form group label to a repo entry (empty = ungrouped).
+func SetNodeRepoGroup(d *sql.DB, id int64, groupName string) error {
+	_, err := d.Exec(`UPDATE node_repo SET group_name=? WHERE id=?`, groupName, id)
+	return err
+}
+
+// SetNodeRepoGroupsBatch assigns the same group label to many repo entries.
+func SetNodeRepoGroupsBatch(d *sql.DB, ids []int64, groupName string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, groupName)
+	ph := ""
+	for i, id := range ids {
+		if i > 0 {
+			ph += ","
+		}
+		ph += "?"
+		args = append(args, id)
+	}
+	_, err := d.Exec(`UPDATE node_repo SET group_name=? WHERE id IN (`+ph+`)`, args...)
 	return err
 }
 

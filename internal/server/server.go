@@ -685,6 +685,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/users", s.apiListUsers)
 			r.Patch("/users/{id}/profile", s.apiUpdateUserProfile)
 			r.Post("/users/{id}/admin-note", s.apiSetAdminNote)
+			r.Post("/users/{id}/group", s.apiSetUserGroup)
+			r.Post("/users/batch-group", s.apiBatchSetUserGroup)
 			r.Post("/users/{id}/toggle", s.apiToggleUser)
 			r.Post("/users/{id}/reset-password", s.apiResetUserPassword)
 			r.Delete("/users/{id}", s.apiDeleteUser)
@@ -699,6 +701,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/node-repo", s.apiListNodeRepo)
 		r.Post("/node-repo", s.apiCreateNodeRepoEntry)
 		r.Patch("/node-repo/{id}", s.apiUpdateNodeRepoEntry)
+		r.Post("/node-repo/batch-group", s.apiBatchSetNodeRepoGroup)
 		r.Delete("/node-repo/{id}", s.apiDeleteNodeRepoEntry)
 		r.Post("/users/{id}/assign-repo", s.apiAssignRepoToUser)
 

@@ -16,9 +16,12 @@ export default function UserList() {
   const [newPassword, setNewPassword] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showPaste, setShowPaste] = useState(false)
+  const [showGroup, setShowGroup] = useState(false)
   const [allNodes, setAllNodes] = useState([])
   const isMobile = useIsMobile()
   const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState('') // '' all | '__none__' | name
+  const [sel, setSel] = useState(new Set())
   const [sortBy, setSortBy] = useState(null) // null | 'expires_asc' | 'expires_desc'
   const { user: currentUser } = useUser()
   const toast = useToast()
@@ -37,6 +40,7 @@ export default function UserList() {
   if (!data && error) return <Layout><Empty title="加载失败" desc={error}><button onClick={load} className="btn-secondary text-xs mt-3">重试</button></Empty></Layout>
 
   const { users = [] } = data || {}
+  const groups = [...new Set(users.map(u => (u.group_name || '').trim()).filter(Boolean))].sort()
 
   const toggleUser = async (u) => {
     try { await api.post(`/users/${u.id}/toggle`); toast(u.disabled ? '已启用' : '已禁用'); load() } catch (err) { toast(err.message, 'error') }
@@ -53,8 +57,32 @@ export default function UserList() {
     try { await api.del(`/users/${u.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
 
+  const bulkSetGroup = async (groupName) => {
+    if (sel.size === 0) { toast('请先勾选用户', 'error'); return }
+    try {
+      await api.post('/users/batch-group', { ids: [...sel], group_name: groupName })
+      toast(groupName ? `已移入分组「${groupName}」` : '已移出分组')
+      setSel(new Set())
+      setShowGroup(false)
+      load()
+    } catch (err) { toast(err.message, 'error') }
+  }
+
+  const toggleSel = (id, e) => {
+    e?.stopPropagation?.()
+    setSel(s => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
   const q = search.trim().toLowerCase()
-  const searched = !q ? users : users.filter(u => (u.username || '').toLowerCase().includes(q))
+  let searched = users
+  if (groupFilter === '__none__') searched = searched.filter(u => !(u.group_name || '').trim())
+  else if (groupFilter) searched = searched.filter(u => (u.group_name || '').trim() === groupFilter)
+  if (q) searched = searched.filter(u =>
+    [u.username, u.admin_note, u.group_name].some(v => (v || '').toLowerCase().includes(q)))
 
   const toggleExpirySort = () => setSortBy(s => s === 'expires_asc' ? 'expires_desc' : s === 'expires_desc' ? null : 'expires_asc')
   const filtered = !sortBy ? searched : [...searched].sort((a, b) => {
@@ -66,6 +94,9 @@ export default function UserList() {
     return sortBy === 'expires_asc' ? ea - eb : eb - ea
   })
 
+  const toggleSelAll = () => setSel(s =>
+    s.size === filtered.length && filtered.length > 0 ? new Set() : new Set(filtered.map(u => u.id)))
+
   return (
     <Layout>
       <div className="h-full flex flex-col">
@@ -74,6 +105,14 @@ export default function UserList() {
       <Panel fill>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索用户名…" />
+          <select className="input-field !w-auto text-xs py-1.5" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
+            <option value="">全部分组</option>
+            <option value="__none__">未分组</option>
+            {groups.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+          {sel.size > 0 && (
+            <button onClick={() => setShowGroup(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">设置分组 ({sel.size})</button>
+          )}
           <div className="hidden md:flex ml-auto gap-2">
             <ToolbarButton onClick={() => setShowPaste(true)}>粘贴授权</ToolbarButton>
             <ToolbarButton onClick={() => setShowCreate(true)}>＋ 新建用户</ToolbarButton>
@@ -83,19 +122,29 @@ export default function UserList() {
         {users.length === 0 ? (
           <Empty title="暂无用户" desc="点击右上角「新建用户」创建。" />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配用户" desc="试试别的关键词。" />
+          <Empty title="无匹配用户" desc="试试别的关键词或分组。" />
         ) : (
           <TableScroll>
           {/* Desktop table */}
           {!isMobile && <table className="tbl">
-            <thead><tr><th className="w-12">ID</th><th>用户名</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th><th className="cursor-pointer select-none whitespace-nowrap" onClick={toggleExpirySort}>到期{sortBy === 'expires_asc' ? ' ↑' : sortBy === 'expires_desc' ? ' ↓' : ''}</th><th>备注</th><th className="text-right">操作</th></tr></thead>
+            <thead><tr>
+              <th className="w-8"><input type="checkbox" className="accent-blue-600"
+                checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
+              <th className="w-12">ID</th><th>用户名</th><th>分组</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
+              <th className="cursor-pointer select-none whitespace-nowrap" onClick={toggleExpirySort}>到期{sortBy === 'expires_asc' ? ' ↑' : sortBy === 'expires_desc' ? ' ↓' : ''}</th>
+              <th>备注</th><th className="text-right">操作</th>
+            </tr></thead>
             <tbody>
               {filtered.map(u => {
                 const isSelf = u.id === currentUser?.id
                 return (
                   <tr key={u.id} className="cursor-pointer" onClick={() => navigate(`/users/${u.id}`)}>
+                    <td onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" className="accent-blue-600" checked={sel.has(u.id)} onChange={e => toggleSel(u.id, e)} />
+                    </td>
                     <td className="font-mono text-xs text-ink-mut">{u.id}</td>
                     <td className="text-blue-600 font-semibold">{u.username}</td>
+                    <td className="text-xs">{u.group_name ? <Badge color="blue">{u.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                     <td><span className="inline-flex items-center font-mono text-xs bg-raised text-ink-soft px-1.5 py-0.5 rounded">{u.role}</span></td>
                     <td className="font-mono">{u.role === 'user' ? `${u.rule_count || 0} / ${u.max_forwards}` : '--'}</td>
                     <td className="font-mono">{u.role === 'user' ? fmtTrafficGB(u.traffic_used_bytes, u.traffic_quota_bytes) : '--'}</td>
@@ -142,6 +191,7 @@ export default function UserList() {
                     : <Badge color="green">正常</Badge>}
                 </div>
                 <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
+                  {u.group_name && <Badge color="blue">{u.group_name}</Badge>}
                   <span className="font-mono bg-raised px-1.5 py-0.5 rounded">{u.role}</span>
                   {u.role === 'user' && <>
                     <span className="text-ink-mut">·</span>
@@ -166,6 +216,15 @@ export default function UserList() {
       <PasteGrantsModal open={showPaste} onClose={() => setShowPaste(false)} onDone={load}
         allNodes={allNodes} allUsers={users} preSelectedUserIds={[]} />
 
+      {showGroup && (
+        <UserGroupAssignModal
+          count={sel.size}
+          groups={groups}
+          onClose={() => setShowGroup(false)}
+          onAssign={bulkSetGroup}
+        />
+      )}
+
       <Modal open={!!newPassword} onClose={() => setNewPassword(null)} title="新密码">
         <p className="text-sm text-ink-soft mb-3">新密码只显示这一次，请复制并妥善保存。关闭后将无法再次查看。</p>
         <div className="flex items-center gap-2">
@@ -177,6 +236,47 @@ export default function UserList() {
         </div>
       </Modal>
     </Layout>
+  )
+}
+
+function UserGroupAssignModal({ count, groups = [], onClose, onAssign }) {
+  const [name, setName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const toast = useToast()
+
+  const submit = async (groupName) => {
+    setSubmitting(true)
+    try {
+      await onAssign(groupName)
+    } catch (err) {
+      toast(err?.message || '操作失败', 'error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`为 ${count} 个用户设置分组`}>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组名</label>
+          <input className="input-field" list="user-group-options" value={name} onChange={e => setName(e.target.value)} placeholder="输入新分组或选择已有" autoFocus />
+          <datalist id="user-group-options">{groups.map(g => <option key={g} value={g} />)}</datalist>
+        </div>
+        {groups.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {groups.map(g => (
+              <button key={g} type="button" onClick={() => setName(g)} className="text-xs px-2 py-1 rounded border border-line hover:bg-raised">{g}</button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 pt-1">
+          <button type="button" disabled={submitting} onClick={() => submit(name.trim())} className="btn-primary flex-1">{submitting ? '保存中…' : '保存分组'}</button>
+          <button type="button" disabled={submitting} onClick={() => submit('')} className="btn-secondary flex-1">移出分组</button>
+          <button type="button" onClick={onClose} className="btn-secondary">取消</button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

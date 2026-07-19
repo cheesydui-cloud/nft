@@ -321,6 +321,8 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 	ruleCount, _ := db.CountAllRules(s.DB)
 	ruleCountByNode, _ := db.RuleCountByNode(s.DB)
 	totalBytes, _ := db.TotalRuleTrafficBytes(s.DB)
+	// today_raw_bytes is operator actual traffic (raw up+down), not billable.
+	todayRawBytes, _ := db.TodayRawTrafficBytes(s.DB)
 	userCount, _ := db.CountUsers(s.DB)
 	jsonOK(w, map[string]any{
 		"nodes":              nodes,
@@ -328,6 +330,7 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 		"rule_count":         ruleCount,
 		"rule_count_by_node": ruleCountByNode,
 		"total_bytes":        totalBytes,
+		"today_raw_bytes":    todayRawBytes,
 		"user_count":         userCount,
 	})
 }
@@ -1600,44 +1603,44 @@ func (s *Server) apiListRules(w http.ResponseWriter, r *http.Request) {
 		byID[u.ID] = u
 		userList = append(userList, map[string]any{"id": u.ID, "username": u.Username})
 	}
-	// Per-owner landing index, built once per owner from the materialized landing
-	// set — the same table that drives metering, so the badge matches billing.
-	// The admin list only needs the kind badge, so withURI=false — no relay URI
-	// is computed here.
-	idxByOwner := map[int64]map[string]landing.Node{}
-	ownerIndex := func(ownerID int64) map[string]landing.Node {
-		if idx, ok := idxByOwner[ownerID]; ok {
+		// Per-owner landing index, built once per owner from the materialized landing
+		// set — the same table that drives metering, so the badge matches billing.
+		// withURI=true so admin list "复制" can put the user's proxy link on the
+		// clipboard without relying on the admin's browser-local URIs.
+		idxByOwner := map[int64]map[string]landing.Node{}
+		ownerIndex := func(ownerID int64) map[string]landing.Node {
+			if idx, ok := idxByOwner[ownerID]; ok {
+				return idx
+			}
+			idx := s.landingIndexFromDB(ownerID)
+			idxByOwner[ownerID] = idx
 			return idx
 		}
-		idx := s.landingIndexFromDB(ownerID)
-		idxByOwner[ownerID] = idx
-		return idx
-	}
-	views := make([]ruleListItem, 0, len(rules))
-	for _, rl := range rules {
-		oname := ""
-		var idx map[string]landing.Node
-		if rl.OwnerID.Valid {
-			if u := byID[rl.OwnerID.Int64]; u != nil {
-				oname = u.Username
+		views := make([]ruleListItem, 0, len(rules))
+		for _, rl := range rules {
+			oname := ""
+			var idx map[string]landing.Node
+			if rl.OwnerID.Valid {
+				if u := byID[rl.OwnerID.Int64]; u != nil {
+					oname = u.Username
+				}
+				idx = ownerIndex(rl.OwnerID.Int64)
 			}
-			idx = ownerIndex(rl.OwnerID.Int64)
-		}
-		item := s.buildRuleListItem(rl, oname)
-		item.classifyExit(idx, false)
-		if n := nodeByID[rl.NodeID]; n != nil {
-			item.RateMultiplier = n.RateMultiplier
-		} else {
-			item.RateMultiplier = 1
-		}
-		item.BillingRate = 1
-		if rl.OwnerID.Valid {
-			if u := byID[rl.OwnerID.Int64]; u != nil && u.BillingRate > 0 {
-				item.BillingRate = u.BillingRate
+			item := s.buildRuleListItem(rl, oname)
+			item.classifyExit(idx, true)
+			if n := nodeByID[rl.NodeID]; n != nil {
+				item.RateMultiplier = n.RateMultiplier
+			} else {
+				item.RateMultiplier = 1
 			}
+			item.BillingRate = 1
+			if rl.OwnerID.Valid {
+				if u := byID[rl.OwnerID.Int64]; u != nil && u.BillingRate > 0 {
+					item.BillingRate = u.BillingRate
+				}
+			}
+			views = append(views, item)
 		}
-		views = append(views, item)
-	}
 	s.fillRuleChains(views, nodeByID)
 	jsonOK(w, map[string]any{"rules": views, "nodes": nodes, "users": userList})
 }
@@ -2258,10 +2261,19 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	} else if !lok {
 		landingPreview = s.landingNodesFor(target, false)
 	}
+	// Build list items with relay_uri so the admin can copy the user's proxy link
+	// without relying on the admin browser's local landing URIs.
+	idx := s.landingIndexFromDB(id)
+	ruleViews := make([]ruleListItem, 0, len(rules))
+	for _, rl := range rules {
+		item := s.buildRuleListItem(rl, target.Username)
+		item.classifyExit(idx, true)
+		ruleViews = append(ruleViews, item)
+	}
 	jsonOK(w, map[string]any{
 		"user": apiUserFullView(target), "nodes": grantedNodes,
 		"grants": grants, "all_nodes": allNodes,
-		"rules":         rules,
+		"rules":         ruleViews,
 		"landing_nodes": landingPreview,
 	})
 }
@@ -3232,6 +3244,52 @@ func (s *Server) apiSetAdminNote(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+// apiSetUserGroup assigns a free-form group label to a user (empty = ungrouped).
+func (s *Server) apiSetUserGroup(w http.ResponseWriter, r *http.Request) {
+	actor := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		GroupName string `json:"group_name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	if err := db.SetUserGroupName(s.DB, id, strings.TrimSpace(body.GroupName)); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user.set_group", strconv.FormatInt(id, 10), strings.TrimSpace(body.GroupName))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+// apiBatchSetUserGroup assigns the same group label to many users.
+func (s *Server) apiBatchSetUserGroup(w http.ResponseWriter, r *http.Request) {
+	actor := userFromCtx(r.Context())
+	var body struct {
+		IDs       []int64 `json:"ids"`
+		GroupName string  `json:"group_name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	if len(body.IDs) == 0 {
+		jsonErr(w, http.StatusBadRequest, "no users selected")
+		return
+	}
+	if err := db.SetUserGroupNamesBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user.batch_set_group", strconv.Itoa(len(body.IDs)), strings.TrimSpace(body.GroupName))
+	jsonOK(w, map[string]any{"ok": true, "count": len(body.IDs)})
+}
+
 // --- Helpers ---
 
 // withUser injects *db.User into ctx (same key as requireAuth).
@@ -3274,6 +3332,7 @@ func apiUserFullView(u *db.User) map[string]any {
 	m["admin_note"] = u.AdminNote
 	m["billing_rate"] = u.BillingRate
 	m["speed_limit_mbytes"] = u.SpeedLimitMBytes
+	m["group_name"] = u.GroupName
 	return m
 }
 

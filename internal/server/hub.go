@@ -854,12 +854,18 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			log.Printf("hub: node %d counters tx begin: %v", nodeID, err)
 		} else {
 			ok := true
-			if rawAdd > 0 {
-				if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
-					log.Printf("hub: node %d raw traffic add: %v", nodeID, err)
-					ok = false
+				if rawAdd > 0 {
+					if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
+						log.Printf("hub: node %d raw traffic add: %v", nodeID, err)
+						ok = false
+					}
+					if ok {
+						if err := db.AddNodeDailyRawTraffic(tx, nodeID, rawAdd); err != nil {
+							log.Printf("hub: node %d daily raw traffic add: %v", nodeID, err)
+							ok = false
+						}
+					}
 				}
-			}
 			for id, w := range hopWrites {
 				if !ok {
 					break

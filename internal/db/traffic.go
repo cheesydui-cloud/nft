@@ -75,6 +75,32 @@ func AddNodeRawTraffic(d DBTX, nodeID, delta int64) error {
 	return err
 }
 
+// dayKey returns the local calendar day as YYYY-MM-DD for daily traffic buckets.
+func dayKey(t time.Time) string {
+	return t.Format("2006-01-02")
+}
+
+// AddNodeDailyRawTraffic folds delta raw bytes into today's per-node ledger.
+// Same actual-traffic semantics as AddNodeRawTraffic (no billing multiplier).
+func AddNodeDailyRawTraffic(d DBTX, nodeID, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	day := dayKey(time.Now())
+	_, err := d.Exec(`INSERT INTO daily_node_raw_traffic(day, node_id, raw_bytes) VALUES(?,?,?)
+		ON CONFLICT(day, node_id) DO UPDATE SET raw_bytes = raw_bytes + excluded.raw_bytes`,
+		day, nodeID, delta)
+	return err
+}
+
+// TodayRawTrafficBytes sums today's actual (raw) traffic across all nodes.
+func TodayRawTrafficBytes(d *sql.DB) (int64, error) {
+	var total int64
+	err := d.QueryRow(`SELECT COALESCE(SUM(raw_bytes),0) FROM daily_node_raw_traffic WHERE day=?`,
+		dayKey(time.Now())).Scan(&total)
+	return total, err
+}
+
 // NodeRawTraffic returns every node's cumulative raw bytes keyed by id. Nodes
 // that never reported a counter batch have no row and are absent from the map.
 func NodeRawTraffic(d *sql.DB) (map[int64]int64, error) {
