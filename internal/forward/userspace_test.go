@@ -486,56 +486,58 @@ func echoOnce(conn net.Conn) error {
 }
 
 // Two listeners in one shape group share a single bidirectional bucket: the
-// echoed traffic of both ports combined is paced by one 1 MB/s limiter. With
-// independent buckets the transfer would finish several times faster.
-func TestUserspace_GroupSharedBucketPacesAggregate(t *testing.T) {
-	upstreamAddr, stop := echoServer(t)
-	defer stop()
-	host, portStr, _ := net.SplitHostPort(upstreamAddr)
-	upPort, _ := strconv.Atoi(portStr)
+	// echoed traffic of both ports combined is paced by one 8 Mbps (~1 MB/s)
+	// limiter. With independent buckets the transfer would finish several times
+	// faster.
+	func TestUserspace_GroupSharedBucketPacesAggregate(t *testing.T) {
+		upstreamAddr, stop := echoServer(t)
+		defer stop()
+		host, portStr, _ := net.SplitHostPort(upstreamAddr)
+		upPort, _ := strconv.Atoi(portStr)
 
-	p1, p2 := freePort(t), freePort(t)
-	be := newUserspaceBackend()
-	defer be.Close()
+		p1, p2 := freePort(t), freePort(t)
+		be := newUserspaceBackend()
+		defer be.Close()
 
-	rules := []nft.Rule{
-		{ID: "g1", Proto: "tcp", SrcPort: p1, DestIP: host, DestPort: upPort, Mode: nft.ModeUserspace, ShapeGroup: 9, RateMBytes: 1},
-		{ID: "g2", Proto: "tcp", SrcPort: p2, DestIP: host, DestPort: upPort, Mode: nft.ModeUserspace, ShapeGroup: 9, RateMBytes: 1},
-	}
-	if err := be.Reconcile(rules); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
+		// RateMBytes is Mbps: 8 Mbps ≈ 1 MB/s.
+		rules := []nft.Rule{
+			{ID: "g1", Proto: "tcp", SrcPort: p1, DestIP: host, DestPort: upPort, Mode: nft.ModeUserspace, ShapeGroup: 9, RateMBytes: 8},
+			{ID: "g2", Proto: "tcp", SrcPort: p2, DestIP: host, DestPort: upPort, Mode: nft.ModeUserspace, ShapeGroup: 9, RateMBytes: 8},
+		}
+		if err := be.Reconcile(rules); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
 
-	// 1 MB payload per port; echo doubles it: 4 MB total through a 1 MB/s
-	// bucket with a 1 MB burst → ≥ ~3s. Assert a loose lower bound.
-	const per = 1 << 20
-	start := time.Now()
-	var wg sync.WaitGroup
-	for _, p := range []int{p1, p2} {
-		wg.Add(1)
-		go func(port int) {
-			defer wg.Done()
-			conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
-			if err != nil {
-				t.Errorf("dial %d: %v", port, err)
-				return
-			}
-			defer conn.Close()
-			go conn.Write(make([]byte, per))
-			if _, err := io.ReadFull(conn, make([]byte, per)); err != nil {
-				t.Errorf("read back %d: %v", port, err)
-			}
-		}(p)
+		// 1 MB payload per port; echo doubles it: 4 MB total through ~1 MB/s
+		// bucket with a 1 MB burst → ≥ ~3s. Assert a loose lower bound.
+		const per = 1 << 20
+		start := time.Now()
+		var wg sync.WaitGroup
+		for _, p := range []int{p1, p2} {
+			wg.Add(1)
+			go func(port int) {
+				defer wg.Done()
+				conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+				if err != nil {
+					t.Errorf("dial %d: %v", port, err)
+					return
+				}
+				defer conn.Close()
+				go conn.Write(make([]byte, per))
+				if _, err := io.ReadFull(conn, make([]byte, per)); err != nil {
+					t.Errorf("read back %d: %v", port, err)
+				}
+			}(p)
+		}
+		wg.Wait()
+		elapsed := time.Since(start)
+		if elapsed < 2*time.Second {
+			t.Fatalf("aggregate transfer too fast for a shared 8 Mbps bucket: %v", elapsed)
+		}
+		if elapsed > 30*time.Second {
+			t.Fatalf("transfer absurdly slow: %v", elapsed)
+		}
 	}
-	wg.Wait()
-	elapsed := time.Since(start)
-	if elapsed < 2*time.Second {
-		t.Fatalf("aggregate transfer too fast for a shared 1 MB/s bucket: %v", elapsed)
-	}
-	if elapsed > 30*time.Second {
-		t.Fatalf("transfer absurdly slow: %v", elapsed)
-	}
-}
 
 // A rate change hot-updates the shared bucket without restarting listeners:
 // an established connection keeps working across Reconcile.

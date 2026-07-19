@@ -81,11 +81,11 @@ func TestPlanClasses(t *testing.T) {
 	}
 	got := planClasses(rules)
 	// Sorted lexicographically by ClassID ("1:2328" < "1:5" < "1:6").
-	want := []shapeClass{
-		{ClassID: "1:2328", Rate: "50mbit", Handle: "0x2328"},
-		{ClassID: "1:5", Rate: "83886080bit", Handle: "0x10005"},
-		{ClassID: "1:6", Rate: "16777216bit", Handle: "0x10006"},
-	}
+		want := []shapeClass{
+			{ClassID: "1:2328", Rate: "50mbit", Handle: "0x2328"},
+			{ClassID: "1:5", Rate: "10mbit", Handle: "0x10005"},
+			{ClassID: "1:6", Rate: "2mbit", Handle: "0x10006"},
+		}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("planClasses:\n got %+v\nwant %+v", got, want)
 	}
@@ -99,9 +99,9 @@ func TestPlanClasses_GroupWinsMinorCollision(t *testing.T) {
 		{Proto: "tcp", SrcPort: 8080, DestIP: "10.0.0.3", DestPort: 80, ShapeGroup: 5, RateMBytes: 10},
 	}
 	got := planClasses(rules)
-	want := []shapeClass{
-		{ClassID: "1:5", Rate: "83886080bit", Handle: "0x10005"},
-	}
+		want := []shapeClass{
+			{ClassID: "1:5", Rate: "10mbit", Handle: "0x10005"},
+		}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("planClasses:\n got %+v\nwant %+v", got, want)
 	}

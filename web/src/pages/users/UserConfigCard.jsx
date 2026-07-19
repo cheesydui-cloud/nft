@@ -88,7 +88,7 @@ export default function UserConfigCard({ userId, expiresAt, maxForwards, quotaBy
         <label className="fl">全局限速</label>
         <div className="flex items-center gap-1.5">
           <input className="input-field font-mono flex-1" type="number" min="0" step="1" value={form.speedLimitMBytes} onChange={set('speedLimitMBytes')} title="0 = 不限；当节点授权限速为 0 时作为默认值" />
-          <span className="text-xs text-ink-mut">MB/s</span>
+          <span className="text-xs text-ink-mut">Mbps</span>
         </div>
 
         <label className="fl">管理备注</label>

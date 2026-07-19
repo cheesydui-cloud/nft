@@ -68,7 +68,7 @@ function PerNodeRateForm({ userId, nodeId, rateMBytes, onDone }) {
     <form onSubmit={submit} className="inline-flex items-center gap-1.5">
       <input className="input-field font-mono" type="number" min="0" value={mb}
         onChange={e => setMb(e.target.value)} style={{ width: 64 }} title="0 = 不限，同节点所有规则共享" />
-      <span className="text-xs text-ink-mut">MB/s</span>
+      <span className="text-xs text-ink-mut">Mbps</span>
       <button type="submit" className="btn-secondary text-xs">设限速</button>
     </form>
   )
@@ -298,7 +298,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
                 <td className="px-3 py-2">
                   <PerNodeRateForm userId={userId} nodeId={n.id} rateMBytes={grantByNode[n.id]?.rate_limit_mbytes} onDone={onDone} />
                   {!grantByNode[n.id]?.rate_limit_mbytes && userSpeedLimitMBytes > 0 && (
-                    <div className="mt-1 text-[11px] text-ink-mut">取用户全局值 {userSpeedLimitMBytes} MB/s</div>
+                    <div className="mt-1 text-[11px] text-ink-mut">取用户全局值 {userSpeedLimitMBytes} Mbps</div>
                   )}
                 </td>
                 <td className="px-3 py-2 font-mono text-sm">

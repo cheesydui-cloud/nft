@@ -86,7 +86,7 @@ export default function PasteGrantsModal({ open, onClose, onDone, allNodes, allU
                     <td className={`font-mono text-sm ${p.found ? '' : 'text-red-500'}`}>{p.name}</td>
                     <td className="font-mono text-sm">{applySettings ? p.maxForwards : 10}</td>
                     <td className="font-mono text-sm">{applySettings ? `${p.quotaGB}GB` : '不限'}</td>
-                    <td className="font-mono text-sm">{applySettings && p.rateMBytes ? `${p.rateMBytes}MB/s` : '不限'}</td>
+                    <td className="font-mono text-sm">{applySettings && p.rateMBytes ? `${p.rateMBytes} Mbps` : '不限'}</td>
                     <td>{p.found ? <Badge color="blue">就绪</Badge> : <Badge color="red">未找到</Badge>}</td>
                   </tr>
                 ))}

@@ -317,7 +317,7 @@ function CreateUserModal({ open, onClose, onDone }) {
                 <input className="input-field font-mono" type="number" min="0" step="0.1" value={form.billing_rate} onChange={e => set('billing_rate', e.target.value)} style={{ maxWidth: 120 }} title="1.0 = 原值显示，>1 放大显示" />
                 <span className="text-xs text-ink-mut">×</span>
               </div>
-              <label className="fl">全局限速 <span className="text-ink-mut font-normal text-xs">(MB/s，0 = 不限)</span></label>
+              <label className="fl">全局限速 <span className="text-ink-mut font-normal text-xs">(Mbps，0 = 不限)</span></label>
               <input className="input-field font-mono" type="number" min="0" step="1" value={form.speed_limit_mbytes} onChange={e => set('speed_limit_mbytes', e.target.value)} style={{ maxWidth: 160 }} title="节点授权限速为 0 时作为默认值" />
               <label className="fl">到期时间</label>
               <div className="flex items-center gap-2 flex-wrap">

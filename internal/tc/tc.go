@@ -35,12 +35,11 @@ func planClasses(rules []nft.Rule) []shapeClass {
 		}
 	}
 	out := make([]shapeClass, 0, len(groups)+len(legacy))
-	for sg, mb := range groups {
+	for sg, mbps := range groups {
 		out = append(out, shapeClass{
 			ClassID: fmt.Sprintf("1:%x", sg),
-			// MB/s (2^20 bytes) expressed in exact bits so tc's own unit
-			// parsing cannot skew the cap.
-			Rate:   fmt.Sprintf("%dbit", int64(mb)*8388608),
+			// RateMBytes is the historical field name; the value is Mbps.
+			Rate:   fmt.Sprintf("%dmbit", mbps),
 			Handle: fmt.Sprintf("0x%x", 0x10000|sg),
 		})
 	}

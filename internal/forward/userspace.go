@@ -238,21 +238,23 @@ func (b *userspaceBackend) Reconcile(rules []nft.Rule) error {
 		desired[r.SrcPort] = r
 	}
 
-	desiredGroups := map[int64]int{}
-	for _, r := range rules {
-		if r.ShapeGroup > 0 && r.RateMBytes > 0 {
-			desiredGroups[r.ShapeGroup] = r.RateMBytes
+		desiredGroups := map[int64]int{}
+		for _, r := range rules {
+			if r.ShapeGroup > 0 && r.RateMBytes > 0 {
+				desiredGroups[r.ShapeGroup] = r.RateMBytes
+			}
 		}
-	}
-	for sg, mb := range desiredGroups {
-		bytesPerSec := float64(mb) * 1048576
-		if lim, ok := b.groups[sg]; ok {
-			lim.SetLimit(rate.Limit(bytesPerSec))
-			lim.SetBurst(groupBurst(bytesPerSec))
-		} else {
-			b.groups[sg] = rate.NewLimiter(rate.Limit(bytesPerSec), groupBurst(bytesPerSec))
+		for sg, mbps := range desiredGroups {
+			// RateMBytes is the historical field name; the value is Mbps.
+			// Convert to bytes/s the same way makeLimiter does for legacy caps.
+			bytesPerSec := float64(mbps) * 1e6 / 8.0
+			if lim, ok := b.groups[sg]; ok {
+				lim.SetLimit(rate.Limit(bytesPerSec))
+				lim.SetBurst(groupBurst(bytesPerSec))
+			} else {
+				b.groups[sg] = rate.NewLimiter(rate.Limit(bytesPerSec), groupBurst(bytesPerSec))
+			}
 		}
-	}
 	for sg := range b.groups {
 		if _, ok := desiredGroups[sg]; !ok {
 			delete(b.groups, sg)

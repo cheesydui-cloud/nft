@@ -163,7 +163,7 @@ export default function MyDashboard() {
                     <td><NodeTypeBadge type={n.node_type} /></td>
                     {show_rate && <td><Badge color="blue">×{n.rate_multiplier ?? 1}</Badge>{n.unidirectional && <Badge color="amber" className="ml-1">单向</Badge>}</td>}
                     <td><NodeOnline node={n} /></td>
-                    <td className="font-mono text-xs">{g?.rate_limit_mbytes > 0 ? `${g.rate_limit_mbytes} MB/s` : '不限'}</td>
+                    <td className="font-mono text-xs">{g?.rate_limit_mbytes > 0 ? `${g.rate_limit_mbytes} Mbps` : '不限'}</td>
                     <td className="font-mono">{g?.max_forwards ?? '--'}</td>
                   </tr>
                 )
@@ -190,7 +190,7 @@ export default function MyDashboard() {
                     {n.unidirectional && <Badge color="amber">单向</Badge>}
                     {g?.rate_limit_mbytes > 0 && <>
                       <span className="text-ink-mut">·</span>
-                      <span className="font-mono">{g.rate_limit_mbytes} MB/s</span>
+                      <span className="font-mono">{g.rate_limit_mbytes} Mbps</span>
                     </>}
                   </div>
                 </div>

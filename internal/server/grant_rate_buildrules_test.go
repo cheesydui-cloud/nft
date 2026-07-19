@@ -9,8 +9,9 @@ import (
 )
 
 // The grant's rate limit reaches the data plane: every rule priced by the
-// grant carries the shaping group + MB/s rate, plus the legacy Mbit mirror for
-// pre-group agents. Ownerless rules stay unshaped.
+// grant carries the shaping group + Mbps rate, the legacy Mbps mirror, and
+// is forced onto userspace so the shared token bucket actually runs.
+// Ownerless rules stay unshaped.
 func TestGrantRateLimitPropagatesToRules(t *testing.T) {
 	d := openDB(t)
 	uid, _ := loginAsUser(t, d, 10)
@@ -33,9 +34,12 @@ func TestGrantRateLimitPropagatesToRules(t *testing.T) {
 			if r.ShapeGroup <= 0 || r.RateMBytes != 10 {
 				t.Errorf("owned rule shape = group %d rate %d, want positive group rate 10", r.ShapeGroup, r.RateMBytes)
 			}
-			// 10 MB/s (2^20 bytes) ≈ 84 Mbit/s for the legacy mirror.
-			if r.BandwidthMbps != 84 {
-				t.Errorf("legacy mirror = %d Mbit, want 84", r.BandwidthMbps)
+			// Rate value is Mbps; legacy mirror is the same number.
+			if r.BandwidthMbps != 10 {
+				t.Errorf("legacy mirror = %d Mbit, want 10", r.BandwidthMbps)
+			}
+			if r.Mode != nft.ModeUserspace {
+				t.Errorf("shaped TCP rule mode = %q, want userspace for shared-bucket enforcement", r.Mode)
 			}
 		case orphan:
 			foundOrphan = true

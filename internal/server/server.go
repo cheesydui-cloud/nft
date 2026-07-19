@@ -520,10 +520,22 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 					}
 					if rate > 0 && grantID > 0 {
 						rule.ShapeGroup = grantID
+						// RateMBytes is the historical wire name; the value is
+						// Mbps (10 ≈ "10M" on a residential line). All of this
+						// owner's rules that match the same grant share one
+						// ShapeGroup bucket on the agent.
 						rule.RateMBytes = rate
-						// Legacy mirror so pre-group agents still shape
-						// (per rule, approximate): MB/s (2^20 bytes) → Mbit/s.
-						rule.BandwidthMbps = int((int64(rate)*8388608 + 500000) / 1000000)
+						// Legacy per-rule mirror for pre-group agents (Mbps).
+						rule.BandwidthMbps = rate
+						// Shared grant caps are enforced by the userspace token
+						// bucket. Kernel+tc is best-effort (iface detection,
+						// CAP_NET_ADMIN) and often degrades silently — force TCP
+						// onto userspace so concurrent rules of the same grant
+						// share one real bucket end-to-end.
+						switch rule.Proto {
+						case "tcp", "tcp+udp":
+							rule.Mode = nft.ModeUserspace
+						}
 					}
 				}
 			}
