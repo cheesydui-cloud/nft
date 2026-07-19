@@ -97,34 +97,82 @@ func newSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	}
 }
 
+// hostKey normalizes a host[:port] for equality checks: lowercase, strip a
+// trailing default port, and accept bare host vs host:port as the same site.
+func hostKey(h string) string {
+	h = strings.TrimSpace(strings.ToLower(h))
+	if h == "" {
+		return ""
+	}
+	// X-Forwarded-Host may be a comma-separated list; take the first.
+	if i := strings.IndexByte(h, ','); i >= 0 {
+		h = strings.TrimSpace(h[:i])
+	}
+	if host, port, err := net.SplitHostPort(h); err == nil {
+		if port == "80" || port == "443" {
+			return host
+		}
+		return host + ":" + port
+	}
+	return h
+}
+
+// requestHostCandidates returns Host values the browser Origin may legitimately
+// match: the immediate Host header plus X-Forwarded-Host when the peer is a
+// trusted reverse proxy (or loopback, which isTrustedProxy already covers).
+func requestHostCandidates(r *http.Request) []string {
+	out := []string{hostKey(r.Host)}
+	xfh := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if xfh == "" {
+		return out
+	}
+	remote, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remote = r.RemoteAddr
+	}
+	if ip := net.ParseIP(remote); ip == nil || !isTrustedProxy(ip) {
+		return out
+	}
+	for _, part := range strings.Split(xfh, ",") {
+		if k := hostKey(part); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // sameOrigin enforces that a state-changing request originates from the same
-// host it targets, mitigating CSRF for cookie-authenticated requests. It
-// compares the Origin (or Referer as fallback) host against the request Host.
+// host it targets, mitigating CSRF for cookie-authenticated requests.
+//
+// Modern browsers send Sec-Fetch-Site on credentialed fetches; trust that first
+// (same-origin / same-site). Fall back to Origin/Referer host matching against
+// Host and trusted X-Forwarded-Host, with port-tolerant comparison so reverse
+// proxies that rewrite Host no longer false-reject the panel UI.
 func sameOrigin(r *http.Request) bool {
+	switch strings.ToLower(r.Header.Get("Sec-Fetch-Site")) {
+	case "same-origin", "same-site":
+		return true
+	case "cross-site":
+		return false
+	}
+
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		origin = r.Header.Get("Referer")
 	}
 	if origin == "" {
-		// A browser always attaches Origin (or at least Referer) to a
-		// cross-origin state-changing fetch; its absence is anomalous, so
-		// fail closed.
+		// Browsers attach Origin (or at least Referer) to cross-site state
+		// changes; absence is anomalous for a browser — fail closed. Non-browser
+		// clients should use Bearer tokens, which skip this middleware path.
 		return false
 	}
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
 		return false
 	}
-	if strings.EqualFold(u.Host, r.Host) {
-		return true
-	}
-	// Behind a proxy that rewrites Host, accept the forwarded host too.
-	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" && strings.EqualFold(u.Host, xfh) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if ip := net.ParseIP(host); ip != nil && isTrustedProxy(ip) {
+	want := hostKey(u.Host)
+	for _, cand := range requestHostCandidates(r) {
+		if cand != "" && cand == want {
 			return true
 		}
 	}

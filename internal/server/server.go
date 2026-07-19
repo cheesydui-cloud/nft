@@ -475,36 +475,51 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 			Mode:     rh.Mode,
 			HopCount: hopCounts[rh.RuleID],
 		}
-		if r := ruleMap[rh.RuleID]; r != nil {
-			rule.RuleID = r.ID
-			rule.RuleName = r.Name
-			if r.OwnerID.Valid {
-				if u := users[r.OwnerID.Int64]; u != nil {
-					rule.OwnerName = u.Username
-				}
-				// Shaping follows the rule owner's grant for the segment this hop
-				// belongs to. The hop's via_node_id is the logical segment node
-				// (e.g. the composite node ID for composite expansions), while the
-				// hop's own node_id is the physical node running the forwarding.
-				// Try via_node_id first, then the physical hop node, then the rule's
-				// entry node — so grants on any layer activate the shared bucket.
-				var shapeGrant *db.GrantShape
-				candidates := [...]int64{rh.ViaNodeID, rh.NodeID, r.NodeID}
-				for _, nid := range candidates {
-					if gs, ok := shapes[[2]int64{r.OwnerID.Int64, nid}]; ok {
-						shapeGrant = &gs
-						break
+			if r := ruleMap[rh.RuleID]; r != nil {
+				rule.RuleID = r.ID
+				rule.RuleName = r.Name
+				if r.OwnerID.Valid {
+					if u := users[r.OwnerID.Int64]; u != nil {
+						rule.OwnerName = u.Username
 					}
-				}
-				if shapeGrant != nil {
-					rate := int(shapeGrant.RateLimitMBytes)
+					// Shaping follows the rule owner's grant for the segment this hop
+					// belongs to. The hop's via_node_id is the logical segment node
+					// (e.g. the composite node ID for composite expansions), while the
+					// hop's own node_id is the physical node running the forwarding.
+					// Try via_node_id first, then the physical hop node, then the rule's
+					// entry node — so grants on any layer activate the shared bucket.
+					//
+					// Per-grant rate wins; when it is 0/missing, fall back to the user's
+					// global speed_limit_mbytes so a profile-level cap still shapes
+					// every hop of the owner's rules.
+					var shapeGrant *db.GrantShape
+					candidates := [...]int64{rh.ViaNodeID, rh.NodeID, r.NodeID}
+					for _, nid := range candidates {
+						if gs, ok := shapes[[2]int64{r.OwnerID.Int64, nid}]; ok {
+							shapeGrant = &gs
+							break
+						}
+					}
+					rate := 0
+					grantID := int64(0)
+					if shapeGrant != nil {
+						rate = int(shapeGrant.RateLimitMBytes)
+						grantID = shapeGrant.GrantID
+					}
 					if rate <= 0 {
 						if u := users[r.OwnerID.Int64]; u != nil && u.SpeedLimitMBytes > 0 {
 							rate = u.SpeedLimitMBytes
+							// No per-node grant row: use a stable synthetic group in the
+							// high half of the 16-bit mark space so all of this owner's
+							// hops share one bucket without colliding with ordinary
+							// SQLite rowids that typically sit well below 0x8000.
+							if grantID <= 0 {
+								grantID = 0x8000 + (r.OwnerID.Int64 & 0x7FFF)
+							}
 						}
 					}
-					if rate > 0 {
-						rule.ShapeGroup = shapeGrant.GrantID
+					if rate > 0 && grantID > 0 {
+						rule.ShapeGroup = grantID
 						rule.RateMBytes = rate
 						// Legacy mirror so pre-group agents still shape
 						// (per rule, approximate): MB/s (2^20 bytes) → Mbit/s.
@@ -512,7 +527,6 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 					}
 				}
 			}
-		}
 		if resolver.IsHostname(rh.TargetHost) {
 			rule.DestHost = rh.TargetHost
 		} else {

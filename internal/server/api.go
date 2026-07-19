@@ -3418,9 +3418,14 @@ func (s *Server) apiSetPerNodeRateLimit(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "限速不能为负")
 		return
 	}
-	if _, err := s.DB.Exec(`UPDATE user_nodes SET rate_limit_mbytes=? WHERE user_id=? AND node_id=?`,
-		body.RateLimitMBytes, userID, nodeID); err != nil {
+	res, err := s.DB.Exec(`UPDATE user_nodes SET rate_limit_mbytes=? WHERE user_id=? AND node_id=?`,
+		body.RateLimitMBytes, userID, nodeID)
+	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		jsonErr(w, http.StatusNotFound, "该用户未授权此节点")
 		return
 	}
 	affected, _ := db.RulesAffectedByNode(s.DB, userID, nodeID)

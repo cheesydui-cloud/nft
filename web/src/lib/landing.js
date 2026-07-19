@@ -91,7 +91,7 @@ export function nodeHasRole(roles, n, bit) {
 
 export async function fetchNodeRoles() {
   try {
-    const res = await fetch('/api/node-roles')
+    const res = await fetch('/api/node-roles', { credentials: 'same-origin' })
     if (!res.ok) return {}
     const d = await res.json()
     const out = {}
@@ -111,6 +111,7 @@ export async function saveNodeRoles(roles) {
   }
   await fetch('/api/node-roles', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ roles: clean }),
   })

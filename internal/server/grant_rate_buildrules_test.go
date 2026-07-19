@@ -121,3 +121,55 @@ func TestComputeRevIncludesShapeFields(t *testing.T) {
 		t.Fatal("rev must differ when shape fields differ")
 	}
 }
+
+// A profile-level speed_limit_mbytes must shape the owner's rules even when the
+// per-node grant rate is 0 (or the grant is missing entirely). Per-grant rates
+// still win when set.
+func TestGlobalSpeedLimitFallbackInBuildRules(t *testing.T) {
+	d := openDB(t)
+	uid, _ := loginAsUser(t, d, 10)
+	if _, err := d.Exec(`UPDATE users SET speed_limit_mbytes=5 WHERE id=?`, uid); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := db.CreateNode(d, "global-rl", "https://p", "s")
+	// Grant with rate 0: still provides a shape group, rate comes from profile.
+	if err := db.GrantNode(d, uid, n.ID, 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	owned, _ := createStandaloneRuleHop(t, d, n.ID, "tcp", 0, "10.0.0.9", 9000, sql.NullInt64{Int64: uid, Valid: true})
+
+	rules := buildRules(d, mustActiveHops(t, d, n.ID))
+	var found bool
+	for _, r := range rules {
+		if r.RuleID != owned {
+			continue
+		}
+		found = true
+		if r.RateMBytes != 5 || r.ShapeGroup <= 0 {
+			t.Fatalf("global fallback shape = group %d rate %d, want rate 5 with group", r.ShapeGroup, r.RateMBytes)
+		}
+	}
+	if !found {
+		t.Fatal("owned rule missing from built set")
+	}
+
+	// Explicit per-node rate overrides the profile default.
+	if _, err := d.Exec(`UPDATE user_nodes SET rate_limit_mbytes=12 WHERE user_id=? AND node_id=?`, uid, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	rules = buildRules(d, mustActiveHops(t, d, n.ID))
+	for _, r := range rules {
+		if r.RuleID == owned && r.RateMBytes != 12 {
+			t.Fatalf("per-grant rate should win: got %d", r.RateMBytes)
+		}
+	}
+}
+
+func mustActiveHops(t *testing.T, d *sql.DB, nodeID int64) []*db.RuleHop {
+	t.Helper()
+	hops, err := db.ActiveRuleHopsForPush(d, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hops
+}

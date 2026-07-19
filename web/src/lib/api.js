@@ -14,7 +14,9 @@ function httpErrorMessage(status) {
 }
 
 async function request(method, path, body) {
-  const opts = { method, headers: {} }
+  // Same-origin only: always send the session cookie, and keep the request
+  // same-site so the panel CSRF check (Sec-Fetch-Site / Origin) accepts it.
+  const opts = { method, headers: {}, credentials: 'same-origin' }
   if (body) {
     opts.headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)

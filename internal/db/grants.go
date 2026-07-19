@@ -18,8 +18,8 @@ type UserNode struct {
 	TrafficQuotaBytes int64 `json:"traffic_quota_bytes"`
 	TrafficUsedBytes  int64 `json:"traffic_used_bytes"`
 	// RateLimitMBytes is the per-grant shared rate limit in MB/s; all of the
-	// user's rules on this node share one bucket. 0 = unlimited (unlike the
-	// quota, there is no user-level fallback).
+	// user's rules on this node share one bucket. 0 means "no per-grant cap";
+	// buildRules then falls back to users.speed_limit_mbytes when set.
 	RateLimitMBytes int64 `json:"rate_limit_mbytes"`
 	GrantedAt       int64 `json:"granted_at"`
 }

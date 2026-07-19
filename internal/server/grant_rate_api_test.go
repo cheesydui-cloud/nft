@@ -43,6 +43,18 @@ func TestAPISetPerNodeRateLimit(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("negative rate: want 400, got %d", rec.Code)
 	}
+
+	// Missing grant must not report success.
+	other, _ := db.CreateNode(d, "no-grant", "", "")
+	body, _ = json.Marshal(map[string]any{"rate_limit_mbytes": 3})
+	req = newTestRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(other.ID)+"/rate-limit", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing grant: want 404, got %d body %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestAPIRuleBandwidthEndpointRemoved(t *testing.T) {
