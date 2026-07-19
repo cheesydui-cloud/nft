@@ -176,6 +176,7 @@ export function Layout({ children }) {
                 </NavGroup>
                 <NavGroup label="系统">
                   <SideLink to="/announcements" icon={<IconMegaphone />}>公告管理</SideLink>
+                  <SideLink to="/docs" icon={<IconBook />}>使用文档</SideLink>
                   <SideLink to="/settings" icon={<IconSettings />}>系统设置</SideLink>
                 </NavGroup>
               </>
@@ -183,6 +184,7 @@ export function Layout({ children }) {
               <>
                 <NavGroup label="概况">
                   <SideLink to="/my" icon={<IconDashboard />} end>我的概览</SideLink>
+                  <SideLink to="/my/docs" icon={<IconBook />}>使用文档</SideLink>
                 </NavGroup>
                 <NavGroup label="转发">
                   <SideLink to="/my/rules" icon={<IconForwards />}>我的规则</SideLink>
@@ -359,4 +361,7 @@ function IconMegaphone() {
 }
 function IconRepo() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></svg>
+}
+function IconBook() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
 }

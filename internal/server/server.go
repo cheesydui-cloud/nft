@@ -24,10 +24,13 @@ import (
 )
 
 type Server struct {
-	DB                *sql.DB
-	Hub               *Hub
-	Dispatcher        *Dispatcher
-	Landing           *landing.Fetcher
+	DB         *sql.DB
+	Hub        *Hub
+	Dispatcher *Dispatcher
+	Landing    *landing.Fetcher
+	// DocsDir is where uploaded doc images are stored (typically
+	// <db-dir>/docs-assets). Empty disables uploads.
+	DocsDir           string
 	loginLimiter      *loginLimiter
 	stopExpiry        chan struct{}
 	stopCycle         chan struct{}
@@ -40,6 +43,11 @@ type Server struct {
 }
 
 func New(d *sql.DB) (*Server, error) {
+	return NewWithDocsDir(d, "")
+}
+
+// NewWithDocsDir is like New but sets the directory used for doc image assets.
+func NewWithDocsDir(d *sql.DB, docsDir string) (*Server, error) {
 	if _, err := EnsureSelfNode(d); err != nil {
 		return nil, fmt.Errorf("ensure self node: %w", err)
 	}
@@ -47,6 +55,7 @@ func New(d *sql.DB) (*Server, error) {
 	disp := &Dispatcher{DB: d, Hub: hub}
 	s := &Server{
 		DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
+		DocsDir:      docsDir,
 		loginLimiter: newLoginLimiter(),
 		stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
 		stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
@@ -615,6 +624,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/dashboard", s.apiDashboard)
 			r.Post("/sub-fetch", s.apiSubFetch)
 			r.Get("/node-roles", s.apiGetNodeRoles)
+			// Doc images: any logged-in user (admin or user) can view.
+			r.Get("/docs/assets/{name}", s.apiServeDocAsset)
 		})
 
 		// Admin routes
@@ -701,6 +712,17 @@ func (s *Server) Router() http.Handler {
 			r.Post("/announcements", s.apiCreateAnnouncement)
 			r.Delete("/announcements/{id}", s.apiDeleteAnnouncement)
 
+			// Usage docs (admin write). Static paths before {id}.
+			r.Get("/docs", s.apiListDocs)
+			r.Post("/docs", s.apiCreateDoc)
+			r.Post("/docs/upload", s.apiUploadDocAsset)
+			r.Post("/docs/reorder", s.apiReorderDocs)
+			r.Get("/docs/{id}", s.apiGetDoc)
+			r.Put("/docs/{id}", s.apiUpdateDoc)
+			r.Post("/docs/{id}/published", s.apiSetDocPublished)
+			r.Post("/docs/{id}/move", s.apiMoveDoc)
+			r.Delete("/docs/{id}", s.apiDeleteDoc)
+
 			// Node repository
 			r.Get("/node-repo", s.apiListNodeRepo)
 			r.Post("/node-repo", s.apiCreateNodeRepoEntry)
@@ -721,6 +743,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/my", s.apiMyDashboard)
 			r.Get("/my/landing-nodes", s.apiMyLandingNodes)
 			r.Get("/my/announcements", s.apiMyAnnouncements)
+			r.Get("/my/docs", s.apiMyDocs)
+			r.Get("/my/docs/{id}", s.apiMyGetDoc)
 			r.Get("/my/rules", s.apiMyListRules)
 			r.Get("/my/rules/{id}", s.apiMyGetRule)
 			r.Post("/my/rules", s.apiMyCreateRule)

@@ -16,11 +16,13 @@ import UserList from './pages/users/List'
 import UserDetail from './pages/users/Detail'
 import Announcements from './pages/Announcements'
 import NodeRepo from './pages/NodeRepo'
+import Docs from './pages/Docs'
 
 import MyDashboard from './pages/my/Dashboard'
 import MyRules from './pages/my/Rules'
 import MyRuleDetail from './pages/my/RuleDetail'
 import MyLandingNodes from './pages/my/LandingNodes'
+import MyDocs from './pages/my/Docs'
 import Proxies from './pages/Proxies'
 
 // ErrorBoundary: catches render errors in any child component and shows a
@@ -135,6 +137,7 @@ export default function App() {
           <Route path="/users/:id" element={<AdminRoute><UserDetail /></AdminRoute>} />
           <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
           <Route path="/announcements" element={<AdminRoute><Announcements /></AdminRoute>} />
+          <Route path="/docs" element={<AdminRoute><Docs /></AdminRoute>} />
           <Route path="/node-repo" element={<AdminRoute><NodeRepo /></AdminRoute>} />
 
           {/* Regular user routes */}
@@ -142,6 +145,7 @@ export default function App() {
           <Route path="/my/rules" element={<UserRoute><MyRules /></UserRoute>} />
           <Route path="/my/rules/:id" element={<UserRoute><MyRuleDetail /></UserRoute>} />
           <Route path="/my/landing" element={<UserRoute><MyLandingNodes /></UserRoute>} />
+          <Route path="/my/docs" element={<UserRoute><MyDocs /></UserRoute>} />
 
           {/* Shared routes */}
           <Route path="/proxies" element={<ProtectedRoute><Proxies /></ProtectedRoute>} />

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -61,7 +62,10 @@ func runServer(args []string) int {
 	stopBackups := db.StartBackups(d, dbPath, backupInterval, backupKeep)
 	defer stopBackups()
 
-	srv, err := server.New(d)
+	// Doc images live next to the SQLite file so backups/migrations of the
+	// data directory keep text and assets together.
+	docsDir := filepath.Join(filepath.Dir(dbPath), "docs-assets")
+	srv, err := server.NewWithDocsDir(d, docsDir)
 	if err != nil {
 		log.Fatalf("server: %v", err)
 	}
