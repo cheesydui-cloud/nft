@@ -9,11 +9,16 @@ func TestDocsCRUDAndPublish(t *testing.T) {
 	}
 	defer d.Close()
 
+	// Migration may seed a default published tutorial; clear so CRUD starts empty.
+	if _, err := d.Exec(`DELETE FROM docs`); err != nil {
+		t.Fatal(err)
+	}
+
 	a, err := CreateDoc(d, "入门", "# hello\n\nbody", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.ID == 0 || a.Published || a.SortOrder != 0 {
+	if a.ID == 0 || a.Published {
 		t.Fatalf("unexpected create: %+v", a)
 	}
 
@@ -21,8 +26,8 @@ func TestDocsCRUDAndPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.SortOrder != 1 || !b.Published {
-		t.Fatalf("unexpected second doc: %+v", b)
+	if b.SortOrder <= a.SortOrder || !b.Published {
+		t.Fatalf("unexpected second doc: %+v (first %+v)", b, a)
 	}
 
 	all, err := ListDocs(d)

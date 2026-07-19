@@ -25,53 +25,58 @@ func TestDocsAPIAdminAndUser(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Stop() })
 
-	admin := loginAsAdmin(t, d)
-	_, userCookie := loginAsUser(t, d, 10)
+		admin := loginAsAdmin(t, d)
+		_, userCookie := loginAsUser(t, d, 10)
 
-	// Create draft
-	rec := adminJSON(t, s, admin, "POST", "/api/docs", map[string]any{
-		"title": "入门教程", "content": "# hi\n\nhello", "published": false,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("create draft: %d %s", rec.Code, rec.Body.String())
-	}
-	var created db.Doc
-	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.ID == 0 {
-		t.Fatalf("create parse: %v %s", err, rec.Body.String())
-	}
+		// Seed migration may already publish a default tutorial; clear for isolation.
+		if _, err := d.Exec(`DELETE FROM docs`); err != nil {
+			t.Fatal(err)
+		}
 
-	// User must not see drafts
-	req := newTestRequest("GET", "/api/my/docs", nil)
-	req.AddCookie(userCookie)
-	rec = httptest.NewRecorder()
-	s.Router().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("my docs: %d %s", rec.Code, rec.Body.String())
-	}
-	var my struct {
-		Docs []db.Doc `json:"docs"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &my)
-	if len(my.Docs) != 0 {
-		t.Fatalf("user saw drafts: %+v", my.Docs)
-	}
+		// Create draft
+		rec := adminJSON(t, s, admin, "POST", "/api/docs", map[string]any{
+			"title": "入门教程", "content": "# hi\n\nhello", "published": false,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create draft: %d %s", rec.Code, rec.Body.String())
+		}
+		var created db.Doc
+		if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.ID == 0 {
+			t.Fatalf("create parse: %v %s", err, rec.Body.String())
+		}
 
-	// Publish
-	rec = adminJSON(t, s, admin, "POST", fmt.Sprintf("/api/docs/%d/published", created.ID), map[string]any{
-		"published": true,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("publish: %d %s", rec.Code, rec.Body.String())
-	}
+		// User must not see drafts
+		req := newTestRequest("GET", "/api/my/docs", nil)
+		req.AddCookie(userCookie)
+		rec = httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("my docs: %d %s", rec.Code, rec.Body.String())
+		}
+		var my struct {
+			Docs []db.Doc `json:"docs"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &my)
+		if len(my.Docs) != 0 {
+			t.Fatalf("user saw drafts: %+v", my.Docs)
+		}
 
-	req = newTestRequest("GET", "/api/my/docs", nil)
-	req.AddCookie(userCookie)
-	rec = httptest.NewRecorder()
-	s.Router().ServeHTTP(rec, req)
-	_ = json.Unmarshal(rec.Body.Bytes(), &my)
-	if len(my.Docs) != 1 || my.Docs[0].Title != "入门教程" {
-		t.Fatalf("user published list: %+v", my.Docs)
-	}
+		// Publish
+		rec = adminJSON(t, s, admin, "POST", fmt.Sprintf("/api/docs/%d/published", created.ID), map[string]any{
+			"published": true,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("publish: %d %s", rec.Code, rec.Body.String())
+		}
+
+		req = newTestRequest("GET", "/api/my/docs", nil)
+		req.AddCookie(userCookie)
+		rec = httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		_ = json.Unmarshal(rec.Body.Bytes(), &my)
+		if len(my.Docs) != 1 || my.Docs[0].Title != "入门教程" {
+			t.Fatalf("user published list: %+v", my.Docs)
+		}
 
 	// Upload PNG
 	var body bytes.Buffer
