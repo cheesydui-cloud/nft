@@ -5,13 +5,13 @@ import { copyToClipboard } from '../lib/clipboard'
 export function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] px-4 overflow-y-auto" onClick={onClose}>
-      <div className={`bg-surface border border-line rounded-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.7)] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} animate-in`} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-[26px] py-5 border-b border-line-soft">
-          <h3 className="text-[17px] font-bold text-ink">{title}</h3>
-          <button onClick={onClose} className="text-ink-mut hover:text-ink text-lg leading-none" aria-label="关闭弹窗">&times;</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[4px] px-4 overflow-y-auto" onClick={onClose}>
+      <div className={`bg-surface/95 border border-line rounded-[20px] shadow-[0_28px_80px_-24px_rgba(15,23,42,0.55)] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} animate-in backdrop-blur-xl`} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line-soft">
+          <h3 className="text-[16px] font-bold tracking-tight text-ink">{title}</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-mut hover:text-ink hover:bg-raised transition-colors grid place-items-center text-lg leading-none" aria-label="关闭弹窗">&times;</button>
         </div>
-        <div className="px-[26px] py-[26px]">{children}</div>
+        <div className="px-6 py-6">{children}</div>
       </div>
     </div>
   )
@@ -44,7 +44,7 @@ const badgeColors = {
 export function Badge({ color = 'gray', className = '', children, ...rest }) {
   // Forward ...rest (notably title) so hovering a status badge can reveal detail
   // like a node's last_error — previously these props were silently dropped.
-  return <span {...rest} className={`inline-flex items-center gap-1.5 px-[11px] py-1 rounded-full text-[12px] font-semibold border ${badgeColors[color] || badgeColors.gray} ${className}`}>{children}</span>
+  return <span {...rest} className={`inline-flex items-center gap-1.5 px-2.5 py-[3px] rounded-full text-[11.5px] font-semibold border backdrop-blur-[2px] ${badgeColors[color] || badgeColors.gray} ${className}`}>{children}</span>
 }
 
 /* ---------- NodeTypeBadge ---------- */

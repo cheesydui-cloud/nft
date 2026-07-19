@@ -9,9 +9,13 @@ import { useState } from 'react'
 export function PageHeader({ title, count, unit = '条', badge, actions }) {
   return (
     <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-      <div className="flex items-baseline gap-3.5 min-w-0">
-        <h1 className="m-0 text-[22px] font-bold tracking-tight text-ink">{title}</h1>
-        {count != null && <span className="text-[13.5px] text-ink-mut">共 {count} {unit}</span>}
+      <div className="flex items-center gap-3.5 min-w-0 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="m-0 text-[23px] font-bold tracking-tight text-ink leading-tight">{title}</h1>
+          {count != null && (
+            <div className="mt-1 text-[12.5px] text-ink-mut">共 <span className="font-semibold text-ink-soft tabular-nums">{count}</span> {unit}</div>
+          )}
+        </div>
         {badge}
       </div>
       {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
@@ -70,7 +74,7 @@ export function SearchInput({ value, onChange, placeholder }) {
     <div className="relative flex-1 min-w-0 md:min-w-[240px] md:max-w-[340px]">
       <svg className="w-4 h-4 absolute left-[13px] top-1/2 -translate-y-1/2 text-ink-mut pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-[9px] outline-none text-ink focus:border-blue-600 focus:ring-3 focus:ring-blue-600/10 transition-colors" />
+        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-xl outline-none text-ink transition-all hover:border-blue-400/50 focus:border-blue-500 focus:shadow-[0_0_0_4px_rgba(59,130,246,0.12)]" />
     </div>
   )
 }

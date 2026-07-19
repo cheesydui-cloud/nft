@@ -144,15 +144,15 @@ export function Layout({ children }) {
         <aside className={`sb-aside fixed inset-y-0 left-0 z-40 flex flex-col transition-all lg:translate-x-0 lg:static lg:z-auto ${sideOpen ? 'translate-x-0 w-[248px]' : '-translate-x-full w-[248px]'} ${collapsed ? 'lg:w-[68px]' : 'lg:w-[248px]'}`}>
 
           {/* Brand */}
-          <div className={`flex items-center gap-3 pt-5 pb-5 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
-            <div className="w-[42px] h-[42px] rounded-[11px] flex-none grid place-items-center text-white shadow-[0_8px_22px_-6px_rgba(79,70,229,0.75)]"
+          <div className={`flex items-center gap-3 pt-5 pb-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
+            <div className="w-[42px] h-[42px] rounded-[13px] flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(79,70,229,0.7)] ring-1 ring-white/20"
               title={collapsed && version ? version : undefined}
               style={{ background: 'linear-gradient(145deg, #3b82f6 0%, #4f46e5 52%, #7c3aed 100%)' }}>
               <BrandMark />
             </div>
-            {!collapsed && <div>
-              <div className="text-[16px] font-bold tracking-wide sb-text">{panelName || 'nft'}</div>
-              <div className="text-[12px] sb-text-mut mt-0.5">
+            {!collapsed && <div className="min-w-0">
+              <div className="text-[15.5px] font-bold tracking-tight sb-text truncate">{panelName || 'nft'}</div>
+              <div className="text-[11.5px] sb-text-mut mt-0.5">
                 {isAdmin ? '管理面板' : '用户面板'}
                 {version && <span className="font-mono"> · {version}</span>}
               </div>
@@ -231,8 +231,8 @@ export function Layout({ children }) {
         {/* Content */}
         <main className="flex-1 min-w-0 flex flex-col">
           {/* Topbar */}
-          <div className="sticky top-0 z-20 h-[56px] flex-shrink-0 bg-app/88 backdrop-blur-md border-b border-line px-4 sm:px-7 flex items-center gap-2">
-            <button onClick={() => setSideOpen(true)} className="lg:hidden p-1 text-ink-soft hover:text-ink">
+          <div className="app-topbar sticky top-0 z-20 h-[56px] flex-shrink-0 px-4 sm:px-7 flex items-center gap-2">
+            <button onClick={() => setSideOpen(true)} className="lg:hidden p-1.5 rounded-lg text-ink-soft hover:text-ink hover:bg-raised transition-colors">
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
             <div className="flex-1" />
@@ -312,9 +312,9 @@ const SidebarCtx = createContext(false)
 function NavGroup({ label, children }) {
   const collapsed = useContext(SidebarCtx)
   return (
-    <div className="mt-4">
-      {!collapsed && <div className="px-[10px] pb-2 text-[11px] font-semibold tracking-[1px] uppercase sb-group-label">{label}</div>}
-      <div className="flex flex-col gap-1">{children}</div>
+    <div className="mt-5 first:mt-1">
+      {!collapsed && <div className="px-3 pb-2 text-[10.5px] font-semibold uppercase sb-group-label">{label}</div>}
+      <div className="flex flex-col gap-0.5">{children}</div>
     </div>
   )
 }
@@ -324,12 +324,12 @@ function SideLink({ to, icon, end, children }) {
   return (
     <NavLink to={to} end={end} title={collapsed ? children : undefined}
       className={({ isActive }) =>
-        `flex items-center ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2.5 rounded-[9px] text-[14px] font-medium transition-colors relative border ${isActive
+        `flex items-center ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-[9px] rounded-xl text-[13.5px] font-medium transition-all relative border ${isActive
           ? 'sb-link-active'
           : 'sb-link'}`
       }>
-      <span className="w-5 h-5 flex-none opacity-85">{icon}</span>
-      {!collapsed && <span>{children}</span>}
+      <span className="w-[18px] h-[18px] flex-none opacity-90">{icon}</span>
+      {!collapsed && <span className="tracking-tight">{children}</span>}
     </NavLink>
   )
 }

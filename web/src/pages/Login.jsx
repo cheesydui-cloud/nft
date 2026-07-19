@@ -40,24 +40,24 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center px-4">
-      <div className="bg-surface border border-line rounded-2xl p-9 w-full max-w-[400px] shadow-[0_24px_70px_-24px_rgba(15,23,42,0.45)]">
-        <div className="flex items-center gap-3 mb-7">
-          <div className="w-[42px] h-[42px] rounded-[11px] grid place-items-center text-white shadow-[0_8px_22px_-6px_rgba(79,70,229,0.75)]"
+    <div className="login-shell">
+      <div className="login-card">
+        <div className="flex items-center gap-3.5 mb-8">
+          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_10px_28px_-8px_rgba(79,70,229,0.75)] ring-1 ring-white/25"
             style={{ background: 'linear-gradient(145deg, #3b82f6 0%, #4f46e5 52%, #7c3aed 100%)' }}>
-            <BrandMark />
+            <BrandMark className="w-[28px] h-[28px]" />
           </div>
           <div>
-            <div className="text-[16px] font-bold tracking-wide text-ink">{panelName || 'nft'}</div>
-            <div className="text-[12.5px] text-ink-mut mt-0.5">登录以继续</div>
+            <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
+            <div className="text-[12.5px] text-ink-mut mt-0.5">登录以继续管理转发</div>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 px-3 py-2.5 bg-rose-500/[.08] border border-rose-500/30 rounded-lg text-rose-600 dark:text-rose-300 text-[13px]">{error}</div>
+          <div className="mb-4 px-3.5 py-2.5 bg-rose-500/[.08] border border-rose-500/30 rounded-xl text-rose-600 dark:text-rose-300 text-[13px]">{error}</div>
         )}
 
-        <form onSubmit={submit} className="flex flex-col gap-3.5">
+        <form onSubmit={submit} className="flex flex-col gap-4">
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">用户名</label>
             <input className="input-field" value={username} onChange={e => setUsername(e.target.value)} required autoFocus autoComplete="username" />
@@ -67,7 +67,7 @@ export default function Login() {
             <input className="input-field" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
           </div>
           <button type="submit" disabled={loading}
-            className="btn-primary mt-3 w-full h-10 justify-center disabled:opacity-60">
+            className="btn-primary mt-2 w-full h-11 justify-center text-[14px] disabled:opacity-60">
             {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '登录'}
           </button>
         </form>
