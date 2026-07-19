@@ -87,7 +87,7 @@ export default function NodeRepo() {
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="节点池" count={list?.length || 0} unit="个" />
+      <PageHeader title="落地仓库" count={list?.length || 0} unit="个" />
       <Panel fill>
         <div className="px-3 pt-2 border-b border-line">
           <FolderBar
@@ -117,7 +117,7 @@ export default function NodeRepo() {
 
         <TableScroll>
         {!list || list.length === 0 ? (
-          <Empty title="暂无节点" desc="点击右上角「添加节点」将预先准备好的代理节点录入节点池。" />
+          <Empty title="暂无节点" desc="点击右上角「添加节点」将预先准备好的代理节点录入落地仓库。" />
         ) : filtered.length === 0 ? (
           <Empty title="无匹配节点" desc="试试别的关键词或分组。" />
         ) : (<>

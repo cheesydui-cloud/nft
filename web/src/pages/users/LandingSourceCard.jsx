@@ -179,7 +179,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
           </div>
           <div className="flex items-center gap-3">
             <button type="submit" disabled={loading} className="btn-primary text-xs">保存</button>
-            <button type="button" onClick={() => setShowRepoPicker(true)} className="btn-secondary text-xs">从节点池导入</button>
+            <button type="button" onClick={() => setShowRepoPicker(true)} className="btn-secondary text-xs">从落地仓库导入</button>
           </div>
         </form>
 
@@ -367,12 +367,12 @@ function RepoPicker({ userId, onClose, onDone }) {
   }
 
   return (
-    <Modal open onClose={onClose} title="从节点池导入">
+    <Modal open onClose={onClose} title="从落地仓库导入">
       {selected.size > 0 && <div className="text-xs text-blue-600 font-semibold mb-3">已选 {selected.size} 个</div>}
       {loading ? (
             <div className="text-sm text-ink-mut text-center py-8">加载中…</div>
           ) : repoNodes.length === 0 ? (
-            <div className="text-sm text-ink-mut text-center py-8">节点池为空，请先在「节点池」页面添加节点。</div>
+            <div className="text-sm text-ink-mut text-center py-8">落地仓库为空，请先在「落地仓库」页面添加节点。</div>
           ) : (
             <div className="space-y-1.5">
               {repoNodes.map(n => (

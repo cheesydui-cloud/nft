@@ -165,13 +165,13 @@ export function Layout({ children }) {
             {isAdmin ? (
               <>
                 <NavGroup label="监控">
-                  <SideLink to="/" icon={<IconDashboard />} end>概览</SideLink>
+                  <SideLink to="/" icon={<IconDashboard />} end>运营概览</SideLink>
                 </NavGroup>
                 <NavGroup label="资源">
-                  <SideLink to="/nodes" icon={<IconNodes />}>中转站</SideLink>
-                  <SideLink to="/node-repo" icon={<IconRepo />}>节点池</SideLink>
-                  <SideLink to="/rules" icon={<IconForwards />}>规则</SideLink>
-                  <SideLink to="/users" icon={<IconUserGroup />}>用户</SideLink>
+                  <SideLink to="/nodes" icon={<IconNodes />}>中转节点</SideLink>
+                  <SideLink to="/node-repo" icon={<IconRepo />}>落地仓库</SideLink>
+                  <SideLink to="/rules" icon={<IconForwards />}>转发规则</SideLink>
+                  <SideLink to="/users" icon={<IconUserGroup />}>用户管理</SideLink>
                   {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
                 </NavGroup>
                 <NavGroup label="系统">
@@ -182,7 +182,7 @@ export function Layout({ children }) {
             ) : (
               <>
                 <NavGroup label="概况">
-                  <SideLink to="/my" icon={<IconDashboard />} end>概览</SideLink>
+                  <SideLink to="/my" icon={<IconDashboard />} end>我的概览</SideLink>
                 </NavGroup>
                 <NavGroup label="转发">
                   <SideLink to="/my/rules" icon={<IconForwards />}>我的规则</SideLink>

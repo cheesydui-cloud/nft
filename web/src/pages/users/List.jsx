@@ -110,7 +110,7 @@ export default function UserList() {
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="用户列表" count={users.length} unit="个用户" />
+      <PageHeader title="用户管理" count={users.length} unit="个用户" />
 
       <Panel fill>
         <div className="px-3 pt-2 border-b border-line">
