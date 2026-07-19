@@ -42,13 +42,13 @@ export default function FolderBar({
 
   const create = async () => {
     const n = name.trim()
-    if (!n) { toast('请输入文件夹名称', 'error'); return }
+    if (!n) { toast('请输入分组名称', 'error'); return }
     setBusy(true)
     try {
       await onCreate(n)
       setShowCreate(false)
       setName('')
-      toast(`已创建文件夹「${n}」`)
+      toast(`已创建分组「${n}」`)
     } catch (err) {
       toast(err?.message || '创建失败', 'error')
     } finally {
@@ -74,7 +74,7 @@ export default function FolderBar({
 
   const remove = async (f) => {
     if (!(await confirm({
-      title: '删除文件夹',
+      title: '删除分组',
       message: `删除「${f.name}」？其中的内容会回到「未分组」，不会被删除。`,
       confirmText: '删除',
       danger: true,
@@ -82,7 +82,7 @@ export default function FolderBar({
     try {
       await onDelete(f.id)
       if (String(filter) === String(f.id)) onFilter('')
-      toast('文件夹已删除')
+      toast('分组已删除')
     } catch (err) {
       toast(err?.message || '删除失败', 'error')
     }
@@ -121,12 +121,12 @@ export default function FolderBar({
           onClick={() => { setShowCreate(true); setName('') }}
           className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-dashed border-line text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
         >
-          ＋ 新建文件夹
+          ＋ 新建分组
         </button>
       </div>
 
       {showCreate && (
-        <Modal open onClose={() => setShowCreate(false)} title="新建文件夹">
+        <Modal open onClose={() => setShowCreate(false)} title="新建分组">
           <div className="space-y-4">
             <div>
               <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">名称</label>
@@ -142,7 +142,7 @@ export default function FolderBar({
       )}
 
       {renaming && (
-        <Modal open onClose={() => setRenaming(null)} title="重命名文件夹">
+        <Modal open onClose={() => setRenaming(null)} title="重命名分组">
           <div className="space-y-4">
             <div>
               <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">新名称</label>
@@ -202,7 +202,7 @@ export function MoveToFolderModal({ title, folders = [], onClose, onMove }) {
           </button>
         ))}
         {folders.length === 0 && (
-          <p className="text-xs text-ink-mut px-1 py-2">还没有文件夹，先点上方「新建文件夹」。</p>
+          <p className="text-xs text-ink-mut px-1 py-2">还没有分组，先点上方「新建分组」。</p>
         )}
       </div>
       <div className="flex justify-end mt-4">

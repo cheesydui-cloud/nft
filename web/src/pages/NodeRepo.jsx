@@ -59,7 +59,7 @@ export default function NodeRepo() {
   const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选节点', 'error'); return }
     await api.post('/node-repo/batch-group', { ids: [...sel], group_id: folderId })
-    const label = folderId ? (folderName(folderId) || '文件夹') : '未分组'
+    const label = folderId ? (folderName(folderId) || '分组') : '未分组'
     toast(folderId ? `已移入「${label}」` : '已移出到未分组')
     setSel(new Set())
     setShowMove(false)
@@ -105,7 +105,7 @@ export default function NodeRepo() {
           <SearchInput value={search} onChange={setSearch} placeholder="搜索名称、协议、地址…" />
           {sel.size > 0 && (
             <>
-              <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入文件夹 ({sel.size})</button>
+              <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入分组 ({sel.size})</button>
               <button onClick={bulkDelete} className="text-red-600 text-xs font-semibold px-3 py-1 rounded border border-red-200 hover:bg-red-50 dark:border-red-700 dark:hover:bg-red-900/20">删除选中 {sel.size}</button>
             </>
           )}
@@ -119,13 +119,13 @@ export default function NodeRepo() {
         {!list || list.length === 0 ? (
           <Empty title="暂无节点" desc="点击右上角「添加节点」将预先准备好的代理节点录入节点池。" />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配节点" desc="试试别的关键词或文件夹。" />
+          <Empty title="无匹配节点" desc="试试别的关键词或分组。" />
         ) : (<>
           {!isMobile && <table className="tbl">
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-blue-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th>名称</th><th>文件夹</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
+              <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map(n => (
                 <tr key={n.id}>
@@ -293,7 +293,7 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
             <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="自定义节点名称" autoFocus />
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">文件夹</label>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组</label>
             <select className="input-field" value={form.group_id} onChange={e => set('group_id', e.target.value)}>
               <option value="0">未分组</option>
               {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
@@ -377,7 +377,7 @@ function BulkImportForm({ folders = [], onClose, onDone }) {
               placeholder={'ss://…\nvmess://…\ntrojan://…\nvless://…'} rows={16} style={{ resize: 'vertical', minHeight: 300 }} autoFocus />
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">导入到文件夹</label>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">导入到分组</label>
             <select className="input-field" value={groupId} onChange={e => setGroupId(e.target.value)}>
               <option value="0">未分组</option>
               {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}

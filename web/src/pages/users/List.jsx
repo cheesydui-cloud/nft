@@ -71,7 +71,7 @@ export default function UserList() {
   const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选用户', 'error'); return }
     await api.post('/users/batch-group', { ids: [...sel], group_id: folderId })
-    const label = folderId ? (folderName(folderId) || '文件夹') : '未分组'
+    const label = folderId ? (folderName(folderId) || '分组') : '未分组'
     toast(folderId ? `已移入「${label}」` : '已移出到未分组')
     setSel(new Set())
     setShowMove(false)
@@ -128,7 +128,7 @@ export default function UserList() {
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索用户名…" />
           {sel.size > 0 && (
-            <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入文件夹 ({sel.size})</button>
+            <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入分组 ({sel.size})</button>
           )}
           <div className="hidden md:flex ml-auto gap-2">
             <ToolbarButton onClick={() => setShowPaste(true)}>粘贴授权</ToolbarButton>
@@ -139,7 +139,7 @@ export default function UserList() {
         {users.length === 0 ? (
           <Empty title="暂无用户" desc="点击右上角「新建用户」创建。" />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配用户" desc="试试别的关键词或文件夹。" />
+          <Empty title="无匹配用户" desc="试试别的关键词或分组。" />
         ) : (
           <TableScroll>
           {/* Desktop table */}
@@ -147,7 +147,7 @@ export default function UserList() {
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-blue-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th className="w-12">ID</th><th>用户名</th><th>文件夹</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
+              <th className="w-12">ID</th><th>用户名</th><th>分组</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
               <th className="cursor-pointer select-none whitespace-nowrap" onClick={toggleExpirySort}>到期{sortBy === 'expires_asc' ? ' ↑' : sortBy === 'expires_desc' ? ' ↓' : ''}</th>
               <th>备注</th><th className="text-right">操作</th>
             </tr></thead>
