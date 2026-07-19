@@ -97,7 +97,7 @@ func TestMyLandingNodesCarriesLedger(t *testing.T) {
 	db.SetUserLandingSource(d, uid, "", "vless://u@1.2.3.4:443#HK")
 	s := newServer(t, d)
 
-	req := httptest.NewRequest("GET", "/api/my/landing-nodes", nil)
+	req := newTestRequest("GET", "/api/my/landing-nodes", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -159,7 +159,7 @@ func TestMyLandingNodesStaleFallback(t *testing.T) {
 	d.Exec(`UPDATE users SET landing_sub_url='http://127.0.0.1:1/sub' WHERE id=?`, uid)
 	s := newServer(t, d)
 
-	req := httptest.NewRequest("GET", "/api/my/landing-nodes?refresh=1", nil)
+	req := newTestRequest("GET", "/api/my/landing-nodes?refresh=1", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -183,7 +183,7 @@ func TestMyLandingNodesAppliesNameOverride(t *testing.T) {
 	s := newServer(t, d)
 
 	// first request materializes the exit set the rename targets
-	req := httptest.NewRequest("GET", "/api/my/landing-nodes", nil)
+	req := newTestRequest("GET", "/api/my/landing-nodes", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

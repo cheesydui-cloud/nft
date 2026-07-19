@@ -43,7 +43,7 @@ func TestCreateMyRuleAcceptsTCPUDP(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
 			"node_id": g.ID, "name": "r-" + tc.proto, "proto": tc.proto, "exit": "9.9.9.9:8443",
 		})
-		req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+		req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()

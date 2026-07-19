@@ -94,13 +94,7 @@ func (s *Server) requireAPIAuth(next http.Handler) http.Handler {
 		}
 		u, err := db.GetSessionUser(s.DB, c.Value)
 		if err != nil || u == nil {
-			http.SetCookie(w, &http.Cookie{
-				Name:     sessionCookie,
-				Value:    "",
-				Path:     "/",
-				SameSite: http.SameSiteLaxMode,
-				MaxAge:   -1,
-			})
+			http.SetCookie(w, newSessionCookie(r, "", -1))
 			jsonErr(w, http.StatusUnauthorized, "会话已过期")
 			return
 		}
@@ -182,6 +176,10 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := db.GetUserByUsername(s.DB, body.Username)
 	if err != nil {
+		// Run a comparison against a dummy hash so the response time matches
+		// the "user exists but wrong password" path, defeating username
+		// enumeration via timing.
+		_ = bcrypt.CompareHashAndPassword(dummyPwHash, []byte(body.Password))
 		if s.loginLimiter != nil {
 			s.loginLimiter.recordFailure(limitKey)
 		}
@@ -207,14 +205,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "登录失败")
 		return
 	}
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookie,
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(sessionTTL.Seconds()),
-		})
+	http.SetCookie(w, newSessionCookie(r, token, int(sessionTTL.Seconds())))
 	db.WriteAudit(s.DB, u.ID, "login", "", "")
 	jsonOK(w, map[string]any{"user": apiUserView(u)})
 }
@@ -223,13 +214,7 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = db.DeleteSession(s.DB, c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    "",
-		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, newSessionCookie(r, "", -1))
 	jsonOK(w, map[string]any{"ok": true})
 }
 
@@ -287,7 +272,7 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	cur, _ := r.Cookie(sessionCookie)
 	if cur != nil {
-		_, _ = s.DB.Exec(`DELETE FROM sessions WHERE user_id=? AND token<>?`, u.ID, cur.Value)
+		_, _ = s.DB.Exec(`DELETE FROM sessions WHERE user_id=? AND token<>?`, u.ID, db.HashToken(cur.Value))
 	}
 	db.WriteAudit(s.DB, u.ID, "user.change_password", "", "")
 	jsonOK(w, map[string]any{"ok": true})
@@ -485,6 +470,7 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		n, _ = db.GetNode(s.DB, n.ID)
 		db.WriteAudit(s.DB, u.ID, "node.create_composite", strconv.FormatInt(n.ID, 10), body.Name)
 		s.grantInitialUsers(u.ID, n.ID, body.UserIDs)
+		// Composite nodes have no agent credential, so no secret to reveal.
 		jsonOK(w, map[string]any{"node": n})
 		return
 	}
@@ -495,6 +481,9 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Secrets are stored in plaintext, so GetNode reloads carry it too; capturing
+	// it here keeps things clear regardless of whether the refresh below runs.
+	plaintextSecret := n.Secret
 	// Absent field and explicit 0 are indistinguishable on create, so 0 keeps
 	// the default 1.0; free (0) is set later via the dedicated endpoint.
 	if body.RateMultiplier > 0 && body.RateMultiplier != 1.0 {
@@ -519,17 +508,21 @@ func (s *Server) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 	db.WriteAudit(s.DB, u.ID, "node.create", strconv.FormatInt(n.ID, 10), body.Name)
 	s.grantInitialUsers(u.ID, n.ID, body.UserIDs)
 	_ = s.apiDispatch(n.ID)
-	jsonOK(w, map[string]any{"node": n})
+	// Return the plaintext secret so the operator can copy the install command.
+	jsonOK(w, map[string]any{"node": n, "secret": plaintextSecret})
 }
 
 // nodeWithSecret re-exposes a node's secret on the admin node-detail response
 // only. db.Node.Secret is json:"-" so it never leaks elsewhere; the embedded
 // pointer promotes every other node field, and the explicit Secret field (at
-// depth 0) shadows the hidden embedded one, serializing back as "secret" for
-// the install-command view.
+// depth 0) shadows the hidden embedded one, serializing as "secret" for the
+// install-command view. Secret is empty for legacy v3.0.0 rows whose stored
+// value is a non-recoverable hash (SecretHashed true) — the UI then prompts a
+// reset instead of showing an unusable value.
 type nodeWithSecret struct {
 	*db.Node
-	Secret string `json:"secret"`
+	Secret       string `json:"secret"`
+	SecretLegacy bool   `json:"secret_legacy"`
 }
 
 func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
@@ -596,8 +589,18 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 	lv := serverVersion()
 	normalizeAgentVersion(n, lv, latestAgentSHA)
+	// Node secrets are plaintext (secret_hashed=0) and shown for the install
+	// command. Legacy v3.0.0 rows stored a SHA-256 hash (secret_hashed=1) that
+	// can't be turned back into a usable token, so suppress it and flag the row
+	// so the UI prompts a reset.
+	var secretHashed int
+	s.DB.QueryRow(`SELECT secret_hashed FROM nodes WHERE id=?`, n.ID).Scan(&secretHashed)
+	shownSecret := n.Secret
+	if secretHashed == 1 {
+		shownSecret = ""
+	}
 	resp := map[string]any{
-		"node": nodeWithSecret{Node: n, Secret: n.Secret}, "rule_hops": views, "panel_url": panelURL,
+		"node": nodeWithSecret{Node: n, Secret: shownSecret, SecretLegacy: secretHashed == 1}, "rule_hops": views, "panel_url": panelURL,
 		"panel_url_configured": panelURL != "",
 		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,
@@ -1204,6 +1207,35 @@ func (s *Server) apiResyncNode(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+// apiResetNodeToken rotates a node's agent credential, returning the fresh
+// plaintext secret one time. The old secret is invalidated immediately, so a
+// running agent will be rejected on its next reconnect until reconfigured with
+// the new token.
+func (s *Server) apiResetNodeToken(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	n, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if n.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点没有 Agent 凭证")
+		return
+	}
+	secret, err := db.ResetNodeSecret(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, u.ID, "node.reset_token", strconv.FormatInt(id, 10), n.Name)
+	jsonOK(w, map[string]any{"secret": secret})
+}
+
 func (s *Server) apiUpgradeNode(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	id, err := urlParamInt64(r, "id")
@@ -1614,6 +1646,7 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	var body struct {
 		NodeID    int64  `json:"node_id"`
+		OwnerID   *int64 `json:"owner_id,omitempty"`
 		Name      string `json:"name"`
 		Proto     string `json:"proto"`
 		Exit      string `json:"exit"`
@@ -1714,11 +1747,20 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 
 	// Rules created through the admin API are admin-managed: bind them to the
 	// creating admin so ownership listings and traffic accounting have a
-	// subject (this route group is admin-only). The agent/WS path instead
-	// inherits the node owner.
+	// subject (this route group is admin-only). When owner_id is explicitly
+	// set to a user's ID, the rule is bound to that user — e.g. for speed
+	// limit shaping which keys on the rule owner's grant.
+	ownerID := sql.NullInt64{Int64: u.ID, Valid: true}
+	if body.OwnerID != nil && *body.OwnerID > 0 {
+		if _, err := db.GetUserByID(s.DB, *body.OwnerID); err != nil {
+			jsonErr(w, http.StatusBadRequest, "指定的用户不存在")
+			return
+		}
+		ownerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
+	}
 	rl := &db.Rule{
 		NodeID:      ruleNodeID,
-		OwnerID:     sql.NullInt64{Int64: u.ID, Valid: true},
+		OwnerID:     ownerID,
 		Name:        name,
 		Proto:       proto,
 		ExitHost:    exitHost,
@@ -1785,7 +1827,7 @@ func (s *Server) apiGetRule(w http.ResponseWriter, r *http.Request) {
 	}
 	item.BillingRate = billingRate
 	jsonOK(w, map[string]any{
-		"rule": item, "hops": hops, "nodes": nodes, "node_by_id": nodeByID,
+		"rule": item, "hops": hops, "nodes": nodes, "node_by_id": nodeByID, "users": s.listUsersBrief(),
 	})
 }
 
@@ -1935,6 +1977,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		NodeID    int64  `json:"node_id"`
+		OwnerID   *int64 `json:"owner_id,omitempty"`
 		Name      string `json:"name"`
 		Proto     string `json:"proto"`
 		Exit      string `json:"exit"`
@@ -2056,6 +2099,19 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	// changes it, mirroring how an empty mode keeps the exit segment.
 	if entryFamily != "" {
 		rl.EntryFamily = entryFamily
+	}
+	// OwnerID can be updated to reassign the rule to a different user (e.g.
+	// for speed limit shaping which keys on the rule owner's grant).
+	if body.OwnerID != nil {
+		if *body.OwnerID > 0 {
+			if _, err := db.GetUserByID(s.DB, *body.OwnerID); err != nil {
+				jsonErr(w, http.StatusBadRequest, "指定的用户不存在")
+				return
+			}
+			rl.OwnerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
+		} else {
+			rl.OwnerID = sql.NullInt64{}
+		}
 	}
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -3210,6 +3266,7 @@ func apiUserFullView(u *db.User) map[string]any {
 	m["last_traffic_reset_at"] = u.LastTrafficResetAt
 	m["admin_note"] = u.AdminNote
 	m["billing_rate"] = u.BillingRate
+	m["speed_limit_mbytes"] = u.SpeedLimitMBytes
 	return m
 }
 

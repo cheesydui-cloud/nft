@@ -46,7 +46,7 @@ func TestUserCreateRuleOnGrantedNode(t *testing.T) {
 		"proto":   "tcp",
 		"exit":    "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestUserCreateRuleRejectsUngrantedNode(t *testing.T) {
 		"proto":   "tcp",
 		"exit":    "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -99,7 +99,7 @@ func TestUserCreateRuleRejectsOverQuota(t *testing.T) {
 		"proto":   "tcp",
 		"exit":    "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -126,7 +126,7 @@ func TestUserDeleteRuleBlocksCrossUser(t *testing.T) {
 		"proto":   "tcp",
 		"exit":    "9.9.9.9:8443",
 	})
-	req := httptest.NewRequest("POST", "/api/my/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/my/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookieA)
 	rec := httptest.NewRecorder()
@@ -140,7 +140,7 @@ func TestUserDeleteRuleBlocksCrossUser(t *testing.T) {
 	}
 	ruleID := rules[0].ID
 
-	delReq := httptest.NewRequest("DELETE", fmt.Sprintf("/api/my/rules/%d", ruleID), nil)
+	delReq := newTestRequest("DELETE", fmt.Sprintf("/api/my/rules/%d", ruleID), nil)
 	delReq.AddCookie(cookieB)
 	delRec := httptest.NewRecorder()
 	s.Router().ServeHTTP(delRec, delReq)

@@ -27,6 +27,11 @@ const (
 	dialerWriteTimeout     = 20 * time.Second
 	dialerBackoffInitial   = 1 * time.Second
 	dialerBackoffMax       = 60 * time.Second
+	// dialerStableSession is how long a post-hello_ack session must survive
+	// before we treat it as healthy and reset the reconnect backoff. Shorter
+	// sessions keep the backoff growing to avoid storming a panel that accepts
+	// then immediately drops us.
+	dialerStableSession = 30 * time.Second
 )
 
 const (
@@ -245,16 +250,20 @@ func (d *Dialer) Run(ctx context.Context) {
 			return
 		default:
 		}
+		sessionStart := time.Now()
 		helloAcked, err := d.runOnceSafe(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("dialer: connection ended: %v", err)
 		}
-		// Reset backoff when a session got past hello_ack: a node that's
-		// been authenticated and serving for a while shouldn't pay a
-		// minute-long reconnect penalty for one panel hiccup. Quick-fail
-		// sessions (token bad, dial refused, hello timeout) keep growing
-		// the backoff so we don't hammer a broken panel.
-		if helloAcked {
+		// Reset backoff only when a session both got past hello_ack AND stayed
+		// up long enough to count as stable. A node that's been authenticated
+		// and serving for a while shouldn't pay a minute-long reconnect penalty
+		// for one panel hiccup. But if the panel accepts hello and then drops us
+		// immediately (dup node, post-auth policy reject, repeated apply panic),
+		// resetting on every hello_ack would let us reconnect ~1s apart forever
+		// and storm the panel -- so those short-lived sessions keep growing the
+		// backoff, same as quick-fail sessions (bad token, dial refused).
+		if helloAcked && time.Since(sessionStart) >= dialerStableSession {
 			backoff = dialerBackoffInitial
 		}
 		sleep := jitter(backoff)
@@ -332,7 +341,7 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	}
 	var ha wsproto.HelloAck
 	if err := json.Unmarshal(helloAck.Payload, &ha); err != nil {
-		log.Printf("dialer: unmarshal %s: %v", helloAck.Type, err)
+		return false, fmt.Errorf("unmarshal hello_ack: %w", err)
 	}
 	if ha.Error != "" {
 		return false, fmt.Errorf("hello rejected: %s", ha.Error)
@@ -394,6 +403,21 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 			delete(d.pending, id)
 		}
 		d.pendMu.Unlock()
+		// Drain any command/upgrade frames still buffered but not yet written
+		// to this (now dead) connection. cmdCh/upgradeCh live for the whole
+		// Dialer, so a leftover frame here would otherwise be replayed on the
+		// next session -- carrying an ID minted on the dead connection whose
+		// waiter has already been released above, causing a duplicate
+		// rule_create/upgrade the caller never learns about.
+		for {
+			select {
+			case <-d.cmdCh:
+			case <-d.upgradeCh:
+			default:
+				goto drained
+			}
+		}
+	drained:
 	}()
 
 	// Reader runs in its own goroutine because ws.Read blocks; the serve

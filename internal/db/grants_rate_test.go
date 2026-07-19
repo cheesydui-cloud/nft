@@ -40,17 +40,28 @@ func TestGrantRateLimitRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGrantShapesSkipsUnlimited(t *testing.T) {
+func TestGrantShapesIncludesUnlimited(t *testing.T) {
 	d := openTestDB(t)
 	uid := createTestUser(t, d)
 	nid := createTestNode(t, d, "rl0")
 	grantNode(t, d, uid, nid)
 
+	// GrantShapes returns every grant, including rate=0 ones. Callers rely on
+	// the rate=0 row being present so they can fall back to the user-level
+	// speed limit (see server.go buildRules). Filtering rate=0 here would
+	// silently break that fallback.
 	shapes, err := GrantShapes(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := shapes[[2]int64{uid, nid}]; ok {
-		t.Fatal("rate 0 grant must not appear in GrantShapes")
+	s, ok := shapes[[2]int64{uid, nid}]
+	if !ok {
+		t.Fatal("rate 0 grant must still appear in GrantShapes")
+	}
+	if s.RateLimitMBytes != 0 {
+		t.Fatalf("rate = %d, want 0", s.RateLimitMBytes)
+	}
+	if s.GrantID <= 0 {
+		t.Fatalf("grant id = %d, want positive", s.GrantID)
 	}
 }

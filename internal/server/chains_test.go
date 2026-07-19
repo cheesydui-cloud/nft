@@ -29,7 +29,7 @@ func TestCreateRuleWiresHopsAndShowsEntry(t *testing.T) {
 			{"node_id": h.ID, "mode": "kernel"},
 		},
 	})
-	req := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(loginAsAdmin(t, d))
 	rec := httptest.NewRecorder()
@@ -64,7 +64,7 @@ func apiPostRule(t *testing.T, s *Server, d *sql.DB, admin *http.Cookie, name st
 		"exit":  "9.9.9.9:8443",
 		"hops":  hops,
 	})
-	req := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
@@ -90,7 +90,7 @@ func TestGetRuleIncludesComputedFields(t *testing.T) {
 
 	rl := apiPostRule(t, s, d, admin, "vless", []int64{g.ID, h.ID})
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rules/%d", rl.ID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/rules/%d", rl.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -134,7 +134,7 @@ func TestSaveRuleReorderKeepsHops(t *testing.T) {
 			{"node_id": g.ID, "mode": "kernel"},
 		},
 	})
-	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/rules/%d", rl.ID), bytes.NewReader(body))
+	req := newTestRequest("PUT", fmt.Sprintf("/api/rules/%d", rl.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestReallocateRuleHopChangesPort(t *testing.T) {
 		portByNode[hop.NodeID] = hop.ListenPort
 	}
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/rules/%d/hops/0/reallocate", rl.ID), nil)
+	req := newTestRequest("POST", fmt.Sprintf("/api/rules/%d/hops/0/reallocate", rl.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -195,7 +195,7 @@ func TestSetNodeRelayHost(t *testing.T) {
 	apiSetRelayHost := func(val string, wantOK bool) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{"relay_host": val})
-		req := httptest.NewRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host", n.ID), bytes.NewReader(body))
+		req := newTestRequest("POST", fmt.Sprintf("/api/nodes/%d/relay-host", n.ID), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(admin)
 		rec := httptest.NewRecorder()
@@ -238,7 +238,7 @@ func TestCreateRuleRejectsNodeWithoutRelayHost(t *testing.T) {
 			{"node_id": bare.ID, "mode": "kernel"},
 		},
 	})
-	req := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(loginAsAdmin(t, d))
 	rec := httptest.NewRecorder()
@@ -266,10 +266,10 @@ func apiNodeAction(t *testing.T, s *Server, admin *http.Cookie, method, path str
 	t.Helper()
 	var req *http.Request
 	if jsonBody != nil {
-		req = httptest.NewRequest(method, path, bytes.NewReader(jsonBody))
+		req = newTestRequest(method, path, bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
 	} else {
-		req = httptest.NewRequest(method, path, nil)
+		req = newTestRequest(method, path, nil)
 	}
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()

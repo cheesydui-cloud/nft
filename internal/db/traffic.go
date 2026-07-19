@@ -203,18 +203,19 @@ func NodesExceedingQuota(d *sql.DB, userID int64) ([]int64, error) {
 }
 
 // RulesAffectedByNode returns the distinct hop-node IDs of all rules owned by
-// userID whose chain runs a segment of the given logical node (entry or via).
-// Grants — and thus quotas — live on logical nodes, so a rule is affected when
-// any of its hops was expanded from nodeID's segment (rh2.via_node_id = nodeID);
-// the entry segment's via is rules.node_id, so this covers composite/entry
-// grants without a separate clause.
+// userID that should be re-pushed when a grant on nodeID changes.
+//
+// Grants are stored on the node the admin selected in the UI — this can be a
+// composite node (via_node_id in rule_hops) or a physical child node (node_id
+// in rule_hops or rules.node_id). We match all three so that changing a rate
+// limit on any grant level pushes to every physical node carrying the affected
+// rules.
 func RulesAffectedByNode(d *sql.DB, userID, nodeID int64) ([]int64, error) {
 	return queryInt64s(d, `
 		SELECT DISTINCT rh.node_id
 		FROM rule_hops rh
 		JOIN rules r ON r.id = rh.rule_id
 		WHERE r.owner_id = ?
-		  AND rh.rule_id IN (
-		      SELECT rh2.rule_id FROM rule_hops rh2 WHERE rh2.via_node_id = ?)`,
-		userID, nodeID)
+		  AND (rh.via_node_id = ? OR rh.node_id = ? OR r.node_id = ?)`,
+		userID, nodeID, nodeID, nodeID)
 }

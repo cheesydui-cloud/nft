@@ -25,7 +25,7 @@ func TestAPISetPerNodeQuota(t *testing.T) {
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"traffic_quota_bytes": 1073741824})
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/quota", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/quota", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestAPIResetPerNodeTraffic(t *testing.T) {
 	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/reset-traffic", nil)
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/reset-traffic", nil)
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -73,7 +73,7 @@ func TestAPIResetTrafficClearsPerNode(t *testing.T) {
 	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/reset-traffic", nil)
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/reset-traffic", nil)
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -98,7 +98,7 @@ func TestAPISetResetDays(t *testing.T) {
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"traffic_reset_days": 30})
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/reset-days", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/reset-days", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()

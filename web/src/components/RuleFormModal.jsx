@@ -4,7 +4,7 @@ import { useToast } from './Layout'
 import { tryParseURI } from '../lib/landing'
 import { fmtDate } from '../lib/fmt'
 
-const EMPTY = { node_id: '', name: '', proto: 'tcp', exit: '', exit_kind: 'custom', entry_port: '', comment: '', mode: 'kernel', via_node_ids: [] }
+const EMPTY = { node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit_kind: 'custom', entry_port: '', comment: '', mode: 'kernel', via_node_ids: [] }
 
 /* Shared create/edit form for forwarding rules, used by both the admin
    (`/rules`) and user (`/my/rules`) pages so create, edit and copy share one
@@ -20,7 +20,7 @@ const EMPTY = { node_id: '', name: '', proto: 'tcp', exit: '', exit_kind: 'custo
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, users }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
   const toast = useToast()
@@ -227,6 +227,13 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               </div>
             </>
           )}
+          {users && users.length > 0 && (
+            <>
+              <label className="fl">所属用户</label>
+              <Select value={form.owner_id} onChange={v => set('owner_id', Number(v))} placeholder="-- 选择用户 --" searchable
+                options={users.map(u => ({ value: u.id, label: u.username }))} />
+            </>
+          )}
           <label className="fl">名称</label>
           <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="规则名称" />
           <label className="fl">协议</label>
@@ -304,6 +311,7 @@ export function ruleToForm(rule) {
     : (rule.exit_host && rule.exit_port ? `${rule.exit_host}:${rule.exit_port}` : '')
   return {
     node_id: rule.node_id,
+    owner_id: rule.owner_id?.Valid ? rule.owner_id.Int64 : (rule.owner_id || 0),
     name: rule.name,
     proto: rule.proto,
     exit,
@@ -338,5 +346,6 @@ export function ruleFormToPayload(form) {
     exit: form.exit, entry_port: form.entry_port ? Number(form.entry_port) : undefined,
     comment: form.comment || undefined,
     via_node_ids: (form.via_node_ids || []).map(Number),
+    owner_id: form.owner_id ? Number(form.owner_id) : undefined,
   }
 }

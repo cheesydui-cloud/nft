@@ -140,6 +140,7 @@ func hashLegacyAPITokens(d *sql.DB) error {
 	return nil
 }
 
+
 func migrate(d *sql.DB) error {
 	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return err

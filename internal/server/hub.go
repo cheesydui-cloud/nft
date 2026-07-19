@@ -583,6 +583,9 @@ func lookupNodeBySecret(d *sql.DB, secret string) (*db.Node, error) {
 	if secret == "" {
 		return nil, errors.New("empty secret")
 	}
+	// Node secrets are stored in plaintext; the agent presents the same value,
+	// so compare directly. (Legacy v3.0.0 rows stored a SHA-256 hash and will
+	// no longer match — those nodes must reset their token to reconnect.)
 	var id int64
 	err := d.QueryRow(`SELECT id FROM nodes WHERE secret=? AND disabled=0`, secret).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {

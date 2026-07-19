@@ -20,7 +20,7 @@ func TestGetCompositeNodeHopsCarryChildNames(t *testing.T) {
 
 	s := newServer(t, d)
 	admin := loginAsAdmin(t, d)
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/nodes/%d", comp.ID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/nodes/%d", comp.ID), nil)
 	req.AddCookie(admin)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

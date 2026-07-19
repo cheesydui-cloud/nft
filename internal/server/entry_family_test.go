@@ -33,7 +33,7 @@ func TestEntryFamilyDerived(t *testing.T) {
 			payload[k] = v
 		}
 		body, _ := json.Marshal(payload)
-		req := httptest.NewRequest("POST", "/api/rules", bytes.NewReader(body))
+		req := newTestRequest("POST", "/api/rules", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestEntryFamilyDerived(t *testing.T) {
 		}
 
 		// The list read path recomputes the same pair from the persisted family.
-		getReq := httptest.NewRequest("GET", "/api/rules", nil)
+		getReq := newTestRequest("GET", "/api/rules", nil)
 		getReq.AddCookie(cookie)
 		getRec := httptest.NewRecorder()
 		s.Router().ServeHTTP(getRec, getReq)
@@ -137,7 +137,7 @@ func TestEntryFamilyDerived(t *testing.T) {
 	// so the derived both-family rules don't get bricked.
 	t.Run("clearing v6 relay blocked while both rules exist", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"relay_host_v6": ""})
-		req := httptest.NewRequest("POST", "/api/nodes/"+strconv.FormatInt(dual.ID, 10)+"/relay-host-v6", bytes.NewReader(body))
+		req := newTestRequest("POST", "/api/nodes/"+strconv.FormatInt(dual.ID, 10)+"/relay-host-v6", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()

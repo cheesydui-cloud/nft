@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -318,7 +319,12 @@ func Apply(rules []Rule) error {
 }
 
 func enableRouteLocalnet() {
-	_ = os.WriteFile("/proc/sys/net/ipv4/conf/all/route_localnet", []byte("1\n"), 0o644)
+	// Best-effort: needed for loopback DNAT. If /proc is read-only (e.g. an
+	// unprivileged container) log it, since silent failure makes loopback
+	// forwards mysteriously not work.
+	if err := os.WriteFile("/proc/sys/net/ipv4/conf/all/route_localnet", []byte("1\n"), 0o644); err != nil {
+		log.Printf("nft: enable route_localnet failed (loopback DNAT may not work): %v", err)
+	}
 }
 
 func Available() bool {
@@ -357,7 +363,11 @@ func EnableIPForward() error {
 		{"/proc/sys/net/ipv4/ip_forward", "net.ipv4.ip_forward = 1"},
 		{"/proc/sys/net/ipv6/conf/all/forwarding", "net.ipv6.conf.all.forwarding = 1"},
 	} {
-		_ = os.WriteFile(p.proc, []byte("1\n"), 0o644)
+		// Best-effort runtime toggle; the persisted sysctl.d write below is the
+		// authoritative one. Log so a read-only /proc doesn't fail silently.
+		if err := os.WriteFile(p.proc, []byte("1\n"), 0o644); err != nil {
+			log.Printf("nft: enable %s failed: %v", p.proc, err)
+		}
 	}
 	conf := "/etc/sysctl.d/99-nft.conf"
 	body := "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n"

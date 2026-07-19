@@ -319,8 +319,8 @@ func UpdateRuleHeader(d DBTX, r *Rule) error {
 	if r.EntryFamily == "" {
 		r.EntryFamily = "v4"
 	}
-	_, err := d.Exec(`UPDATE rules SET node_id=?,name=?,proto=?,exit_host=?,exit_port=?,comment=?,entry_family=?,via_node_ids=? WHERE id=?`,
-		r.NodeID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.Comment, r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs), r.ID)
+	_, err := d.Exec(`UPDATE rules SET node_id=?,owner_id=?,name=?,proto=?,exit_host=?,exit_port=?,comment=?,entry_family=?,via_node_ids=? WHERE id=?`,
+		r.NodeID, r.OwnerID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.Comment, r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs), r.ID)
 	return err
 }
 

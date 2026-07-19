@@ -19,7 +19,7 @@ func TestAPISetPerNodeRateLimit(t *testing.T) {
 	adminCookie := loginAsAdmin(t, d)
 
 	body, _ := json.Marshal(map[string]any{"rate_limit_mbytes": 10})
-	req := httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/rate-limit", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/rate-limit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()
@@ -35,7 +35,7 @@ func TestAPISetPerNodeRateLimit(t *testing.T) {
 
 	// negative is rejected
 	body, _ = json.Marshal(map[string]any{"rate_limit_mbytes": -1})
-	req = httptest.NewRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/rate-limit", bytes.NewReader(body))
+	req = newTestRequest("POST", "/api/users/"+itoa(uid)+"/nodes/"+itoa(n.ID)+"/rate-limit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec = httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestAPIRuleBandwidthEndpointRemoved(t *testing.T) {
 	s := newServer(t, d)
 	adminCookie := loginAsAdmin(t, d)
 
-	req := httptest.NewRequest("POST", "/api/rules/1/bandwidth", bytes.NewReader([]byte(`{"bandwidth_mbps":5}`)))
+	req := newTestRequest("POST", "/api/rules/1/bandwidth", bytes.NewReader([]byte(`{"bandwidth_mbps":5}`)))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestAPIBatchApplyGrantsRateLimit(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest("POST", "/api/grants/batch-apply", bytes.NewReader(body))
+	req := newTestRequest("POST", "/api/grants/batch-apply", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(adminCookie)
 	rec := httptest.NewRecorder()

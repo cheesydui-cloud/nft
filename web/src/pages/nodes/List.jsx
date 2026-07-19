@@ -5,7 +5,7 @@ import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
 import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { Layout, useToast } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, useConfirm, Select } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, useConfirm, Select, CopyText } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, TableScroll } from '../../components/page'
 
 export default function NodeList() {
@@ -377,6 +377,10 @@ function AddNodeModal({ open, onClose, onDone }) {
   const [unidirectional, setUnidirectional] = useState(false)
   const [userIds, setUserIds] = useState([])
   const [loading, setLoading] = useState(false)
+  // Holds the freshly created node's one-time plaintext secret + id. While set,
+  // a reveal modal shows the token; the caller navigates on to detail only after
+  // the operator dismisses it, since the token can never be read back later.
+  const [created, setCreated] = useState(null)
   const users = useGrantableUsers(open)
   const toast = useToast()
   const navigate = useNavigate()
@@ -393,9 +397,24 @@ function AddNodeModal({ open, onClose, onDone }) {
       })
       toast('节点已添加')
       setName(''); setSecret(''); setPortStart('10001'); setPortEnd('20000'); setRateMult('1'); setUnidirectional(false); setUserIds([])
-      if (res?.node?.id) navigate(`/nodes/${res.node.id}`)
+      if (res?.secret && res?.node?.id) setCreated({ id: res.node.id, secret: res.secret })
+      else if (res?.node?.id) navigate(`/nodes/${res.node.id}`)
       else onDone()
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
+  }
+
+  if (created) {
+    return (
+      <Modal open={open} onClose={() => { const cid = created.id; setCreated(null); navigate(`/nodes/${cid}`) }} title="节点已创建 · Token">
+        <div className="text-[13px] text-ink-soft mb-3">这是该节点的 Token，可点击复制。在节点详情页也能随时查看它和完整安装命令。</div>
+        <div className="rounded-[10px] border border-line bg-[#f7f9fc] px-3.5 py-3 font-mono text-[13px] break-all">
+          <CopyText text={created.secret} />
+        </div>
+        <div className="flex justify-end mt-5">
+          <button onClick={() => { const cid = created.id; setCreated(null); navigate(`/nodes/${cid}`) }} className="btn-primary px-5">我已保存，前往详情</button>
+        </div>
+      </Modal>
+    )
   }
 
   return (

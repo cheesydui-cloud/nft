@@ -20,7 +20,7 @@ func TestApiListNodesIncludesCompositeRelayStack(t *testing.T) {
 
 	cookie := loginAsAdmin(t, d)
 	s := newServer(t, d)
-	req := httptest.NewRequest("GET", "/api/nodes", nil)
+	req := newTestRequest("GET", "/api/nodes", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -60,7 +60,7 @@ func TestApiGetNodeCompositeIncludesRelayStack(t *testing.T) {
 
 	cookie := loginAsAdmin(t, d)
 	s := newServer(t, d)
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/nodes/%d", comp.ID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/nodes/%d", comp.ID), nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -93,7 +93,7 @@ func TestApiMyListRulesNodesIncludeCompositeRelayStack(t *testing.T) {
 	_ = db.GrantNode(d, uid, comp.ID, 5, 0)
 
 	s := newServer(t, d)
-	req := httptest.NewRequest("GET", "/api/my/rules", nil)
+	req := newTestRequest("GET", "/api/my/rules", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
@@ -146,7 +146,7 @@ func TestApiMyGetRuleNodesIncludeCompositeRelayStack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/my/rules/%d", createResp.RuleID), nil)
+	req := newTestRequest("GET", fmt.Sprintf("/api/my/rules/%d", createResp.RuleID), nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)
