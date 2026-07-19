@@ -166,7 +166,7 @@ export default function RulesDetail() {
 
       <RuleFormModal
         open={showEdit} onClose={() => setShowEdit(false)} title="编辑规则" submitLabel="保存并重下发"
-        nodes={nodes} bindings={bindings} initial={ruleToForm(rule)} onSubmit={saveEdit} />
+        nodes={nodes} bindings={bindings} initial={ruleToForm(rule)} onSubmit={saveEdit} users={data?.users || []} />
     </Layout>
   )
 }

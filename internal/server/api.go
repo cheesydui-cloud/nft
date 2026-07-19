@@ -1646,6 +1646,7 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	var body struct {
 		NodeID    int64  `json:"node_id"`
+		OwnerID   *int64 `json:"owner_id,omitempty"`
 		Name      string `json:"name"`
 		Proto     string `json:"proto"`
 		Exit      string `json:"exit"`
@@ -1746,11 +1747,20 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 
 	// Rules created through the admin API are admin-managed: bind them to the
 	// creating admin so ownership listings and traffic accounting have a
-	// subject (this route group is admin-only). The agent/WS path instead
-	// inherits the node owner.
+	// subject (this route group is admin-only). When owner_id is explicitly
+	// set to a user's ID, the rule is bound to that user — e.g. for speed
+	// limit shaping which keys on the rule owner's grant.
+	ownerID := sql.NullInt64{Int64: u.ID, Valid: true}
+	if body.OwnerID != nil && *body.OwnerID > 0 {
+		if _, err := db.GetUserByID(s.DB, *body.OwnerID); err != nil {
+			jsonErr(w, http.StatusBadRequest, "指定的用户不存在")
+			return
+		}
+		ownerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
+	}
 	rl := &db.Rule{
 		NodeID:      ruleNodeID,
-		OwnerID:     sql.NullInt64{Int64: u.ID, Valid: true},
+		OwnerID:     ownerID,
 		Name:        name,
 		Proto:       proto,
 		ExitHost:    exitHost,
@@ -1817,7 +1827,7 @@ func (s *Server) apiGetRule(w http.ResponseWriter, r *http.Request) {
 	}
 	item.BillingRate = billingRate
 	jsonOK(w, map[string]any{
-		"rule": item, "hops": hops, "nodes": nodes, "node_by_id": nodeByID,
+		"rule": item, "hops": hops, "nodes": nodes, "node_by_id": nodeByID, "users": s.listUsersBrief(),
 	})
 }
 
@@ -1967,6 +1977,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		NodeID    int64  `json:"node_id"`
+		OwnerID   *int64 `json:"owner_id,omitempty"`
 		Name      string `json:"name"`
 		Proto     string `json:"proto"`
 		Exit      string `json:"exit"`
@@ -2088,6 +2099,19 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	// changes it, mirroring how an empty mode keeps the exit segment.
 	if entryFamily != "" {
 		rl.EntryFamily = entryFamily
+	}
+	// OwnerID can be updated to reassign the rule to a different user (e.g.
+	// for speed limit shaping which keys on the rule owner's grant).
+	if body.OwnerID != nil {
+		if *body.OwnerID > 0 {
+			if _, err := db.GetUserByID(s.DB, *body.OwnerID); err != nil {
+				jsonErr(w, http.StatusBadRequest, "指定的用户不存在")
+				return
+			}
+			rl.OwnerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
+		} else {
+			rl.OwnerID = sql.NullInt64{}
+		}
 	}
 	tx, err := s.DB.Begin()
 	if err != nil {

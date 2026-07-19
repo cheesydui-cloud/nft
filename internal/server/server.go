@@ -482,18 +482,29 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 				if u := users[r.OwnerID.Int64]; u != nil {
 					rule.OwnerName = u.Username
 				}
-				// Shaping follows the hop's logical segment's grant: the entry
-				// segment reads the entry grant, a middle-layer segment reads the
-				// layer grant — the same logical node its quota is tracked on.
-				if gs, ok := shapes[[2]int64{r.OwnerID.Int64, rh.ViaNodeID}]; ok {
-					rate := int(gs.RateLimitMBytes)
+				// Shaping follows the rule owner's grant for the segment this hop
+				// belongs to. The hop's via_node_id is the logical segment node
+				// (e.g. the composite node ID for composite expansions), while the
+				// hop's own node_id is the physical node running the forwarding.
+				// Try via_node_id first, then the physical hop node, then the rule's
+				// entry node — so grants on any layer activate the shared bucket.
+				var shapeGrant *db.GrantShape
+				candidates := [...]int64{rh.ViaNodeID, rh.NodeID, r.NodeID}
+				for _, nid := range candidates {
+					if gs, ok := shapes[[2]int64{r.OwnerID.Int64, nid}]; ok {
+						shapeGrant = &gs
+						break
+					}
+				}
+				if shapeGrant != nil {
+					rate := int(shapeGrant.RateLimitMBytes)
 					if rate <= 0 {
 						if u := users[r.OwnerID.Int64]; u != nil && u.SpeedLimitMBytes > 0 {
 							rate = u.SpeedLimitMBytes
 						}
 					}
 					if rate > 0 {
-						rule.ShapeGroup = gs.GrantID
+						rule.ShapeGroup = shapeGrant.GrantID
 						rule.RateMBytes = rate
 						// Legacy mirror so pre-group agents still shape
 						// (per rule, approximate): MB/s (2^20 bytes) → Mbit/s.

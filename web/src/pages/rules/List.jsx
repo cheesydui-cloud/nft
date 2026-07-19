@@ -192,7 +192,7 @@ export default function RulesList() {
 
       <RuleFormModal
         open={createOpen} onClose={() => setCreateOpen(false)} title="创建规则" submitLabel="创建规则"
-        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI}
+        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} users={users}
         onSubmit={async (form) => {
           const res = await api.post('/rules', ruleFormToPayload(form))
           toast('规则已创建'); setCreateOpen(false)
@@ -201,7 +201,7 @@ export default function RulesList() {
 
       <RuleFormModal
         open={!!editRule} onClose={() => setEditRule(null)} title="编辑规则" submitLabel="保存并重下发"
-        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={editRule ? ruleToForm(editRule) : null} onAddProxyURI={addProxyURI}
+        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={editRule ? ruleToForm(editRule) : null} onAddProxyURI={addProxyURI} users={users}
         onSubmit={async (form) => {
           await api.put(`/rules/${editRule.id}`, ruleFormToPayload(form))
           toast('已保存并重下发'); setEditRule(null); load()

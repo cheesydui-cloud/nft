@@ -343,3 +343,15 @@ func (s *Server) regenerateRuleByID(ruleID int64) ([]int64, error) {
 	}
 	return affected, nil
 }
+
+func (s *Server) listUsersBrief() []map[string]any {
+	all, err := db.ListUsers(s.DB)
+	if err != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(all))
+	for _, u := range all {
+		out = append(out, map[string]any{"id": u.ID, "username": u.Username})
+	}
+	return out
+}
