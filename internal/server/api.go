@@ -2454,6 +2454,9 @@ func (s *Server) apiSetUserQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.WriteAudit(s.DB, u.ID, "user.set_quota_bytes", strconv.FormatInt(id, 10), strconv.FormatInt(body.TrafficQuotaBytes, 10))
+	// Re-evaluate immediately: an already-over-quota user must be cut off
+	// without waiting for the next traffic sample batch.
+	s.enforceUserQuota(id)
 	jsonOK(w, map[string]any{"ok": true})
 }
 
@@ -2617,6 +2620,10 @@ func (s *Server) apiUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db.WriteAudit(s.DB, u.ID, "user.update_profile", strconv.FormatInt(id, 10), "")
+	// Profile may lower the quota or raise billing_rate so an existing used
+	// counter now exceeds the cap — enforce before the fan-out so the next
+	// push already excludes a freshly disabled owner.
+	s.enforceUserQuota(id)
 	if nodes, err := db.DistinctUserNodes(s.DB, id); err == nil {
 		for _, n := range nodes {
 			_ = s.dispatchToNode(n)

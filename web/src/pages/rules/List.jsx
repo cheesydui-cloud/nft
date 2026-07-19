@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
-import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
+import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
-import { RuleFormModal, copyInitial, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
+import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, mergeLanding, landingIndex, rewriteEndpoint, splitEndpoint, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
+import { copyToClipboard } from '../../lib/clipboard'
+import { uriToClashYaml } from '../../lib/yaml-convert'
 
 export default function RulesList() {
   const [data, setData] = useState(null)
@@ -40,6 +42,7 @@ export default function RulesList() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const { user } = useUser()
+  const { copyFmt } = useCopyFmt()
 
   const [localVer, setLocalVer] = useState(0)
   const [nodeRoles, setNodeRoles] = useState({})
@@ -108,7 +111,33 @@ export default function RulesList() {
     try { await api.del(`/rules/${rule.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
   const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
-  const copyRule = (rule) => { setCreateInitial(copyInitial(rule)); setCreateOpen(true) }
+  // Menu "复制" must put the rule's client-facing link on the clipboard.
+  // Prefer the rewritten proxy URI (respecting the topbar URI/YAML toggle);
+  // otherwise fall back to the listen entry address(es).
+  const copyRule = async (rule) => {
+    const parts = []
+    if (rule.relay_uri) {
+      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri) : rule.relay_uri)
+    }
+    if (rule.relay_uri_v6) {
+      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri_v6) : rule.relay_uri_v6)
+    }
+    if (!parts.length) {
+      if (rule.entry) parts.push(rule.entry)
+      if (rule.entry_v6) parts.push(rule.entry_v6)
+    }
+    const text = parts.filter(Boolean).join('\n').trim()
+    if (!text) {
+      toast('该规则没有可复制的链接', 'error')
+      return
+    }
+    try {
+      await copyToClipboard(text)
+      toast('规则链接已复制')
+    } catch {
+      toast('复制失败', 'error')
+    }
+  }
 
   const q = search.trim().toLowerCase()
   let filtered = rules

@@ -801,6 +801,9 @@ func ExpiredUserNodeIDs(d *sql.DB) ([]int64, error) {
 }
 
 func ActiveRuleHopsForPush(d *sql.DB, nodeID int64) ([]*RuleHop, error) {
+	// Billable traffic matches the account UI: used × billing_rate (rate ≤ 0 → 1).
+	// Exclude over-quota owners even if the disable flag has not been written yet,
+	// so a race between counter flush and enforceUserQuota cannot leave rules live.
 	q := `SELECT ` + ruleHopCols + ` FROM rule_hops rh
 		WHERE rh.node_id=?
 		AND NOT EXISTS (
@@ -811,6 +814,12 @@ func ActiveRuleHopsForPush(d *sql.DB, nodeID int64) ([]*RuleHop, error) {
 		  SELECT 1 FROM rules r JOIN users u ON u.id = r.owner_id
 		  WHERE r.id = rh.rule_id
 		  AND (u.disabled = 1 OR (u.expires_at IS NOT NULL AND u.expires_at > 0 AND u.expires_at < strftime('%s','now')))
+		)
+		AND NOT EXISTS (
+		  SELECT 1 FROM rules r JOIN users u ON u.id = r.owner_id
+		  WHERE r.id = rh.rule_id
+		    AND u.traffic_quota_bytes > 0
+		    AND CAST(ROUND(u.traffic_used_bytes * CASE WHEN u.billing_rate > 0 THEN u.billing_rate ELSE 1.0 END) AS INTEGER) >= u.traffic_quota_bytes
 		)
 		AND NOT EXISTS (
 		  SELECT 1 FROM rule_hops rh2

@@ -351,6 +351,55 @@ func TestEnforceUserQuotaLeavesUnderQuotaUserEnabled(t *testing.T) {
 	}
 }
 
+// Billable usage is used×billing_rate — the same figure the account UI shows.
+// A raw counter still under the quota must still trip when the scaled display
+// already exceeds the cap.
+func TestEnforceUserQuotaUsesBillingRate(t *testing.T) {
+	d := openDB(t)
+	s := newServer(t, d)
+	hash, _ := HashPassword("pw")
+	uid, err := db.CreateUser(d, "rated", hash, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// quota 1000, used 600, rate 2 → billable 1200 ≥ quota
+	if _, err := d.Exec(`UPDATE users SET traffic_quota_bytes=?, traffic_used_bytes=?, billing_rate=? WHERE id=?`,
+		1000, 600, 2.0, uid); err != nil {
+		t.Fatal(err)
+	}
+	s.enforceUserQuota(uid)
+	got, err := db.GetUserByID(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Disabled {
+		t.Fatalf("expected disable when used×rate exceeds quota (used=600 rate=2 quota=1000)")
+	}
+}
+
+func TestEnforceUserQuotaBillingRateUnderCapStaysEnabled(t *testing.T) {
+	d := openDB(t)
+	s := newServer(t, d)
+	hash, _ := HashPassword("pw")
+	uid, err := db.CreateUser(d, "rated-ok", hash, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// quota 1000, used 400, rate 2 → billable 800 < quota
+	if _, err := d.Exec(`UPDATE users SET traffic_quota_bytes=?, traffic_used_bytes=?, billing_rate=? WHERE id=?`,
+		1000, 400, 2.0, uid); err != nil {
+		t.Fatal(err)
+	}
+	s.enforceUserQuota(uid)
+	got, err := db.GetUserByID(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Disabled {
+		t.Fatalf("user under billable cap should stay enabled")
+	}
+}
+
 func seedTwoHopRuleDB(t *testing.T, d *sql.DB) (*db.Rule, int64, int64) {
 	t.Helper()
 	n0, _ := db.CreateNode(d, "rule-edge-0", "https://p0", "tok-rule-0")

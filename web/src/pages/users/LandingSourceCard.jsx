@@ -1,10 +1,52 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import { fmtTrafficGB } from '../../lib/fmt'
-import { fetchNodeRoles, nodeRoleKey, ROLE_LANDING, ROLE_DIRECT } from '../../lib/landing'
+import {
+  fetchNodeRoles, nodeRoleKey, applyNodeRole, applyNodeRoleBatch, saveNodeRoles,
+  ROLE_LANDING, ROLE_DIRECT,
+} from '../../lib/landing'
 import { useToast, useBlur } from '../../components/Layout'
 import { Badge, Modal, SensText } from '../../components/ui'
 import { TableBox } from '../../components/page'
+
+const ADMIN_ROLE_OPTS = [
+  [ROLE_LANDING, '落地', 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700'],
+  [ROLE_DIRECT, '直连', 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700'],
+]
+
+function AdminRoleToggle({ state, onChange }) {
+  return (
+    <div className="inline-flex gap-1.5">
+      {ADMIN_ROLE_OPTS.map(([bit, label, cls]) => (
+        <button key={bit} type="button" onClick={() => onChange(bit)}
+          className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border transition-colors ${
+            state & bit ? cls : 'bg-transparent border-line text-ink-mut/40 hover:text-ink-mut'
+          }`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
+  if (!nodes.length) return null
+  return (
+    <div className="flex gap-1.5 text-[12px]">
+      {ADMIN_ROLE_OPTS.map(([bit, label, cls]) => {
+        const allOn = nodes.every(n => roleOf(n) & bit)
+        return (
+          <button key={bit} type="button" onClick={() => onToggle(bit, !allOn)}
+            className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border transition-colors ${
+              allOn ? cls : 'bg-transparent border-line text-ink-mut/40 hover:text-ink-mut'
+            }`}>
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp }) {
   const blurred = blurredProp ?? useBlur()
@@ -65,13 +107,48 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
     } catch (err) { toast(err.message, 'error') }
   }
 
+  const handleSetRole = async (n, bit) => {
+    const next = applyNodeRole(roles, n, bit)
+    setRoles(next)
+    try {
+      await saveNodeRoles(next)
+    } catch (err) {
+      toast(err.message || '保存用途失败', 'error')
+      fetchNodeRoles().then(setRoles).catch(() => {})
+    }
+  }
+  const handleBulkRole = async (nodesList, bit, on) => {
+    const next = applyNodeRoleBatch(roles, nodesList, bit, on)
+    setRoles(next)
+    try {
+      await saveNodeRoles(next)
+    } catch (err) {
+      toast(err.message || '保存用途失败', 'error')
+      fetchNodeRoles().then(setRoles).catch(() => {})
+    }
+  }
+  const toggleSel = (i) => setSel(s => {
+    const next = new Set(s)
+    if (next.has(i)) next.delete(i); else next.add(i)
+    return next
+  })
+  const toggleSelAll = () => setSel(s =>
+    s.size === preview.length ? new Set() : new Set(preview.map((_, i) => i)))
+
   const roleOf = (n) => { const key = nodeRoleKey(n); return key ? (roles[key] || 0) : 0 }
   const exitByAddr = Object.fromEntries(exits.map(e => [`${e.host}:${e.port}`, e]))
   const residualExits = exits.filter(e => !e.present)
-  const landingCount = preview.filter(n => roleOf(n) & 1).length
-  const directCount = preview.filter(n => roleOf(n) & 2).length
+  const landingCount = preview.filter(n => roleOf(n) & ROLE_LANDING).length
+  const directCount = preview.filter(n => roleOf(n) & ROLE_DIRECT).length
   const unconfiguredCount = preview.filter(n => !roleOf(n)).length
-  const showQuotaFor = (n) => exitByAddr[`${n.host}:${n.port}`] || null
+  // Keep quota UI visible when a ledger is already enforcing, even if the
+  // landing mark is currently off.
+  const showQuotaFor = (n, st) => {
+    const ex = exitByAddr[`${n.host}:${n.port}`]
+    if (!ex) return null
+    return (st & ROLE_LANDING) || ex.quota_bytes > 0 || ex.used_bytes > 0 ? ex : null
+  }
+  const selectedNodes = preview.filter((_, i) => sel.has(i))
 
   return (
     <div className="card mb-5 soft-panel">
@@ -108,17 +185,23 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                 已分配节点
                 <span className="normal-case font-normal ml-2">{landingCount} 落地 · {directCount} 直连 · {unconfiguredCount} 未配置</span>
               </div>
+              <AdminRoleBulkToggle nodes={selectedNodes} roleOf={roleOf}
+                onToggle={(bit, on) => handleBulkRole(selectedNodes, bit, on)} />
             </div>
             <TableBox>
             <table className="tbl">
               <thead><tr>
+                <th className="w-8"><input type="checkbox" className="accent-blue-600"
+                  checked={preview.length > 0 && sel.size === preview.length} onChange={toggleSelAll} /></th>
                 <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th><th className="text-right">操作</th></tr></thead>
               <tbody>
                 {preview.map((n, i) => {
-                  const ex = showQuotaFor(n)
+                  const st = roleOf(n)
+                  const ex = showQuotaFor(n, st)
                   const exceeded = ex && ex.quota_bytes > 0 && ex.used_bytes >= ex.quota_bytes
                   return (
                     <tr key={i}>
+                      <td><input type="checkbox" className="accent-blue-600" checked={sel.has(i)} onChange={() => toggleSel(i)} /></td>
                       <td><span className="font-semibold">{n.name}</span></td>
                       <td className="font-mono text-xs text-ink-soft">{n.protocol}</td>
                       <td className="font-mono text-xs"><SensText blurred={blurred}>{n.host}:{n.port}</SensText></td>
@@ -139,7 +222,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                         <ExitExpiresForm userId={userId} host={n.host} port={n.port} exit={exitByAddr[`${n.host}:${n.port}`]} onDone={reloadLanding} />
                       </td>
                       <td className="text-right">
-                        <span className="text-xs text-ink-mut">—</span>
+                        <AdminRoleToggle state={st} onChange={bit => handleSetRole(n, bit)} />
                       </td>
                       <td className="text-right">
                         <button onClick={() => deleteExit({ host: n.host, port: n.port })} className="text-red-600 text-xs font-semibold">删除</button>
@@ -151,6 +234,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                   const exceeded = ex.quota_bytes > 0 && ex.used_bytes >= ex.quota_bytes
                   return (
                     <tr key={`residual-${i}`} className="opacity-50">
+                      <td></td>
                       <td>
                         <span className="font-semibold">{ex.name}</span>
                         <Badge color="gray">已不在来源</Badge>

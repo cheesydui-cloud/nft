@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
-import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
+import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
-import { RuleFormModal, copyInitial, ruleFormToPayload } from '../../components/RuleFormModal'
+import { RuleFormModal, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
+import { copyToClipboard } from '../../lib/clipboard'
+import { uriToClashYaml } from '../../lib/yaml-convert'
 
 export default function MyRules() {
   const [data, setData] = useState(null)
@@ -21,6 +23,7 @@ export default function MyRules() {
   const blurred = useBlur()
   const confirm = useConfirm()
   const { user } = useUser()
+  const { copyFmt } = useCopyFmt()
 
   // The user's own proxy URIs live only in localStorage (never sent to the
   // server). Parse them here to both feed the create picker and resolve a
@@ -83,7 +86,30 @@ export default function MyRules() {
     try { await api.del(`/my/rules/${rule.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
   const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
-  const copyRule = (rule) => { setCreateInitial(copyInitial(rule)); setCreateOpen(true) }
+  const copyRule = async (rule) => {
+    const parts = []
+    if (rule.relay_uri) {
+      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri) : rule.relay_uri)
+    }
+    if (rule.relay_uri_v6) {
+      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri_v6) : rule.relay_uri_v6)
+    }
+    if (!parts.length) {
+      if (rule.entry) parts.push(rule.entry)
+      if (rule.entry_v6) parts.push(rule.entry_v6)
+    }
+    const text = parts.filter(Boolean).join('\n').trim()
+    if (!text) {
+      toast('该规则没有可复制的链接', 'error')
+      return
+    }
+    try {
+      await copyToClipboard(text)
+      toast('规则链接已复制')
+    } catch {
+      toast('复制失败', 'error')
+    }
+  }
 
   const q = search.trim().toLowerCase()
   const enriched = rules.map(enrich)

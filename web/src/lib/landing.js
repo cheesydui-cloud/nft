@@ -109,12 +109,20 @@ export async function saveNodeRoles(roles) {
     const bits = roleBits(v)
     if (bits) clean[k] = bits
   }
-  await fetch('/api/node-roles', {
+  const res = await fetch('/api/node-roles', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ roles: clean }),
   })
+  if (!res.ok) {
+    let msg = '保存用途失败'
+    try {
+      const d = await res.json()
+      if (d?.error) msg = d.error
+    } catch {}
+    throw new Error(msg)
+  }
   return clean
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -263,23 +264,43 @@ func (s *Server) landingSyncPass(includeManualOnly bool) {
 	}
 }
 
+// userBillableTraffic returns the traffic volume the panel shows and enforces
+// against the user's quota: raw used bytes scaled by billing_rate. Rate ≤ 0 is
+// treated as 1 so a misconfigured profile never freezes the counter at 0.
+func userBillableTraffic(u *db.User) int64 {
+	if u == nil {
+		return 0
+	}
+	rate := u.BillingRate
+	if rate <= 0 {
+		rate = 1
+	}
+	return int64(math.Round(float64(u.TrafficUsedBytes) * rate))
+}
+
 // enforceUserQuota disables a user that has reached its traffic quota and
 // re-pushes every node it had rule hops on so ActiveRuleHopsForPush (which
 // excludes disabled users) removes them from the kernel. Quota 0 = unlimited.
+//
+// Enforcement uses the same billable figure the account UI shows (used ×
+// billing_rate), so a user who already appears over-quota cannot keep using
+// the service while the raw counter alone is still under the cap.
 func (s *Server) enforceUserQuota(userID int64) {
 	u, err := db.GetUserByID(s.DB, userID)
 	if err != nil {
 		log.Printf("quota: load user %d: %v", userID, err)
 		return
 	}
-	if u.Disabled || u.TrafficQuotaBytes <= 0 || u.TrafficUsedBytes < u.TrafficQuotaBytes {
+	billable := userBillableTraffic(u)
+	if u.Disabled || u.TrafficQuotaBytes <= 0 || billable < u.TrafficQuotaBytes {
 		return
 	}
 	if err := db.SetUserDisabled(s.DB, userID, true, "流量超额"); err != nil {
 		log.Printf("quota: disable user %d: %v", userID, err)
 		return
 	}
-	log.Printf("user %d disabled: traffic quota reached (%d/%d bytes)", userID, u.TrafficUsedBytes, u.TrafficQuotaBytes)
+	log.Printf("user %d disabled: traffic quota reached (billable %d = used %d × rate %g / quota %d bytes)",
+		userID, billable, u.TrafficUsedBytes, u.BillingRate, u.TrafficQuotaBytes)
 	nodes, err := db.DistinctUserNodes(s.DB, userID)
 	if err != nil {
 		log.Printf("quota: user %d nodes: %v", userID, err)
