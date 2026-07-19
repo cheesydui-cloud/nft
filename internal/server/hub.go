@@ -854,18 +854,18 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			log.Printf("hub: node %d counters tx begin: %v", nodeID, err)
 		} else {
 			ok := true
-				if rawAdd > 0 {
-					if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
-						log.Printf("hub: node %d raw traffic add: %v", nodeID, err)
+			if rawAdd > 0 {
+				if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
+					log.Printf("hub: node %d raw traffic add: %v", nodeID, err)
+					ok = false
+				}
+				if ok {
+					if err := db.AddNodeDailyRawTraffic(tx, nodeID, rawAdd); err != nil {
+						log.Printf("hub: node %d daily raw traffic add: %v", nodeID, err)
 						ok = false
 					}
-					if ok {
-						if err := db.AddNodeDailyRawTraffic(tx, nodeID, rawAdd); err != nil {
-							log.Printf("hub: node %d daily raw traffic add: %v", nodeID, err)
-							ok = false
-						}
-					}
 				}
+			}
 			for id, w := range hopWrites {
 				if !ok {
 					break
@@ -947,11 +947,20 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 		// view can filter it. An unmatched hop (rule deleted mid-batch) or an
 		// ownerless admin rule leaves ownerID 0 — it still counts toward the
 		// node total, just not toward any user's share.
-		var ownerID int64
+		//
+		// ruleID is set on every matched hop so multi-hop / composite chains
+		// still produce a per-rule rate even if only a middle hop is currently
+		// reporting. The rule snapshot prefers the entry hop (position 0)
+		// when present and falls back to any hop of that rule otherwise —
+		// never summing every hop of the same chain (that would N× the rate).
+		var ownerID, ruleID int64
+		var hopPos = -1
 		if rh, ok := hopMap[s.Proto+"/"+strconv.Itoa(s.ListenPort)]; ok {
 			if r := ruleMap[rh.RuleID]; r != nil && r.OwnerID.Valid {
 				ownerID = r.OwnerID.Int64
 			}
+			ruleID = rh.RuleID
+			hopPos = rh.Position
 		}
 		deltas = append(deltas, counterDelta{
 			proto:         s.Proto,
@@ -959,6 +968,8 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			bytesUp:       s.BytesUp,
 			bytesDown:     s.BytesDown,
 			ownerID:       ownerID,
+			ruleID:        ruleID,
+			hopPos:        hopPos,
 		})
 	}
 	h.speedCache.update(nodeID, deltas)

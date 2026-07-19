@@ -1578,44 +1578,44 @@ func (s *Server) apiListRules(w http.ResponseWriter, r *http.Request) {
 		byID[u.ID] = u
 		userList = append(userList, map[string]any{"id": u.ID, "username": u.Username})
 	}
-		// Per-owner landing index, built once per owner from the materialized landing
-		// set — the same table that drives metering, so the badge matches billing.
-		// withURI=true so admin list "复制" can put the user's proxy link on the
-		// clipboard without relying on the admin's browser-local URIs.
-		idxByOwner := map[int64]map[string]landing.Node{}
-		ownerIndex := func(ownerID int64) map[string]landing.Node {
-			if idx, ok := idxByOwner[ownerID]; ok {
-				return idx
-			}
-			idx := s.landingIndexFromDB(ownerID)
-			idxByOwner[ownerID] = idx
+	// Per-owner landing index, built once per owner from the materialized landing
+	// set — the same table that drives metering, so the badge matches billing.
+	// withURI=true so admin list "复制" can put the user's proxy link on the
+	// clipboard without relying on the admin's browser-local URIs.
+	idxByOwner := map[int64]map[string]landing.Node{}
+	ownerIndex := func(ownerID int64) map[string]landing.Node {
+		if idx, ok := idxByOwner[ownerID]; ok {
 			return idx
 		}
-		views := make([]ruleListItem, 0, len(rules))
-		for _, rl := range rules {
-			oname := ""
-			var idx map[string]landing.Node
-			if rl.OwnerID.Valid {
-				if u := byID[rl.OwnerID.Int64]; u != nil {
-					oname = u.Username
-				}
-				idx = ownerIndex(rl.OwnerID.Int64)
+		idx := s.landingIndexFromDB(ownerID)
+		idxByOwner[ownerID] = idx
+		return idx
+	}
+	views := make([]ruleListItem, 0, len(rules))
+	for _, rl := range rules {
+		oname := ""
+		var idx map[string]landing.Node
+		if rl.OwnerID.Valid {
+			if u := byID[rl.OwnerID.Int64]; u != nil {
+				oname = u.Username
 			}
-			item := s.buildRuleListItem(rl, oname)
-			item.classifyExit(idx, true)
-			if n := nodeByID[rl.NodeID]; n != nil {
-				item.RateMultiplier = n.RateMultiplier
-			} else {
-				item.RateMultiplier = 1
-			}
-			item.BillingRate = 1
-			if rl.OwnerID.Valid {
-				if u := byID[rl.OwnerID.Int64]; u != nil && u.BillingRate > 0 {
-					item.BillingRate = u.BillingRate
-				}
-			}
-			views = append(views, item)
+			idx = ownerIndex(rl.OwnerID.Int64)
 		}
+		item := s.buildRuleListItem(rl, oname)
+		item.classifyExit(idx, true)
+		if n := nodeByID[rl.NodeID]; n != nil {
+			item.RateMultiplier = n.RateMultiplier
+		} else {
+			item.RateMultiplier = 1
+		}
+		item.BillingRate = 1
+		if rl.OwnerID.Valid {
+			if u := byID[rl.OwnerID.Int64]; u != nil && u.BillingRate > 0 {
+				item.BillingRate = u.BillingRate
+			}
+		}
+		views = append(views, item)
+	}
 	s.fillRuleChains(views, nodeByID)
 	jsonOK(w, map[string]any{"rules": views, "nodes": nodes, "users": userList})
 }
@@ -2547,15 +2547,15 @@ func (s *Server) apiUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
-		var body struct {
-			ExpiresAt         string  `json:"expires_at"`
-			MaxForwards       int     `json:"max_forwards"`
-			TrafficQuotaGB    float64 `json:"traffic_quota_gb"`
-			TrafficResetDays  int     `json:"traffic_reset_days"`
-			SpeedLimitMBytes  int     `json:"speed_limit_mbytes"`
-			AdminNote         string  `json:"admin_note"`
-			BillingRate       float64 `json:"billing_rate"`
-		}
+	var body struct {
+		ExpiresAt        string  `json:"expires_at"`
+		MaxForwards      int     `json:"max_forwards"`
+		TrafficQuotaGB   float64 `json:"traffic_quota_gb"`
+		TrafficResetDays int     `json:"traffic_reset_days"`
+		SpeedLimitMBytes int     `json:"speed_limit_mbytes"`
+		AdminNote        string  `json:"admin_note"`
+		BillingRate      float64 `json:"billing_rate"`
+	}
 
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -2569,40 +2569,40 @@ func (s *Server) apiUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "流量配额无效")
 		return
 	}
-		if body.TrafficResetDays < 0 {
-			jsonErr(w, http.StatusBadRequest, "天数无效")
+	if body.TrafficResetDays < 0 {
+		jsonErr(w, http.StatusBadRequest, "天数无效")
+		return
+	}
+	if body.SpeedLimitMBytes < 0 {
+		jsonErr(w, http.StatusBadRequest, "限速不能为负")
+		return
+	}
+
+	var expiresAt int64
+	raw := strings.TrimSpace(body.ExpiresAt)
+	if raw != "" {
+		t, err := time.Parse("2006-01-02", raw)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "日期格式无效（需 YYYY-MM-DD）")
 			return
 		}
-		if body.SpeedLimitMBytes < 0 {
-			jsonErr(w, http.StatusBadRequest, "限速不能为负")
-			return
-		}
+		expiresAt = t.Unix()
+	}
 
-		var expiresAt int64
-		raw := strings.TrimSpace(body.ExpiresAt)
-		if raw != "" {
-			t, err := time.Parse("2006-01-02", raw)
-			if err != nil {
-				jsonErr(w, http.StatusBadRequest, "日期格式无效（需 YYYY-MM-DD）")
-				return
-			}
-			expiresAt = t.Unix()
-		}
+	trafficQuotaBytes := int64(body.TrafficQuotaGB * 1073741824)
+	if trafficQuotaBytes < 0 {
+		trafficQuotaBytes = 0
+	}
 
-		trafficQuotaBytes := int64(body.TrafficQuotaGB * 1073741824)
-		if trafficQuotaBytes < 0 {
-			trafficQuotaBytes = 0
-		}
-
-		billingRate := body.BillingRate
-		if billingRate <= 0 {
-			billingRate = 1.0
-		}
-		if _, err := s.DB.Exec(
-			`UPDATE users SET expires_at=?, max_forwards=?, traffic_quota_bytes=?, traffic_reset_days=?, speed_limit_mbytes=?, admin_note=?, billing_rate=? WHERE id=?`,
-			expiresAt, body.MaxForwards, trafficQuotaBytes, body.TrafficResetDays, body.SpeedLimitMBytes, strings.TrimSpace(body.AdminNote), billingRate, id,
-		); err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
+	billingRate := body.BillingRate
+	if billingRate <= 0 {
+		billingRate = 1.0
+	}
+	if _, err := s.DB.Exec(
+		`UPDATE users SET expires_at=?, max_forwards=?, traffic_quota_bytes=?, traffic_reset_days=?, speed_limit_mbytes=?, admin_note=?, billing_rate=? WHERE id=?`,
+		expiresAt, body.MaxForwards, trafficQuotaBytes, body.TrafficResetDays, body.SpeedLimitMBytes, strings.TrimSpace(body.AdminNote), billingRate, id,
+	); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -3219,7 +3219,9 @@ func (s *Server) apiSetAdminNote(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
-// apiSetUserGroup assigns a free-form group label to a user (empty = ungrouped).
+// apiSetUserGroup moves a user into a folder. Prefer group_id; group_name is
+// accepted for legacy clients (creates the folder if needed). group_id=0 or
+// empty group_name ungroups.
 func (s *Server) apiSetUserGroup(w http.ResponseWriter, r *http.Request) {
 	actor := userFromCtx(r.Context())
 	id, err := urlParamInt64(r, "id")
@@ -3228,25 +3230,36 @@ func (s *Server) apiSetUserGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		GroupID   *int64 `json:"group_id"`
 		GroupName string `json:"group_name"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	if err := db.SetUserGroupName(s.DB, id, strings.TrimSpace(body.GroupName)); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
+	var folderID int64
+	if body.GroupID != nil {
+		folderID = *body.GroupID
+		if err := db.SetUserFolder(s.DB, id, folderID); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		if err := db.SetUserGroupName(s.DB, id, strings.TrimSpace(body.GroupName)); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
-	db.WriteAudit(s.DB, actor.ID, "user.set_group", strconv.FormatInt(id, 10), strings.TrimSpace(body.GroupName))
+	db.WriteAudit(s.DB, actor.ID, "user.set_group", strconv.FormatInt(id, 10), strconv.FormatInt(folderID, 10))
 	jsonOK(w, map[string]any{"ok": true})
 }
 
-// apiBatchSetUserGroup assigns the same group label to many users.
+// apiBatchSetUserGroup moves many users into a folder (group_id preferred).
 func (s *Server) apiBatchSetUserGroup(w http.ResponseWriter, r *http.Request) {
 	actor := userFromCtx(r.Context())
 	var body struct {
 		IDs       []int64 `json:"ids"`
+		GroupID   *int64  `json:"group_id"`
 		GroupName string  `json:"group_name"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -3257,12 +3270,88 @@ func (s *Server) apiBatchSetUserGroup(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "no users selected")
 		return
 	}
-	if err := db.SetUserGroupNamesBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
+	if body.GroupID != nil {
+		if err := db.SetUsersFolderBatch(s.DB, body.IDs, *body.GroupID); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if err := db.SetUserGroupNamesBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user.batch_set_group", strconv.Itoa(len(body.IDs)), "")
+	jsonOK(w, map[string]any{"ok": true, "count": len(body.IDs)})
+}
+
+// --- User folders ---
+
+func (s *Server) apiListUserFolders(w http.ResponseWriter, r *http.Request) {
+	list, err := db.ListUserFolders(s.DB)
+	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	db.WriteAudit(s.DB, actor.ID, "user.batch_set_group", strconv.Itoa(len(body.IDs)), strings.TrimSpace(body.GroupName))
-	jsonOK(w, map[string]any{"ok": true, "count": len(body.IDs)})
+	if list == nil {
+		list = []*db.Folder{}
+	}
+	var ungrouped int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE group_id=0`).Scan(&ungrouped)
+	jsonOK(w, map[string]any{"folders": list, "ungrouped": ungrouped})
+}
+
+func (s *Server) apiCreateUserFolder(w http.ResponseWriter, r *http.Request) {
+	actor := userFromCtx(r.Context())
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	f, err := db.CreateUserFolder(s.DB, body.Name)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user_folder.create", strconv.FormatInt(f.ID, 10), f.Name)
+	jsonOK(w, f)
+}
+
+func (s *Server) apiRenameUserFolder(w http.ResponseWriter, r *http.Request) {
+	actor := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	if err := db.RenameUserFolder(s.DB, id, body.Name); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user_folder.rename", strconv.FormatInt(id, 10), strings.TrimSpace(body.Name))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (s *Server) apiDeleteUserFolder(w http.ResponseWriter, r *http.Request) {
+	actor := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := db.DeleteUserFolder(s.DB, id); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	db.WriteAudit(s.DB, actor.ID, "user_folder.delete", strconv.FormatInt(id, 10), "")
+	jsonOK(w, map[string]any{"ok": true})
 }
 
 // --- Helpers ---
@@ -3308,6 +3397,7 @@ func apiUserFullView(u *db.User) map[string]any {
 	m["billing_rate"] = u.BillingRate
 	m["speed_limit_mbytes"] = u.SpeedLimitMBytes
 	m["group_name"] = u.GroupName
+	m["group_id"] = u.GroupID
 	return m
 }
 

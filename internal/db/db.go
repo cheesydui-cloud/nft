@@ -58,6 +58,11 @@ func Open(path string) (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
+	// Promote legacy free-text group_name labels into folder rows + group_id.
+	if err := MigrateLegacyGroupNames(d); err != nil {
+		d.Close()
+		return nil, err
+	}
 	return d, nil
 }
 
@@ -105,7 +110,7 @@ func stripLegacyExitNameSuffixes(d *sql.DB) error {
 
 // hashLegacyAPITokens converts pre-0025 plaintext api_tokens rows to the
 // hash-at-rest form in place, preserving each token so existing integrations
-// keep working. token_prefix='' marks a not-yet-migrated row; after conversion
+// keep working. token_prefix=” marks a not-yet-migrated row; after conversion
 // the prefix is set, so this is idempotent and a no-op on already-hashed DBs.
 // SHA-256 can't be computed in modernc SQLite, so the backfill runs in Go.
 func hashLegacyAPITokens(d *sql.DB) error {
@@ -139,7 +144,6 @@ func hashLegacyAPITokens(d *sql.DB) error {
 	}
 	return nil
 }
-
 
 func migrate(d *sql.DB) error {
 	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {

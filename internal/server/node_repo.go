@@ -33,6 +33,7 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		Remark    string `json:"remark"`
 		ExpiresAt int64  `json:"expires_at"`
 		GroupName string `json:"group_name"`
+		GroupID   int64  `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -42,7 +43,14 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, strings.TrimSpace(body.GroupName))
+	// group_id wins when provided; otherwise resolve from group_name.
+	groupName := strings.TrimSpace(body.GroupName)
+	if body.GroupID > 0 {
+		if f, err := db.GetNodeRepoFolder(s.DB, body.GroupID); err == nil {
+			groupName = f.Name
+		}
+	}
+	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -67,6 +75,7 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		Remark    string `json:"remark"`
 		ExpiresAt int64  `json:"expires_at"`
 		GroupName string `json:"group_name"`
+		GroupID   int64  `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -76,17 +85,28 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, strings.TrimSpace(body.GroupName)); err != nil {
+	groupName := strings.TrimSpace(body.GroupName)
+	if body.GroupID > 0 {
+		if f, err := db.GetNodeRepoFolder(s.DB, body.GroupID); err == nil {
+			groupName = f.Name
+		}
+	} else if body.GroupID == 0 && body.GroupName == "" {
+		// Explicit ungroup when client sends group_id:0 with empty name.
+		groupName = ""
+	}
+	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	jsonOK(w, map[string]any{"ok": true})
 }
 
-// apiBatchSetNodeRepoGroup assigns a group label to many repo entries.
+// apiBatchSetNodeRepoGroup moves many repo entries into a folder.
+// Prefer group_id; group_name creates/ensures a folder for legacy clients.
 func (s *Server) apiBatchSetNodeRepoGroup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs       []int64 `json:"ids"`
+		GroupID   *int64  `json:"group_id"`
 		GroupName string  `json:"group_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -97,11 +117,83 @@ func (s *Server) apiBatchSetNodeRepoGroup(w http.ResponseWriter, r *http.Request
 		jsonErr(w, http.StatusBadRequest, "no nodes selected")
 		return
 	}
-	if err := db.SetNodeRepoGroupsBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
+	if body.GroupID != nil {
+		if err := db.SetNodeRepoFoldersBatch(s.DB, body.IDs, *body.GroupID); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if err := db.SetNodeRepoGroupsBatch(s.DB, body.IDs, strings.TrimSpace(body.GroupName)); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	jsonOK(w, map[string]any{"ok": true, "count": len(body.IDs)})
+}
+
+// --- Node-repo folders ---
+
+func (s *Server) apiListNodeRepoFolders(w http.ResponseWriter, r *http.Request) {
+	list, err := db.ListNodeRepoFolders(s.DB)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if list == nil {
+		list = []*db.Folder{}
+	}
+	var ungrouped int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM node_repo WHERE group_id=0`).Scan(&ungrouped)
+	jsonOK(w, map[string]any{"folders": list, "ungrouped": ungrouped})
+}
+
+func (s *Server) apiCreateNodeRepoFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	f, err := db.CreateNodeRepoFolder(s.DB, body.Name)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonOK(w, f)
+}
+
+func (s *Server) apiRenameNodeRepoFolder(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := db.RenameNodeRepoFolder(s.DB, id, body.Name); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (s *Server) apiDeleteNodeRepoFolder(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := db.DeleteNodeRepoFolder(s.DB, id); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
 }
 
 // apiDeleteNodeRepoEntry deletes a node from the repository.

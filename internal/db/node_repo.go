@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // NodeRepoEntry is one node in the admin-maintained node repository.
 type NodeRepoEntry struct {
@@ -13,15 +16,17 @@ type NodeRepoEntry struct {
 	Remark    string `json:"remark"`
 	ExpiresAt int64  `json:"expires_at"`
 	CreatedAt int64  `json:"created_at"`
-	// GroupName is a free-form admin label for filtering the pool; empty = ungrouped.
+	// GroupID is the folder this entry sits in (0 = ungrouped). GroupName is a
+	// denormalized label kept in sync for display and legacy clients.
+	GroupID   int64  `json:"group_id"`
 	GroupName string `json:"group_name"`
 }
 
-const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name`
+const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id`
 
 func scanNodeRepo(rows *sql.Rows) (NodeRepoEntry, error) {
 	var n NodeRepoEntry
-	err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName)
+	err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID)
 	return n, err
 }
 
@@ -44,10 +49,20 @@ func ListNodeRepo(d *sql.DB) ([]NodeRepoEntry, error) {
 }
 
 // CreateNodeRepoEntry inserts a new node into the repository.
+// groupName, when non-empty, creates/ensures a folder and assigns group_id.
 func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) (NodeRepoEntry, error) {
-	n := NodeRepoEntry{Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark, ExpiresAt: expiresAt, CreatedAt: now(), GroupName: groupName}
-	res, err := d.Exec(`INSERT INTO node_repo (name, protocol, host, port, uri, remark, expires_at, created_at, group_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt, n.GroupName)
+	var groupID int64
+	groupName = strings.TrimSpace(groupName)
+	if groupName != "" {
+		f, err := EnsureNodeRepoFolder(d, groupName)
+		if err != nil {
+			return NodeRepoEntry{}, err
+		}
+		groupID = f.ID
+	}
+	n := NodeRepoEntry{Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark, ExpiresAt: expiresAt, CreatedAt: now(), GroupName: groupName, GroupID: groupID}
+	res, err := d.Exec(`INSERT INTO node_repo (name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt, n.GroupName, n.GroupID)
 	if err != nil {
 		return n, err
 	}
@@ -57,34 +72,44 @@ func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, 
 
 // UpdateNodeRepoEntry updates an existing node in the repository.
 func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) error {
-	_, err := d.Exec(`UPDATE node_repo SET name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=?, group_name=? WHERE id=?`,
-		name, protocol, host, port, uri, remark, expiresAt, groupName, id)
+	var groupID int64
+	groupName = strings.TrimSpace(groupName)
+	if groupName != "" {
+		f, err := EnsureNodeRepoFolder(d, groupName)
+		if err != nil {
+			return err
+		}
+		groupID = f.ID
+	}
+	_, err := d.Exec(`UPDATE node_repo SET name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=?, group_name=?, group_id=? WHERE id=?`,
+		name, protocol, host, port, uri, remark, expiresAt, groupName, groupID, id)
 	return err
 }
 
 // SetNodeRepoGroup assigns a free-form group label to a repo entry (empty = ungrouped).
 func SetNodeRepoGroup(d *sql.DB, id int64, groupName string) error {
-	_, err := d.Exec(`UPDATE node_repo SET group_name=? WHERE id=?`, groupName, id)
-	return err
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return SetNodeRepoFolder(d, id, 0)
+	}
+	f, err := EnsureNodeRepoFolder(d, groupName)
+	if err != nil {
+		return err
+	}
+	return SetNodeRepoFolder(d, id, f.ID)
 }
 
 // SetNodeRepoGroupsBatch assigns the same group label to many repo entries.
 func SetNodeRepoGroupsBatch(d *sql.DB, ids []int64, groupName string) error {
-	if len(ids) == 0 {
-		return nil
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return SetNodeRepoFoldersBatch(d, ids, 0)
 	}
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, groupName)
-	ph := ""
-	for i, id := range ids {
-		if i > 0 {
-			ph += ","
-		}
-		ph += "?"
-		args = append(args, id)
+	f, err := EnsureNodeRepoFolder(d, groupName)
+	if err != nil {
+		return err
 	}
-	_, err := d.Exec(`UPDATE node_repo SET group_name=? WHERE id IN (`+ph+`)`, args...)
-	return err
+	return SetNodeRepoFoldersBatch(d, ids, f.ID)
 }
 
 // DeleteNodeRepoEntry removes a node from the repository by ID.

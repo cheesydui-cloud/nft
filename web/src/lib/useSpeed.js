@@ -13,74 +13,132 @@ function sameSpeeds(a, b) {
   return true
 }
 
+// Shared WS so node-level and rule-level consumers share one connection.
+let shared = null
+
+function ensureShared() {
+  if (shared) return shared
+  const listeners = new Set()
+  let speeds = {}
+  let ruleSpeeds = {}
+  let ws = null
+  let reconnectTimer = null
+  let delay = 3000
+  const initialDelay = 3000
+  const maxDelay = 30000
+  let visible = typeof document !== 'undefined' ? !document.hidden : true
+  let refCount = 0
+
+  function publish() {
+    for (const fn of listeners) fn({ speeds, ruleSpeeds })
+  }
+
+  function scheduleReconnect() {
+    if (refCount === 0) return
+    reconnectTimer = setTimeout(() => {
+      delay = Math.min(delay * 2, maxDelay)
+      connect()
+    }, visible ? delay : maxDelay)
+  }
+
+  function connect() {
+    if (refCount === 0) return
+    try {
+      if (ws) {
+        ws.onclose = null
+        ws.onerror = null
+        ws.onmessage = null
+        try { ws.close() } catch {}
+      }
+    } catch {}
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    ws = new WebSocket(proto + '//' + location.host + '/api/ws/speed')
+
+    ws.onopen = () => { delay = initialDelay }
+
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        let changed = false
+        if (data.speeds) {
+          const map = {}
+          for (const s of data.speeds) map[s.node_id] = s
+          if (!sameSpeeds(speeds, map)) {
+            speeds = map
+            changed = true
+          }
+        }
+        if (data.rule_speeds) {
+          const map = {}
+          for (const s of data.rule_speeds) map[s.rule_id] = s
+          if (!sameSpeeds(ruleSpeeds, map)) {
+            ruleSpeeds = map
+            changed = true
+          }
+        }
+        if (changed) publish()
+      } catch {}
+    }
+
+    ws.onclose = () => scheduleReconnect()
+    ws.onerror = () => { try { ws.close() } catch {} }
+  }
+
+  function visibilityHandler() {
+    visible = !document.hidden
+    if (visible && reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+      connect()
+    }
+  }
+
+  shared = {
+    subscribe(fn) {
+      listeners.add(fn)
+      refCount++
+      if (refCount === 1) {
+        if (typeof document !== 'undefined') {
+          document.addEventListener('visibilitychange', visibilityHandler)
+        }
+        connect()
+      }
+      fn({ speeds, ruleSpeeds })
+      return () => {
+        listeners.delete(fn)
+        refCount--
+        if (refCount === 0) {
+          if (typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', visibilityHandler)
+          }
+          clearTimeout(reconnectTimer)
+          reconnectTimer = null
+          if (ws) {
+            try { ws.close() } catch {}
+            ws = null
+          }
+          speeds = {}
+          ruleSpeeds = {}
+          shared = null
+        }
+      }
+    },
+  }
+  return shared
+}
+
 export function useSpeed() {
   const [speeds, setSpeeds] = useState({})
-  const wsRef = useRef(null)
-  const speedsRef = useRef({})
-
-  useEffect(() => {
-    let unmounted = false
-    let reconnectTimer = null
-    let delay = 3000
-    const initialDelay = 3000
-    const maxDelay = 30000
-    let visible = !document.hidden
-
-    function scheduleReconnect() {
-      if (unmounted) return
-      reconnectTimer = setTimeout(() => {
-        delay = Math.min(delay * 2, maxDelay)
-        connect()
-      }, visible ? delay : maxDelay)
-    }
-
-    function connect() {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const ws = new WebSocket(proto + '//' + location.host + '/api/ws/speed')
-      wsRef.current = ws
-
-      ws.onopen = () => { delay = initialDelay }
-
-      ws.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          if (data.speeds) {
-            const map = {}
-            for (const s of data.speeds) map[s.node_id] = s
-            if (!sameSpeeds(speedsRef.current, map)) {
-              speedsRef.current = map
-              setSpeeds(map)
-            }
-          }
-        } catch {}
-      }
-
-      ws.onclose = () => scheduleReconnect()
-
-      ws.onerror = () => ws.close()
-    }
-
-    const visibilityHandler = () => {
-      visible = !document.hidden
-      if (visible && reconnectTimer) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
-        connect()
-      }
-    }
-    document.addEventListener('visibilitychange', visibilityHandler)
-
-    connect()
-
-    return () => {
-      unmounted = true
-      document.removeEventListener('visibilitychange', visibilityHandler)
-      clearTimeout(reconnectTimer)
-      if (wsRef.current) wsRef.current.close()
-    }
-  }, [])
-
+  useEffect(() => ensureShared().subscribe(({ speeds: s }) => setSpeeds(s)), [])
   return speeds
+}
+
+// Per-rule live rates keyed by rule_id. Prefer this on any rules table; the
+// node-level map misses composite rules (logical node_id never reports).
+export function useRuleSpeed() {
+  const [ruleSpeeds, setRuleSpeeds] = useState({})
+  useEffect(() => ensureShared().subscribe(({ ruleSpeeds: s }) => setRuleSpeeds(s)), [])
+  return ruleSpeeds
 }
 
 export function fmtSpeed(bps) {

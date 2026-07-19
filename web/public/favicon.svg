@@ -5,10 +5,10 @@
       <stop offset="100%" stop-color="#3a5bef"/>
     </linearGradient>
   </defs>
+  <!-- 42px badge; mark diameter ≈ 42/φ ≈ 26 → scale 26/24 ≈ 1.083 around center -->
   <rect width="42" height="42" rx="11" fill="url(#g)"/>
-  <!-- Triangle of three bidirectional arrows (scheme A). -->
-  <g transform="translate(21 21)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke">
-    <g transform="translate(0 4.4) scale(0.52)">
+  <g transform="translate(21 21) scale(1.083)" fill="none" stroke="#fff" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke">
+    <g transform="translate(0 5.5) scale(0.72)">
       <g transform="translate(-12 -12)">
         <path d="M17 7 21 11 17 15"/>
         <path d="M21 11H7"/>
@@ -16,7 +16,7 @@
         <path d="M3 13H17"/>
       </g>
     </g>
-    <g transform="rotate(120) translate(0 4.4) scale(0.52)">
+    <g transform="rotate(120) translate(0 5.5) scale(0.72)">
       <g transform="translate(-12 -12)">
         <path d="M17 7 21 11 17 15"/>
         <path d="M21 11H7"/>
@@ -24,7 +24,7 @@
         <path d="M3 13H17"/>
       </g>
     </g>
-    <g transform="rotate(240) translate(0 4.4) scale(0.52)">
+    <g transform="rotate(240) translate(0 5.5) scale(0.72)">
       <g transform="translate(-12 -12)">
         <path d="M17 7 21 11 17 15"/>
         <path d="M21 11H7"/>

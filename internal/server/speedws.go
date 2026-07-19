@@ -34,12 +34,15 @@ func (s *Server) apiSpeedWS(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ticker.C:
 			var snap []SpeedEntry
+			var rules []RuleSpeedEntry
 			if perUser {
 				snap = s.Hub.speedCache.snapshotForUser(actor.ID)
+				rules = s.Hub.speedCache.snapshotRulesForUser(actor.ID)
 			} else {
 				snap = s.Hub.speedCache.snapshot()
+				rules = s.Hub.speedCache.snapshotRules()
 			}
-			data, err := json.Marshal(map[string]any{"speeds": snap})
+			data, err := json.Marshal(map[string]any{"speeds": snap, "rule_speeds": rules})
 			if err != nil {
 				continue
 			}

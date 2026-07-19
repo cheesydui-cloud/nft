@@ -6,7 +6,7 @@ import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
-import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
+import { useSpeed, useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { uriToClashYaml } from '../../lib/yaml-convert'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
@@ -18,7 +18,8 @@ export default function UserDetail() {
   const toast = useToast()
   const blurred = useBlur()
   const { copyFmt } = useCopyFmt()
-  const speeds = useSpeed()
+  const nodeSpeeds = useSpeed()
+  const ruleSpeeds = useRuleSpeed()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [allUsers, setAllUsers] = useState([])
@@ -294,7 +295,12 @@ export default function UserDetail() {
                 </thead>
                 <tbody>
                   {rules.map(r => {
-                    const sp = speeds[r.node_id]
+                    // Prefer per-rule live rate (works for composite). Fall back to
+                    // entry physical node, then rules.node_id for single-node rules.
+                    const sp = ruleSpeeds[r.id]
+                      || (r.entry_node_id ? nodeSpeeds[r.entry_node_id] : null)
+                      || nodeSpeeds[r.node_id]
+                      || { up: 0, down: 0 }
                     const copyRuleLink = async () => {
                       const parts = []
                       if (r.relay_uri) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri) : r.relay_uri)
@@ -320,12 +326,10 @@ export default function UserDetail() {
                         </td>
                         <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
                         <td className="font-mono text-xs whitespace-nowrap">
-                          {sp ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
-                              <span className="text-blue-600">↓{fmtSpeed(sp.down)}</span>
-                            </span>
-                          ) : <span className="text-ink-mut">—</span>}
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
+                            <span className="text-blue-600">↓{fmtSpeed(sp.down)}</span>
+                          </span>
                         </td>
                         <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
                         <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>

@@ -3,28 +3,38 @@ import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, Badge, CopyText, Modal, useConfirm } from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, TableScroll, SearchInput } from '../components/page'
+import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
-import { copyToClipboard } from '../lib/clipboard'
 import { fmtDate, expiryBadge } from '../lib/fmt'
 import { useIsMobile } from '../lib/useIsMobile'
 
 export default function NodeRepo() {
   const [list, setList] = useState(null)
+  const [folders, setFolders] = useState([])
+  const [ungrouped, setUngrouped] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [showBulk, setShowBulk] = useState(false)
-  const [showGroup, setShowGroup] = useState(false)
+  const [showMove, setShowMove] = useState(false)
   const [editing, setEditing] = useState(null)
   const [search, setSearch] = useState('')
-  const [groupFilter, setGroupFilter] = useState('') // '' all | '__none__' ungrouped | name
+  const [folderFilter, setFolderFilter] = useState('') // '' all | '0' ungrouped | folder id
   const [sel, setSel] = useState(new Set())
   const toast = useToast()
   const confirm = useConfirm()
   const isMobile = useIsMobile()
 
+  const loadFolders = () => api.get('/node-repo-folders').then(d => {
+    setFolders(d?.folders || [])
+    setUngrouped(d?.ungrouped || 0)
+  }).catch(() => {})
+
   const load = () => {
     setLoading(true)
-    api.get('/node-repo').then(d => setList(d?.nodes || [])).catch(console.error).finally(() => setLoading(false))
+    Promise.all([
+      api.get('/node-repo').then(d => setList(d?.nodes || [])),
+      loadFolders(),
+    ]).catch(console.error).finally(() => setLoading(false))
   }
   useEffect(load, [])
 
@@ -44,15 +54,16 @@ export default function NodeRepo() {
     } catch (err) { toast(err.message, 'error') }
   }
 
-  const bulkSetGroup = async (groupName) => {
+  const folderName = (id) => folders.find(f => f.id === id)?.name || ''
+
+  const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选节点', 'error'); return }
-    try {
-      await api.post('/node-repo/batch-group', { ids: [...sel], group_name: groupName })
-      toast(groupName ? `已移入分组「${groupName}」` : '已移出分组')
-      setSel(new Set())
-      setShowGroup(false)
-      load()
-    } catch (err) { toast(err.message, 'error') }
+    await api.post('/node-repo/batch-group', { ids: [...sel], group_id: folderId })
+    const label = folderId ? (folderName(folderId) || '文件夹') : '未分组'
+    toast(folderId ? `已移入「${label}」` : '已移出到未分组')
+    setSel(new Set())
+    setShowMove(false)
+    load()
   }
 
   const toggleSel = (id) => setSel(s => {
@@ -63,11 +74,10 @@ export default function NodeRepo() {
 
   if (loading) return <Layout><Loading /></Layout>
 
-  const groups = [...new Set((list || []).map(n => (n.group_name || '').trim()).filter(Boolean))].sort()
   const q = search.trim().toLowerCase()
   let filtered = list || []
-  if (groupFilter === '__none__') filtered = filtered.filter(n => !(n.group_name || '').trim())
-  else if (groupFilter) filtered = filtered.filter(n => (n.group_name || '').trim() === groupFilter)
+  if (folderFilter === '0') filtered = filtered.filter(n => !(n.group_id > 0))
+  else if (folderFilter) filtered = filtered.filter(n => String(n.group_id) === String(folderFilter))
   if (q) filtered = filtered.filter(n =>
     [n.name, n.protocol, `${n.host}:${n.port}`, n.remark, n.group_name].some(v => (v || '').toLowerCase().includes(q)))
 
@@ -79,16 +89,23 @@ export default function NodeRepo() {
       <div className="h-full flex flex-col">
       <PageHeader title="节点池" count={list?.length || 0} unit="个" />
       <Panel fill>
+        <div className="px-3 pt-2 border-b border-line">
+          <FolderBar
+            folders={folders}
+            ungrouped={ungrouped}
+            total={(list || []).length}
+            filter={folderFilter}
+            onFilter={f => { setFolderFilter(f); setSel(new Set()) }}
+            onCreate={async (name) => { await api.post('/node-repo-folders', { name }); await loadFolders() }}
+            onRename={async (id, name) => { await api.patch(`/node-repo-folders/${id}`, { name }); await loadFolders(); load() }}
+            onDelete={async (id) => { await api.del(`/node-repo-folders/${id}`); await loadFolders(); load() }}
+          />
+        </div>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索名称、协议、地址…" />
-          <select className="input-field !w-auto text-xs py-1.5" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
-            <option value="">全部分组</option>
-            <option value="__none__">未分组</option>
-            {groups.map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
           {sel.size > 0 && (
             <>
-              <button onClick={() => setShowGroup(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">设置分组 ({sel.size})</button>
+              <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入文件夹 ({sel.size})</button>
               <button onClick={bulkDelete} className="text-red-600 text-xs font-semibold px-3 py-1 rounded border border-red-200 hover:bg-red-50 dark:border-red-700 dark:hover:bg-red-900/20">删除选中 {sel.size}</button>
             </>
           )}
@@ -102,13 +119,13 @@ export default function NodeRepo() {
         {!list || list.length === 0 ? (
           <Empty title="暂无节点" desc="点击右上角「添加节点」将预先准备好的代理节点录入节点池。" />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配节点" desc="试试别的关键词或分组。" />
+          <Empty title="无匹配节点" desc="试试别的关键词或文件夹。" />
         ) : (<>
           {!isMobile && <table className="tbl">
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-blue-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
+              <th>名称</th><th>文件夹</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map(n => (
                 <tr key={n.id}>
@@ -174,72 +191,31 @@ export default function NodeRepo() {
       {showForm && (
         <NodeRepoForm
           node={editing}
-          groups={groups}
+          folders={folders}
           onClose={() => setShowForm(false)}
           onDone={() => { setShowForm(false); load() }}
         />
       )}
       {showBulk && (
         <BulkImportForm
-          groups={groups}
+          folders={folders}
           onClose={() => setShowBulk(false)}
           onDone={() => { setShowBulk(false); load() }}
         />
       )}
-      {showGroup && (
-        <GroupAssignModal
-          title={`为 ${sel.size} 个节点设置分组`}
-          groups={groups}
-          onClose={() => setShowGroup(false)}
-          onAssign={bulkSetGroup}
+      {showMove && (
+        <MoveToFolderModal
+          title={`将 ${sel.size} 个节点移入…`}
+          folders={folders}
+          onClose={() => setShowMove(false)}
+          onMove={moveToFolder}
         />
       )}
     </Layout>
   )
 }
 
-function GroupAssignModal({ title, groups = [], onClose, onAssign }) {
-  const [name, setName] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const toast = useToast()
-
-  const submit = async (groupName) => {
-    setSubmitting(true)
-    try {
-      await onAssign(groupName)
-    } catch (err) {
-      toast(err?.message || '操作失败', 'error')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title={title}>
-      <div className="space-y-4">
-        <div>
-          <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组名 <span className="text-ink-mut font-normal text-xs">(留空并点「移出分组」可清空)</span></label>
-          <input className="input-field" list="group-options" value={name} onChange={e => setName(e.target.value)} placeholder="输入新分组或选择已有" autoFocus />
-          <datalist id="group-options">{groups.map(g => <option key={g} value={g} />)}</datalist>
-        </div>
-        {groups.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {groups.map(g => (
-              <button key={g} type="button" onClick={() => setName(g)} className="text-xs px-2 py-1 rounded border border-line hover:bg-raised">{g}</button>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 pt-1">
-          <button type="button" disabled={submitting} onClick={() => submit(name.trim())} className="btn-primary flex-1">{submitting ? '保存中…' : '保存分组'}</button>
-          <button type="button" disabled={submitting} onClick={() => submit('')} className="btn-secondary flex-1">移出分组</button>
-          <button type="button" onClick={onClose} className="btn-secondary">取消</button>
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
-function NodeRepoForm({ node, groups = [], onClose, onDone }) {
+function NodeRepoForm({ node, folders = [], onClose, onDone }) {
   const isEdit = !!node
   const [form, setForm] = useState({
     name: node?.name || '',
@@ -248,7 +224,7 @@ function NodeRepoForm({ node, groups = [], onClose, onDone }) {
     port: node?.port || '',
     uri: node?.uri || '',
     remark: node?.remark || '',
-    group_name: node?.group_name || '',
+    group_id: node?.group_id > 0 ? String(node.group_id) : '0',
     expires_at: node?.expires_at > 0 ? new Date(node.expires_at * 1000).toISOString().slice(0, 10) : '',
   })
   const [submitting, setSubmitting] = useState(false)
@@ -278,6 +254,7 @@ function NodeRepoForm({ node, groups = [], onClose, onDone }) {
     if (!form.name.trim() || !form.host.trim() || !form.port) { toast('名称、地址、端口不能为空', 'error'); return }
     setSubmitting(true)
     try {
+      const gid = Number(form.group_id) || 0
       const body = {
         name: form.name.trim(),
         protocol: form.protocol.trim(),
@@ -285,7 +262,8 @@ function NodeRepoForm({ node, groups = [], onClose, onDone }) {
         port: Number(form.port),
         uri: form.uri.trim(),
         remark: form.remark.trim(),
-        group_name: form.group_name.trim(),
+        group_id: gid,
+        group_name: '',
         expires_at: form.expires_at ? Math.floor(new Date(form.expires_at).getTime() / 1000) : 0,
       }
       if (isEdit) {
@@ -315,9 +293,11 @@ function NodeRepoForm({ node, groups = [], onClose, onDone }) {
             <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="自定义节点名称" autoFocus />
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
-            <input className="input-field" list="node-form-groups" value={form.group_name} onChange={e => set('group_name', e.target.value)} placeholder="如：香港 / 游戏" />
-            <datalist id="node-form-groups">{groups.map(g => <option key={g} value={g} />)}</datalist>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">文件夹</label>
+            <select className="input-field" value={form.group_id} onChange={e => set('group_id', e.target.value)}>
+              <option value="0">未分组</option>
+              {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">协议</label>
@@ -350,9 +330,9 @@ function NodeRepoForm({ node, groups = [], onClose, onDone }) {
   )
 }
 
-function BulkImportForm({ groups = [], onClose, onDone }) {
+function BulkImportForm({ folders = [], onClose, onDone }) {
   const [text, setText] = useState('')
-  const [groupName, setGroupName] = useState('')
+  const [groupId, setGroupId] = useState('0')
   const [submitting, setSubmitting] = useState(false)
   const toast = useToast()
 
@@ -365,7 +345,7 @@ function BulkImportForm({ groups = [], onClose, onDone }) {
     setSubmitting(true)
     try {
       let count = 0
-      const g = groupName.trim()
+      const gid = Number(groupId) || 0
       for (const n of nodes) {
         await api.post('/node-repo', {
           name: n.name || '(未命名)',
@@ -374,7 +354,8 @@ function BulkImportForm({ groups = [], onClose, onDone }) {
           port: n.port,
           uri: n.uri || '',
           remark: '',
-          group_name: g,
+          group_id: gid,
+          group_name: '',
         })
         count++
       }
@@ -396,9 +377,11 @@ function BulkImportForm({ groups = [], onClose, onDone }) {
               placeholder={'ss://…\nvmess://…\ntrojan://…\nvless://…'} rows={16} style={{ resize: 'vertical', minHeight: 300 }} autoFocus />
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">导入到分组 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
-            <input className="input-field" list="bulk-import-groups" value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="如：香港" />
-            <datalist id="bulk-import-groups">{groups.map(g => <option key={g} value={g} />)}</datalist>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">导入到文件夹</label>
+            <select className="input-field" value={groupId} onChange={e => setGroupId(e.target.value)}>
+              <option value="0">未分组</option>
+              {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
+            </select>
           </div>
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={submitting} className="btn-primary flex-1">{submitting ? '导入中…' : '导入'}</button>

@@ -15,37 +15,38 @@ const (
 	NodeRoleVia   int64 = 1 << 1
 )
 
-	type User struct {
-		ID                int64          `json:"id"`
-		Username          string         `json:"username"`
-		PwHash            string         `json:"-"`
-		Role              string         `json:"role"`
-		Disabled          bool           `json:"disabled"`
-		DisableReason     sql.NullString `json:"disable_reason"`
-		MaxForwards       int            `json:"max_forwards"`
-		TrafficQuotaBytes int64          `json:"traffic_quota_bytes"`
-		TrafficUsedBytes  int64          `json:"traffic_used_bytes"`
-		TotalTrafficUsedBytes int64      `json:"total_traffic_used_bytes"`
-		// TrafficResetDays is the rolling window length in days; 0 means never auto-reset.
-		TrafficResetDays   int           `json:"traffic_reset_days"`
-		LastTrafficResetAt int64         `json:"last_traffic_reset_at"`
-		CreatedAt          int64         `json:"created_at"`
-		ExpiresAt          sql.NullInt64 `json:"expires_at"`
-		SpeedLimitMBytes   int           `json:"speed_limit_mbytes"`
-		// LandingSubURL is an optional subscription URL; LandingURIs is an optional
-		// newline-separated list of proxy URIs. They combine into the user's set of
-		// landing nodes (see internal/landing). Both empty means no landing source.
-		LandingSubURL string  `json:"landing_sub_url"`
-		LandingURIs   string  `json:"landing_uris"`
-		AdminNote     string  `json:"admin_note"`
-		BillingRate   float64 `json:"billing_rate"`
-		// GroupName is a free-form admin label for filtering the user list; empty = ungrouped.
-		GroupName string `json:"group_name"`
-		// RuleCount is not a users-table column; it is filled by FillUserRuleCounts
-		// so the user list can show used/total rule quota.
-		RuleCount int `json:"rule_count"`
-	}
-
+type User struct {
+	ID                    int64          `json:"id"`
+	Username              string         `json:"username"`
+	PwHash                string         `json:"-"`
+	Role                  string         `json:"role"`
+	Disabled              bool           `json:"disabled"`
+	DisableReason         sql.NullString `json:"disable_reason"`
+	MaxForwards           int            `json:"max_forwards"`
+	TrafficQuotaBytes     int64          `json:"traffic_quota_bytes"`
+	TrafficUsedBytes      int64          `json:"traffic_used_bytes"`
+	TotalTrafficUsedBytes int64          `json:"total_traffic_used_bytes"`
+	// TrafficResetDays is the rolling window length in days; 0 means never auto-reset.
+	TrafficResetDays   int           `json:"traffic_reset_days"`
+	LastTrafficResetAt int64         `json:"last_traffic_reset_at"`
+	CreatedAt          int64         `json:"created_at"`
+	ExpiresAt          sql.NullInt64 `json:"expires_at"`
+	SpeedLimitMBytes   int           `json:"speed_limit_mbytes"`
+	// LandingSubURL is an optional subscription URL; LandingURIs is an optional
+	// newline-separated list of proxy URIs. They combine into the user's set of
+	// landing nodes (see internal/landing). Both empty means no landing source.
+	LandingSubURL string  `json:"landing_sub_url"`
+	LandingURIs   string  `json:"landing_uris"`
+	AdminNote     string  `json:"admin_note"`
+	BillingRate   float64 `json:"billing_rate"`
+	// GroupID is the folder the user sits in (0 = ungrouped). GroupName is a
+	// denormalized label kept in sync for display and legacy clients.
+	GroupID   int64  `json:"group_id"`
+	GroupName string `json:"group_name"`
+	// RuleCount is not a users-table column; it is filled by FillUserRuleCounts
+	// so the user list can show used/total rule quota.
+	RuleCount int `json:"rule_count"`
+}
 
 type Node struct {
 	ID       int64  `json:"id"`
@@ -214,7 +215,7 @@ func CreateUser(d *sql.DB, username, pwHash, role string) (int64, error) {
 func scanUser(r rowScanner) (*User, error) {
 	u := &User{}
 	var disabled int
-	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate, &u.GroupName); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &u.PwHash, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate, &u.GroupName, &u.GroupID); err != nil {
 		return nil, err
 	}
 	u.Disabled = disabled == 1
@@ -224,16 +225,16 @@ func scanUser(r rowScanner) (*User, error) {
 func scanUserPublic(r rowScanner) (*User, error) {
 	u := &User{}
 	var disabled int
-	if err := r.Scan(&u.ID, &u.Username, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate, &u.GroupName); err != nil {
+	if err := r.Scan(&u.ID, &u.Username, &u.Role, &disabled, &u.DisableReason, &u.MaxForwards, &u.TrafficQuotaBytes, &u.TrafficUsedBytes, &u.TotalTrafficUsedBytes, &u.TrafficResetDays, &u.LastTrafficResetAt, &u.CreatedAt, &u.ExpiresAt, &u.SpeedLimitMBytes, &u.LandingSubURL, &u.LandingURIs, &u.AdminNote, &u.BillingRate, &u.GroupName, &u.GroupID); err != nil {
 		return nil, err
 	}
 	u.Disabled = disabled == 1
 	return u, nil
 }
 
-const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate, group_name`
+const userCols = `id, username, pw_hash, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate, group_name, group_id`
 
-const userPublicCols = `id, username, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate, group_name`
+const userPublicCols = `id, username, role, disabled, disable_reason, max_forwards, traffic_quota_bytes, traffic_used_bytes, total_traffic_used_bytes, traffic_reset_days, last_traffic_reset_at, created_at, expires_at, speed_limit_mbytes, landing_sub_url, landing_uris, admin_note, billing_rate, group_name, group_id`
 
 func ListUsers(d *sql.DB) ([]*User, error) {
 	return queryAll(d, `SELECT `+userPublicCols+` FROM users ORDER BY id`, scanUserPublic)
@@ -304,29 +305,31 @@ func RenameUser(d *sql.DB, id int64, newUsername string) error {
 	return err
 }
 
-// SetUserGroupName assigns a free-form group label to a user (empty = ungrouped).
+// SetUserGroupName moves a user into a folder named groupName, creating the
+// folder if needed. Empty name ungroups (group_id=0).
 func SetUserGroupName(d *sql.DB, id int64, groupName string) error {
-	_, err := d.Exec(`UPDATE users SET group_name=? WHERE id=?`, groupName, id)
-	return err
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return SetUserFolder(d, id, 0)
+	}
+	f, err := EnsureUserFolder(d, groupName)
+	if err != nil {
+		return err
+	}
+	return SetUserFolder(d, id, f.ID)
 }
 
-// SetUserGroupNamesBatch assigns the same group label to many users.
+// SetUserGroupNamesBatch moves many users into a folder named groupName.
 func SetUserGroupNamesBatch(d *sql.DB, ids []int64, groupName string) error {
-	if len(ids) == 0 {
-		return nil
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return SetUsersFolderBatch(d, ids, 0)
 	}
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, groupName)
-	ph := ""
-	for i, id := range ids {
-		if i > 0 {
-			ph += ","
-		}
-		ph += "?"
-		args = append(args, id)
+	f, err := EnsureUserFolder(d, groupName)
+	if err != nil {
+		return err
 	}
-	_, err := d.Exec(`UPDATE users SET group_name=? WHERE id IN (`+ph+`)`, args...)
-	return err
+	return SetUsersFolderBatch(d, ids, f.ID)
 }
 
 // UsersByID returns all users keyed by ID in a single query.
@@ -354,9 +357,9 @@ func CreateSession(d *sql.DB, userID int64, ttl time.Duration) (string, error) {
 	return token, nil
 }
 
-const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate, u.group_name`
+const userColsQualified = `u.id, u.username, u.pw_hash, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate, u.group_name, u.group_id`
 
-const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate, u.group_name`
+const userPublicColsQualified = `u.id, u.username, u.role, u.disabled, u.disable_reason, u.max_forwards, u.traffic_quota_bytes, u.traffic_used_bytes, u.total_traffic_used_bytes, u.traffic_reset_days, u.last_traffic_reset_at, u.created_at, u.expires_at, u.speed_limit_mbytes, u.landing_sub_url, u.landing_uris, u.admin_note, u.billing_rate, u.group_name, u.group_id`
 
 func GetSessionUser(d *sql.DB, token string) (*User, error) {
 	return scanUser(d.QueryRow(`

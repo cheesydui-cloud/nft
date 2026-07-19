@@ -6,21 +6,24 @@ import { Layout, useToast, useUser } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal, useConfirm, Select } from '../../components/ui'
 import { copyToClipboard } from '../../lib/clipboard'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
+import FolderBar, { MoveToFolderModal } from '../../components/FolderBar'
 import PasteGrantsModal from './PasteGrantsModal'
 import { useIsMobile } from '../../lib/useIsMobile'
 
 export default function UserList() {
   const [data, setData] = useState(null)
+  const [folders, setFolders] = useState([])
+  const [ungrouped, setUngrouped] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [newPassword, setNewPassword] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showPaste, setShowPaste] = useState(false)
-  const [showGroup, setShowGroup] = useState(false)
+  const [showMove, setShowMove] = useState(false)
   const [allNodes, setAllNodes] = useState([])
   const isMobile = useIsMobile()
   const [search, setSearch] = useState('')
-  const [groupFilter, setGroupFilter] = useState('') // '' all | '__none__' | name
+  const [folderFilter, setFolderFilter] = useState('') // '' all | '0' ungrouped | folder id
   const [sel, setSel] = useState(new Set())
   const [sortBy, setSortBy] = useState(null) // null | 'expires_asc' | 'expires_desc'
   const { user: currentUser } = useUser()
@@ -28,10 +31,18 @@ export default function UserList() {
   const confirm = useConfirm()
   const navigate = useNavigate()
 
+  const loadFolders = () => api.get('/user-folders').then(d => {
+    setFolders(d?.folders || [])
+    setUngrouped(d?.ungrouped || 0)
+  }).catch(() => {})
+
   const load = () => {
     setLoading(true)
     setError('')
-    api.get('/users').then(setData).catch(err => setError(err?.message || '加载失败')).finally(() => setLoading(false))
+    Promise.all([
+      api.get('/users').then(setData),
+      loadFolders(),
+    ]).catch(err => setError(err?.message || '加载失败')).finally(() => setLoading(false))
   }
   useEffect(load, [])
   useEffect(() => { api.get('/nodes').then(d => setAllNodes(d?.nodes || [])) }, [])
@@ -40,7 +51,7 @@ export default function UserList() {
   if (!data && error) return <Layout><Empty title="加载失败" desc={error}><button onClick={load} className="btn-secondary text-xs mt-3">重试</button></Empty></Layout>
 
   const { users = [] } = data || {}
-  const groups = [...new Set(users.map(u => (u.group_name || '').trim()).filter(Boolean))].sort()
+  const folderName = (id) => folders.find(f => f.id === id)?.name || ''
 
   const toggleUser = async (u) => {
     try { await api.post(`/users/${u.id}/toggle`); toast(u.disabled ? '已启用' : '已禁用'); load() } catch (err) { toast(err.message, 'error') }
@@ -57,15 +68,14 @@ export default function UserList() {
     try { await api.del(`/users/${u.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
 
-  const bulkSetGroup = async (groupName) => {
+  const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选用户', 'error'); return }
-    try {
-      await api.post('/users/batch-group', { ids: [...sel], group_name: groupName })
-      toast(groupName ? `已移入分组「${groupName}」` : '已移出分组')
-      setSel(new Set())
-      setShowGroup(false)
-      load()
-    } catch (err) { toast(err.message, 'error') }
+    await api.post('/users/batch-group', { ids: [...sel], group_id: folderId })
+    const label = folderId ? (folderName(folderId) || '文件夹') : '未分组'
+    toast(folderId ? `已移入「${label}」` : '已移出到未分组')
+    setSel(new Set())
+    setShowMove(false)
+    load()
   }
 
   const toggleSel = (id, e) => {
@@ -79,8 +89,8 @@ export default function UserList() {
 
   const q = search.trim().toLowerCase()
   let searched = users
-  if (groupFilter === '__none__') searched = searched.filter(u => !(u.group_name || '').trim())
-  else if (groupFilter) searched = searched.filter(u => (u.group_name || '').trim() === groupFilter)
+  if (folderFilter === '0') searched = searched.filter(u => !(u.group_id > 0))
+  else if (folderFilter) searched = searched.filter(u => String(u.group_id) === String(folderFilter))
   if (q) searched = searched.filter(u =>
     [u.username, u.admin_note, u.group_name].some(v => (v || '').toLowerCase().includes(q)))
 
@@ -103,15 +113,22 @@ export default function UserList() {
       <PageHeader title="用户列表" count={users.length} unit="个用户" />
 
       <Panel fill>
+        <div className="px-3 pt-2 border-b border-line">
+          <FolderBar
+            folders={folders}
+            ungrouped={ungrouped}
+            total={users.length}
+            filter={folderFilter}
+            onFilter={f => { setFolderFilter(f); setSel(new Set()) }}
+            onCreate={async (name) => { await api.post('/user-folders', { name }); await loadFolders() }}
+            onRename={async (id, name) => { await api.patch(`/user-folders/${id}`, { name }); await loadFolders(); load() }}
+            onDelete={async (id) => { await api.del(`/user-folders/${id}`); await loadFolders(); load() }}
+          />
+        </div>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索用户名…" />
-          <select className="input-field !w-auto text-xs py-1.5" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
-            <option value="">全部分组</option>
-            <option value="__none__">未分组</option>
-            {groups.map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
           {sel.size > 0 && (
-            <button onClick={() => setShowGroup(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">设置分组 ({sel.size})</button>
+            <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入文件夹 ({sel.size})</button>
           )}
           <div className="hidden md:flex ml-auto gap-2">
             <ToolbarButton onClick={() => setShowPaste(true)}>粘贴授权</ToolbarButton>
@@ -122,7 +139,7 @@ export default function UserList() {
         {users.length === 0 ? (
           <Empty title="暂无用户" desc="点击右上角「新建用户」创建。" />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配用户" desc="试试别的关键词或分组。" />
+          <Empty title="无匹配用户" desc="试试别的关键词或文件夹。" />
         ) : (
           <TableScroll>
           {/* Desktop table */}
@@ -130,7 +147,7 @@ export default function UserList() {
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-blue-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th className="w-12">ID</th><th>用户名</th><th>分组</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
+              <th className="w-12">ID</th><th>用户名</th><th>文件夹</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
               <th className="cursor-pointer select-none whitespace-nowrap" onClick={toggleExpirySort}>到期{sortBy === 'expires_asc' ? ' ↑' : sortBy === 'expires_desc' ? ' ↓' : ''}</th>
               <th>备注</th><th className="text-right">操作</th>
             </tr></thead>
@@ -216,12 +233,12 @@ export default function UserList() {
       <PasteGrantsModal open={showPaste} onClose={() => setShowPaste(false)} onDone={load}
         allNodes={allNodes} allUsers={users} preSelectedUserIds={[]} />
 
-      {showGroup && (
-        <UserGroupAssignModal
-          count={sel.size}
-          groups={groups}
-          onClose={() => setShowGroup(false)}
-          onAssign={bulkSetGroup}
+      {showMove && (
+        <MoveToFolderModal
+          title={`将 ${sel.size} 个用户移入…`}
+          folders={folders}
+          onClose={() => setShowMove(false)}
+          onMove={moveToFolder}
         />
       )}
 
@@ -236,47 +253,6 @@ export default function UserList() {
         </div>
       </Modal>
     </Layout>
-  )
-}
-
-function UserGroupAssignModal({ count, groups = [], onClose, onAssign }) {
-  const [name, setName] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const toast = useToast()
-
-  const submit = async (groupName) => {
-    setSubmitting(true)
-    try {
-      await onAssign(groupName)
-    } catch (err) {
-      toast(err?.message || '操作失败', 'error')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title={`为 ${count} 个用户设置分组`}>
-      <div className="space-y-4">
-        <div>
-          <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组名</label>
-          <input className="input-field" list="user-group-options" value={name} onChange={e => setName(e.target.value)} placeholder="输入新分组或选择已有" autoFocus />
-          <datalist id="user-group-options">{groups.map(g => <option key={g} value={g} />)}</datalist>
-        </div>
-        {groups.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {groups.map(g => (
-              <button key={g} type="button" onClick={() => setName(g)} className="text-xs px-2 py-1 rounded border border-line hover:bg-raised">{g}</button>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 pt-1">
-          <button type="button" disabled={submitting} onClick={() => submit(name.trim())} className="btn-primary flex-1">{submitting ? '保存中…' : '保存分组'}</button>
-          <button type="button" disabled={submitting} onClick={() => submit('')} className="btn-secondary flex-1">移出分组</button>
-          <button type="button" onClick={onClose} className="btn-secondary">取消</button>
-        </div>
-      </div>
-    </Modal>
   )
 }
 
