@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useUser } from '../components/Layout'
+import { BrandMark } from '../components/BrandMark'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -44,7 +45,7 @@ export default function Login() {
         <div className="flex items-center gap-3 mb-7">
           <div className="w-[42px] h-[42px] rounded-[11px] grid place-items-center text-white shadow-[0_6px_18px_-6px_rgba(74,108,247,0.7)]"
             style={{ background: 'linear-gradient(150deg, #5b7cfa, #3a5bef)' }}>
-            <svg className="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 7 21 11 17 15"/><path d="M21 11H7"/><path d="M7 17 3 13 7 9"/><path d="M3 13H17"/></svg>
+            <BrandMark />
           </div>
           <div>
             <div className="text-[16px] font-bold">{panelName || 'nft'}</div>

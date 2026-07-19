@@ -279,34 +279,9 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiChangeUsername(w http.ResponseWriter, r *http.Request) {
-	u := userFromCtx(r.Context())
-	var body struct {
-		Username string `json:"username"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		jsonErr(w, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-	username := strings.TrimSpace(body.Username)
-	if username == "" {
-		jsonErr(w, http.StatusBadRequest, "用户名不能为空")
-		return
-	}
-	if username == u.Username {
-		jsonOK(w, map[string]any{"ok": true})
-		return
-	}
-	existing, _ := db.GetUserByUsername(s.DB, username)
-	if existing != nil {
-		jsonErr(w, http.StatusConflict, "用户名已存在")
-		return
-	}
-	if err := db.RenameUser(s.DB, u.ID, username); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	db.WriteAudit(s.DB, u.ID, "user.rename", strconv.FormatInt(u.ID, 10), username)
-	jsonOK(w, map[string]any{"ok": true, "username": username})
+	// Self-service username change is disabled: usernames are assigned by admin.
+	// Keep the route so old clients get a clear error instead of 404.
+	jsonErr(w, http.StatusForbidden, "用户名不可自行修改，请联系管理员")
 }
 
 // --- Dashboard ---

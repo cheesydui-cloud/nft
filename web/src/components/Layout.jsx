@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { resolvedDark, getStoredTheme, setStoredTheme } from '../lib/theme'
 import { hasLocalURIs, hasLocalProxies } from '../lib/landing'
 import { Loading } from './ui'
+import { BrandMark } from './BrandMark'
 
 /* ---------- User context ---------- */
 const UserCtx = createContext(null)
@@ -142,7 +143,7 @@ export function Layout({ children }) {
             <div className="w-[42px] h-[42px] rounded-[11px] flex-none grid place-items-center text-white shadow-[0_8px_22px_-6px_rgba(79,70,229,0.75)]"
               title={collapsed && version ? version : undefined}
               style={{ background: 'linear-gradient(145deg, #3b82f6 0%, #4f46e5 52%, #7c3aed 100%)' }}>
-              <svg className="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 7 21 11 17 15"/><path d="M21 11H7"/><path d="M7 17 3 13 7 9"/><path d="M3 13H17"/></svg>
+              <BrandMark />
             </div>
             {!collapsed && <div>
               <div className="text-[16px] font-bold tracking-wide sb-text">{panelName || 'nft'}</div>

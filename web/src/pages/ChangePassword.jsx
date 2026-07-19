@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast, useUser } from '../components/Layout'
 
@@ -6,15 +6,8 @@ export default function ChangePassword() {
   const [form, setForm] = useState({ old_password: '', new_password: '', confirm: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [newUsername, setNewUsername] = useState('')
-  const [savingUsername, setSavingUsername] = useState(false)
-  const [usernameError, setUsernameError] = useState('')
   const toast = useToast()
   const { user } = useUser()
-
-  useEffect(() => {
-    if (user?.username) setNewUsername(user.username)
-  }, [user])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -37,19 +30,6 @@ export default function ChangePassword() {
     } catch (err) { setError(err.message) } finally { setLoading(false) }
   }
 
-  const saveUsername = async () => {
-    const name = newUsername.trim()
-    setUsernameError('')
-    if (!name) { setUsernameError('用户名不能为空'); return }
-    if (name === user?.username) { toast('用户名未改变'); return }
-    setSavingUsername(true)
-    try {
-      await api.post('/my/username', { username: name })
-      toast('用户名已更新')
-      window.location.reload()
-    } catch (err) { setUsernameError(err.message) } finally { setSavingUsername(false) }
-  }
-
   const rowClass = 'flex flex-col md:flex-row md:items-center gap-2 md:gap-6 mb-[22px]'
   const labelClass = 'w-[120px] flex-shrink-0 text-[14px] text-ink-soft'
 
@@ -58,15 +38,12 @@ export default function ChangePassword() {
       <div className="card" style={{ maxWidth: 980 }}>
         <div className="card-header"><h3 className="text-[16px] font-bold">账户设置</h3></div>
         <div className="px-6 py-[26px]">
-          {/* Username section */}
-          <div className={rowClass}>
+          <div className={`${rowClass} pb-[22px] border-b border-line-soft`}>
             <label className={labelClass}>用户名</label>
-            <input className="input-field w-full md:max-w-[560px]" value={newUsername} onChange={e => { setNewUsername(e.target.value); setUsernameError('') }} />
-            <button onClick={saveUsername} disabled={savingUsername} className="btn-primary whitespace-nowrap w-full md:w-auto">{savingUsername ? '保存中…' : '保存用户名'}</button>
+            <div className="text-[14.5px] font-semibold text-ink">{user?.username || '—'}</div>
           </div>
-          {usernameError && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded text-red-600 text-sm -mt-[14px]">{usernameError}</div>}
 
-          <div className="border-t border-line-soft pt-[26px]">
+          <div className="pt-[26px]">
             <h4 className="text-[14px] font-semibold text-ink-soft mb-[18px]">修改密码</h4>
             {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded text-red-600 text-sm">{error}</div>}
             <form onSubmit={submitPassword}>
