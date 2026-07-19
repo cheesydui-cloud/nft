@@ -139,9 +139,9 @@ export function Layout({ children }) {
 
           {/* Brand */}
           <div className={`flex items-center gap-3 pt-5 pb-5 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
-            <div className="w-[42px] h-[42px] rounded-[11px] flex-none grid place-items-center text-white shadow-[0_6px_18px_-6px_rgba(74,108,247,0.7)]"
+            <div className="w-[42px] h-[42px] rounded-[11px] flex-none grid place-items-center text-white shadow-[0_8px_22px_-6px_rgba(79,70,229,0.75)]"
               title={collapsed && version ? version : undefined}
-              style={{ background: 'linear-gradient(150deg, #5b7cfa, #3a5bef)' }}>
+              style={{ background: 'linear-gradient(145deg, #3b82f6 0%, #4f46e5 52%, #7c3aed 100%)' }}>
               <svg className="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 7 21 11 17 15"/><path d="M21 11H7"/><path d="M7 17 3 13 7 9"/><path d="M3 13H17"/></svg>
             </div>
             {!collapsed && <div>

@@ -73,24 +73,27 @@ export default function UserDetail() {
     {
       label: '规则',
       value: `${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`,
+      tone: 'tone-violet',
     },
     {
       label: '节点',
       value: `${nodes.length}`,
+      tone: 'tone-teal',
     },
     {
       label: '落地',
       value: `${landing_nodes.length}`,
+      tone: 'tone-blue',
     },
     {
       label: '到期',
       value: expiresAt ? fmtDate(expiresAt) : '永不过期',
-      tone: exp?.color === 'red' ? 'tone-danger' : exp?.color === 'gray' ? 'tone-warn' : '',
+      tone: exp?.color === 'red' ? 'tone-danger' : exp?.color === 'gray' ? 'tone-warn' : 'tone-ok',
     },
     user.speed_limit_mbytes > 0 ? {
       label: '限速',
       value: `${user.speed_limit_mbytes} Mbps`,
-      tone: 'tone-blue',
+      tone: 'tone-violet',
     } : null,
   ].filter(Boolean) : []
 
@@ -189,18 +192,19 @@ export default function UserDetail() {
                 label="规则使用"
                 value={`${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`}
                 hint={user.max_forwards > 0 ? '已用 / 配额' : '规则总数 · 不限配额'}
-                tone="blue"
+                tone="violet"
               />
               <StatTile
                 label="授权节点"
                 value={String(nodes.length)}
                 hint="已授权转发节点"
+                tone="teal"
               />
               <StatTile
                 label="到期时间"
                 value={expiresAt ? fmtDate(expiresAt) : '永不过期'}
                 hint={exp ? exp.label : '未设置到期'}
-                tone={exp?.color === 'red' ? 'danger' : exp?.color === 'gray' ? 'warn' : undefined}
+                tone={exp?.color === 'red' ? 'danger' : exp?.color === 'gray' ? 'warn' : 'ok'}
               />
             </div>
           )}

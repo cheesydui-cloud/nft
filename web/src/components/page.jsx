@@ -19,7 +19,7 @@ export function PageHeader({ title, count, unit = '条' }) {
    TableScroll child can scroll while the toolbar stays put. */
 export function Panel({ children, className = '', fill = false }) {
   return (
-    <section className={`bg-surface border border-line rounded-[14px] shadow-[0_1px_2px_rgba(16,24,40,0.04)] overflow-hidden ${fill ? 'flex-1 min-h-0 flex flex-col' : ''} ${className}`}>
+    <section className={`card overflow-hidden ${fill ? 'flex-1 min-h-0 flex flex-col' : ''} ${className}`}>
       {children}
     </section>
   )

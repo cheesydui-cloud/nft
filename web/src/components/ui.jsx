@@ -32,12 +32,14 @@ export function Confirm({ open, onClose, onConfirm, title, children }) {
 
 /* ---------- Badge ---------- */
 const badgeColors = {
-  green: 'bg-green-500/[.12] text-green-700 dark:text-green-400 border-green-500/30',
-  amber: 'bg-amber-500/[.12] text-amber-700 dark:text-amber-400 border-amber-500/30',
-  red: 'bg-red-500/[.12] text-red-700 dark:text-red-400 border-red-500/30',
+  green: 'bg-emerald-500/[.14] text-emerald-700 dark:text-emerald-300 border-emerald-500/35',
+  amber: 'bg-amber-500/[.14] text-amber-700 dark:text-amber-300 border-amber-500/35',
+  red: 'bg-rose-500/[.14] text-rose-700 dark:text-rose-300 border-rose-500/35',
   gray: 'bg-raised text-ink-soft border-line',
-  blue: 'bg-blue-500/[.12] text-blue-700 dark:text-blue-400 border-blue-500/30',
-  violet: 'bg-violet-500/[.12] text-violet-700 dark:text-violet-400 border-violet-500/30',
+  blue: 'bg-blue-500/[.14] text-blue-700 dark:text-blue-300 border-blue-500/35',
+  violet: 'bg-violet-500/[.14] text-violet-700 dark:text-violet-300 border-violet-500/35',
+  teal: 'bg-teal-500/[.14] text-teal-700 dark:text-teal-300 border-teal-500/35',
+  cyan: 'bg-cyan-500/[.14] text-cyan-700 dark:text-cyan-300 border-cyan-500/35',
 }
 export function Badge({ color = 'gray', className = '', children, ...rest }) {
   // Forward ...rest (notably title) so hovering a status badge can reveal detail
