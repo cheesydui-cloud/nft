@@ -143,14 +143,25 @@ export function Table({ children }) {
 /* ---------- Empty ---------- */
 export function Empty({ title, desc, children }) {
   return (
-    <div className="py-10 text-center text-ink-mut">
-      <div className="w-11 h-11 rounded-xl bg-raised mx-auto mb-3 flex items-center justify-center">
+    <div className="py-12 text-center text-ink-mut">
+      <div className="w-11 h-11 rounded-xl bg-raised border border-line mx-auto mb-3 flex items-center justify-center">
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v4M12 16h.01"/></svg>
       </div>
-      {title && <h4 className="text-sm font-semibold text-ink-soft mb-1">{title}</h4>}
-      {desc && <p className="text-xs">{desc}</p>}
-      {children}
+      {title && <h4 className="text-[13.5px] font-semibold text-ink-soft mb-1">{title}</h4>}
+      {desc && <p className="text-[12.5px] max-w-sm mx-auto leading-relaxed">{desc}</p>}
+      {children && <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">{children}</div>}
     </div>
+  )
+}
+
+/* ---------- ErrorState: load failure with retry ---------- */
+export function ErrorState({ title = '加载失败', desc, onRetry }) {
+  return (
+    <Empty title={title} desc={desc || '请检查网络后重试。'}>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="btn-secondary text-xs">重试</button>
+      )}
+    </Empty>
   )
 }
 

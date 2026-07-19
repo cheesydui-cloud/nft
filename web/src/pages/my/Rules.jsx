@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, useConfirm } from '../../components/ui'
-import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
+import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
@@ -127,10 +127,10 @@ export default function MyRules() {
       <Panel fill>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索规则名称、节点、目标…" />
-          <div className="ml-auto flex items-center gap-2">
+          <ToolbarActions>
             <ToolbarButton onClick={() => setProbeAllTrigger(t => t + 1)} secondary>测试所有</ToolbarButton>
             <ToolbarButton onClick={openCreate}>＋ 创建规则</ToolbarButton>
-          </div>
+          </ToolbarActions>
         </PanelToolbar>
 
         {rules.length === 0 ? (

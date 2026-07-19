@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, useConfirm } from '../../components/ui'
-import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
+import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, mergeLanding, landingIndex, rewriteEndpoint, splitEndpoint, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
@@ -173,7 +173,9 @@ export default function RulesList() {
       <Panel fill>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索规则名称、节点、目标…" />
-          <div className="hidden md:block ml-auto"><ToolbarButton onClick={openCreate}>＋ 创建规则</ToolbarButton></div>
+          <ToolbarActions className="hidden md:flex">
+            <ToolbarButton onClick={openCreate}>＋ 创建规则</ToolbarButton>
+          </ToolbarActions>
         </PanelToolbar>
 
         {(users.length > 0 || nodes.length > 0) && (

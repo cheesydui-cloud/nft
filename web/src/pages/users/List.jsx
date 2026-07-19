@@ -5,7 +5,7 @@ import { fmtTrafficGB, nullStr, nullInt } from '../../lib/fmt'
 import { Layout, useToast, useUser } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal, useConfirm, Select } from '../../components/ui'
 import { copyToClipboard } from '../../lib/clipboard'
-import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, TableScroll } from '../../components/page'
+import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import FolderBar, { MoveToFolderModal } from '../../components/FolderBar'
 import PasteGrantsModal from './PasteGrantsModal'
 import { useIsMobile } from '../../lib/useIsMobile'
@@ -130,10 +130,10 @@ export default function UserList() {
           {sel.size > 0 && (
             <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入分组 ({sel.size})</button>
           )}
-          <div className="hidden md:flex ml-auto gap-2">
-            <ToolbarButton onClick={() => setShowPaste(true)}>粘贴授权</ToolbarButton>
+          <ToolbarActions className="hidden md:flex">
+            <ToolbarButton onClick={() => setShowPaste(true)} secondary>粘贴授权</ToolbarButton>
             <ToolbarButton onClick={() => setShowCreate(true)}>＋ 新建用户</ToolbarButton>
-          </div>
+          </ToolbarActions>
         </PanelToolbar>
 
         {users.length === 0 ? (

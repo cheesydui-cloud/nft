@@ -81,11 +81,11 @@
 html, body {
   color: var(--color-ink);
   background-color: var(--color-app);
+  /* Quiet ambient wash — freeze polish: less multi-glow noise */
   background-image:
-    radial-gradient(1200px 520px at 8% -8%, var(--glow-blue), transparent 58%),
-    radial-gradient(900px 480px at 96% 4%, var(--glow-violet), transparent 55%),
-    radial-gradient(800px 420px at 70% 100%, var(--glow-teal), transparent 50%),
-    linear-gradient(180deg, color-mix(in srgb, var(--color-app) 88%, #dbeafe 12%) 0%, var(--color-app) 42%, var(--color-app) 100%);
+    radial-gradient(1000px 420px at 6% -6%, color-mix(in srgb, var(--glow-blue) 70%, transparent), transparent 62%),
+    radial-gradient(720px 360px at 100% 0%, color-mix(in srgb, var(--glow-violet) 55%, transparent), transparent 58%),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-app) 94%, #dbeafe 6%) 0%, var(--color-app) 36%, var(--color-app) 100%);
   background-attachment: fixed;
   min-height: 100%;
 }
@@ -155,39 +155,83 @@ html, body {
 }
 .icon-btn-danger:hover { background: rgba(244,63,94,.15); }
 
-/* Card */
+/* Card — flat surface with a light edge; freeze: less gradient noise */
 .card {
   @apply rounded-[14px];
   position: relative;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 92%, #eff6ff 8%) 0%, var(--color-surface) 48%),
-    var(--color-surface);
-  border: 1px solid color-mix(in srgb, var(--color-line) 88%, #93c5fd 12%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
   box-shadow:
-    0 1px 2px rgba(16, 24, 40, 0.04),
-    0 10px 28px -18px rgba(37, 99, 235, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    0 1px 2px rgba(16, 24, 40, 0.035),
+    0 8px 24px -18px rgba(16, 24, 40, 0.18);
 }
 .dark .card {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 88%, #1e3a5f 12%) 0%, var(--color-surface) 55%),
-    var(--color-surface);
-  border-color: color-mix(in srgb, var(--color-line) 85%, #3b82f6 15%);
+  background: var(--color-surface);
+  border-color: var(--color-line);
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.25),
-    0 14px 32px -20px rgba(37, 99, 235, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    0 1px 2px rgba(0, 0, 0, 0.22),
+    0 12px 28px -20px rgba(0, 0, 0, 0.45);
 }
 .card-header {
-  @apply flex items-center gap-3 px-[22px] py-[18px];
+  @apply flex items-center gap-3 px-5 py-4;
   border-bottom: 1px solid var(--color-line-soft);
-  background: linear-gradient(90deg,
-    color-mix(in srgb, #dbeafe 35%, transparent) 0%,
-    transparent 42%,
-    color-mix(in srgb, #ede9fe 22%, transparent) 100%);
+  background: color-mix(in srgb, var(--color-raised) 55%, var(--color-surface));
 }
 .card-header + * {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 96%, transparent) 0%, var(--color-surface) 100%);
+  background: transparent;
+}
+
+/* Topbar toggle cluster (theme / YAML / blur) */
+.topbar-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--color-line-soft);
+  background: color-mix(in srgb, var(--color-raised) 70%, var(--color-surface));
+}
+.topbar-toggle {
+  @apply inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1.5 rounded-[7px] border border-transparent transition-colors cursor-pointer;
+  color: var(--color-ink-mut);
+  background: transparent;
+}
+.topbar-toggle:hover {
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+}
+.topbar-toggle.is-active {
+  color: #1d4ed8;
+  background: color-mix(in srgb, #dbeafe 70%, var(--color-surface));
+  border-color: color-mix(in srgb, #93c5fd 50%, transparent);
+  font-weight: 600;
+}
+.dark .topbar-toggle.is-active {
+  color: #bfdbfe;
+  background: color-mix(in srgb, #1e3a5f 55%, var(--color-surface));
+  border-color: color-mix(in srgb, #3b82f6 40%, transparent);
+}
+
+/* Toast variants */
+.toast-item {
+  @apply px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg flex items-center gap-2;
+  color: #fff;
+  background: #111827;
+  border: 1px solid transparent;
+  max-width: min(92vw, 420px);
+  animation: toast-in 0.2s ease-out;
+}
+.toast-item.is-error {
+  background: #1c1214;
+  border-color: color-mix(in srgb, #f43f5e 45%, transparent);
+}
+.toast-item.is-success {
+  background: #0f1720;
+  border-color: color-mix(in srgb, #34d399 30%, transparent);
+}
+.toast-item.is-info {
+  background: #0f172a;
+  border-color: color-mix(in srgb, #60a5fa 35%, transparent);
 }
 
 /* Visual polish helpers: slightly softer separators, calmer raised surfaces,
@@ -198,13 +242,11 @@ html, body {
 }
 .soft-panel {
   @apply rounded-[14px];
-  background:
-    linear-gradient(160deg, color-mix(in srgb, #eff6ff 55%, var(--color-surface)) 0%, var(--color-surface) 55%, color-mix(in srgb, #f5f3ff 40%, var(--color-surface)) 100%);
-  border: 1px solid color-mix(in srgb, var(--color-line) 80%, #93c5fd 20%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
   box-shadow:
-    0 1px 2px rgba(16, 24, 40, 0.04),
-    0 14px 36px -18px rgba(37, 99, 235, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    0 1px 2px rgba(16, 24, 40, 0.035),
+    0 8px 24px -18px rgba(16, 24, 40, 0.16);
 }
 .focus-ring {
   box-shadow: 0 0 0 3px color-mix(in srgb, rgb(37 99 235) 14%, transparent);
@@ -223,27 +265,23 @@ html, body {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 18px 20px;
-  border: 1px solid color-mix(in srgb, var(--color-line) 70%, #93c5fd 30%);
-  border-radius: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
   background:
-    radial-gradient(520px 180px at 0% 0%, color-mix(in srgb, #60a5fa 22%, transparent), transparent 60%),
-    radial-gradient(420px 160px at 100% 0%, color-mix(in srgb, #a78bfa 18%, transparent), transparent 55%),
-    linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 88%, #dbeafe 12%) 0%, var(--color-surface) 55%, color-mix(in srgb, var(--color-surface) 90%, #ede9fe 10%) 100%);
+    radial-gradient(480px 160px at 0% 0%, color-mix(in srgb, #60a5fa 10%, transparent), transparent 65%),
+    var(--color-surface);
   box-shadow:
-    0 1px 2px rgba(16, 24, 40, 0.04),
-    0 16px 40px -24px rgba(37, 99, 235, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 1px 2px rgba(16, 24, 40, 0.035),
+    0 10px 28px -20px rgba(16, 24, 40, 0.18);
 }
 .dark .identity-bar-inner {
   background:
-    radial-gradient(520px 180px at 0% 0%, rgba(59,130,246,0.22), transparent 60%),
-    radial-gradient(420px 160px at 100% 0%, rgba(139,92,246,0.18), transparent 55%),
-    linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 85%, #1e3a5f 15%) 0%, var(--color-surface) 100%);
+    radial-gradient(480px 160px at 0% 0%, rgba(59,130,246,0.12), transparent 65%),
+    var(--color-surface);
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 18px 42px -22px rgba(37, 99, 235, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 1px 2px rgba(0, 0, 0, 0.28),
+    0 12px 30px -20px rgba(0, 0, 0, 0.45);
 }
 .identity-avatar {
   width: 46px;
@@ -464,14 +502,12 @@ html, body {
 .stat-tile-teal::before { background: linear-gradient(180deg, #2dd4bf, #0f766e); }
 
 .detail-panel {
-  border: 1px solid color-mix(in srgb, var(--color-line) 80%, #93c5fd 20%);
-  border-radius: 16px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 92%, #eff6ff 8%) 0%, var(--color-surface) 40%);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: var(--color-surface);
   box-shadow:
-    0 1px 2px rgba(16, 24, 40, 0.04),
-    0 14px 34px -20px rgba(37, 99, 235, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    0 1px 2px rgba(16, 24, 40, 0.035),
+    0 8px 24px -18px rgba(16, 24, 40, 0.16);
   overflow: hidden;
 }
 .detail-panel-body {
@@ -482,11 +518,9 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 22px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--color-line-soft);
-  background: linear-gradient(90deg,
-    color-mix(in srgb, #dbeafe 40%, var(--color-raised)) 0%,
-    color-mix(in srgb, #ede9fe 28%, var(--color-surface)) 100%);
+  background: color-mix(in srgb, var(--color-raised) 55%, var(--color-surface));
 }
 .detail-panel-title {
   margin: 0;
@@ -504,12 +538,31 @@ html, body {
    mt-auto pins the sub-label to the bottom whether or not it carries text, so
    cards never drift out of alignment. */
 .stat-card {
-  @apply px-[22px] py-5 flex flex-col h-full min-h-[128px];
-  background:
-    linear-gradient(145deg, color-mix(in srgb, #dbeafe 28%, transparent) 0%, transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 94%, #eff6ff 6%), var(--color-surface));
+  @apply px-5 py-5 flex flex-col h-full min-h-[120px];
+  background: var(--color-surface);
 }
 .stat-card .stat-sub { @apply mt-auto pt-3 text-[12.5px]; }
+
+/* Attention list on dashboard */
+.attention-list { display: flex; flex-direction: column; }
+.attention-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--color-line-soft);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease;
+}
+.attention-item:last-child { border-bottom: 0; }
+.attention-item:hover { background: color-mix(in srgb, var(--color-raised) 55%, transparent); }
+.attention-dot {
+  width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; flex: none;
+}
+.attention-dot.danger { background: #f43f5e; box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15); }
+.attention-dot.warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+.attention-dot.info { background: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
 
 /* Table */
 .tbl { @apply w-full border-collapse text-sm; }
@@ -629,11 +682,10 @@ html, body {
    Encapsulates all sidebar colors so Layout.jsx stays declarative. */
 .sb-aside {
   background:
-    radial-gradient(420px 280px at 0% 0%, color-mix(in srgb, #93c5fd 22%, transparent), transparent 65%),
-    radial-gradient(360px 240px at 100% 100%, color-mix(in srgb, #c4b5fd 16%, transparent), transparent 60%),
+    radial-gradient(380px 240px at 0% 0%, color-mix(in srgb, #93c5fd 12%, transparent), transparent 70%),
     var(--sidebar-bg);
   border-right: 1px solid var(--sidebar-border);
-  box-shadow: 8px 0 28px -24px rgba(37, 99, 235, 0.35);
+  box-shadow: 6px 0 20px -18px rgba(16, 24, 40, 0.22);
 }
 .sb-text { color: var(--sidebar-text); }
 .sb-text-soft { color: var(--sidebar-text-soft); }

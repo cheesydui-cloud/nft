@@ -4,12 +4,17 @@ import { useState } from 'react'
    One look across admin and user pages so the two never drift apart again.
    Colors use semantic tokens (surface/ink/line) so dark mode comes for free. */
 
-/* Page title + item count, sits above the panel. */
-export function PageHeader({ title, count, unit = '条' }) {
+/* Page title + item count, sits above the panel.
+   Optional `actions` / `badge` render on the right for status pills or CTAs. */
+export function PageHeader({ title, count, unit = '条', badge, actions }) {
   return (
-    <div className="flex items-baseline gap-3.5 mb-[22px]">
-      <h1 className="m-0 text-2xl font-bold text-ink">{title}</h1>
-      {count != null && <span className="text-[14px] text-ink-mut">共 {count} {unit}</span>}
+    <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+      <div className="flex items-baseline gap-3.5 min-w-0">
+        <h1 className="m-0 text-[22px] font-bold tracking-tight text-ink">{title}</h1>
+        {count != null && <span className="text-[13.5px] text-ink-mut">共 {count} {unit}</span>}
+        {badge}
+      </div>
+      {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
     </div>
   )
 }
@@ -44,7 +49,16 @@ export function TableBox({ className = '', children }) {
 /* Toolbar row inside a Panel — typically a SearchInput plus a primary action. */
 export function PanelToolbar({ children }) {
   return (
-    <div className="flex items-center gap-4 px-[22px] py-[18px] border-b border-line-soft flex-wrap">
+    <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft flex-wrap">
+      {children}
+    </div>
+  )
+}
+
+/* Right-aligned action group for toolbars (keeps primary CTA on the right). */
+export function ToolbarActions({ children, className = '' }) {
+  return (
+    <div className={`ml-auto flex items-center gap-2 flex-wrap ${className}`}>
       {children}
     </div>
   )
@@ -208,14 +222,12 @@ function InfoRow({ label, accent, mono, children }) {
   )
 }
 
-/* Primary toolbar action; right-aligned by default. */
-export function ToolbarButton({ onClick, children, className = '', secondary }) {
-  const base = secondary
-    ? 'text-ink-soft bg-surface border border-line hover:bg-raised hover:text-ink'
-    : 'text-white bg-blue-600 hover:bg-blue-700 border-0'
+/* Toolbar action button. Place inside ToolbarActions (or any ml-auto flex group).
+   Primary uses brand gradient; secondary is quiet border style. */
+export function ToolbarButton({ onClick, children, className = '', secondary, type = 'button', disabled }) {
   return (
-    <button onClick={onClick}
-      className={`ml-auto inline-flex items-center gap-1.5 text-[13.5px] font-semibold px-4 py-[10px] rounded-[9px] cursor-pointer transition-colors ${base} ${className}`}>
+    <button type={type} onClick={onClick} disabled={disabled}
+      className={`${secondary ? 'btn-secondary' : 'btn-primary'} !h-[38px] ${className}`}>
       {children}
     </button>
   )

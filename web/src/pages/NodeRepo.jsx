@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, Badge, CopyText, Modal, useConfirm } from '../components/ui'
-import { PageHeader, Panel, PanelToolbar, ToolbarButton, TableScroll, SearchInput } from '../components/page'
+import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
 import { fmtDate, expiryBadge } from '../lib/fmt'
@@ -109,10 +109,10 @@ export default function NodeRepo() {
               <button onClick={bulkDelete} className="text-red-600 text-xs font-semibold px-3 py-1 rounded border border-red-200 hover:bg-red-50 dark:border-red-700 dark:hover:bg-red-900/20">删除选中 {sel.size}</button>
             </>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <ToolbarActions>
             <ToolbarButton onClick={() => setShowBulk(true)} secondary>批量导入</ToolbarButton>
             <ToolbarButton onClick={() => { setEditing(null); setShowForm(true) }}>＋ 添加节点</ToolbarButton>
-          </div>
+          </ToolbarActions>
         </PanelToolbar>
 
         <TableScroll>

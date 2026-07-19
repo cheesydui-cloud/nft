@@ -6,7 +6,7 @@ import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { Layout, useToast } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, useConfirm, Select, CopyText } from '../../components/ui'
-import { PageHeader, Panel, PanelToolbar, SearchInput, TableScroll } from '../../components/page'
+import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 
 export default function NodeList() {
   const [data, setData] = useState(null)
@@ -181,12 +181,12 @@ export default function NodeList() {
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索节点名称…" />
           {latest_agent_version && <span className="text-xs text-ink-mut whitespace-nowrap">agent {latest_agent_version}</span>}
-          <div className="ml-auto hidden md:flex gap-2">
-            <button onClick={() => setShowAdd(true)} className="btn-primary text-xs">+ 添加节点</button>
-            <button onClick={() => setShowComposite(true)} className="btn-primary text-xs">+ 组合节点</button>
-            <button onClick={resyncAll} className="btn-secondary text-xs">同步所有</button>
-            <button onClick={upgradeAll} className="btn-secondary text-xs">一键升级全部</button>
-          </div>
+          <ToolbarActions className="hidden md:flex">
+            <ToolbarButton onClick={resyncAll} secondary>同步所有</ToolbarButton>
+            <ToolbarButton onClick={upgradeAll} secondary>一键升级全部</ToolbarButton>
+            <ToolbarButton onClick={() => setShowComposite(true)} secondary>＋ 组合节点</ToolbarButton>
+            <ToolbarButton onClick={() => setShowAdd(true)}>＋ 添加节点</ToolbarButton>
+          </ToolbarActions>
         </PanelToolbar>
         <div className="flex items-center flex-wrap gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (

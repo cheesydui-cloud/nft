@@ -53,23 +53,28 @@ export function UserProvider({ children }) {
 
   const toast = useCallback((msg, type) => {
     const id = ++idRef.current
-    setToasts(prev => [...prev, { id, msg, type: type || 'success' }])
-    const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2000)
+    const kind = type || 'success'
+    setToasts(prev => [...prev.slice(-4), { id, msg, type: kind }])
+    // Errors stay a bit longer so operators can read them.
+    const ms = kind === 'error' ? 3600 : 2400
+    const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), ms)
     timersRef.current.push(timer)
   }, [])
 
   return (
-	    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser }}>
+    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser }}>
       <ToastCtx.Provider value={toast}>
         {children}
         {/* Toast stack */}
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none">
           {toasts.map(t => (
-            <div key={t.id} className="bg-gray-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg flex items-center gap-2 animate-toast">
+            <div key={t.id} className={`toast-item ${t.type === 'error' ? 'is-error' : t.type === 'info' ? 'is-info' : 'is-success'}`}>
               {t.type === 'error'
-                ? <svg className="w-4 h-4 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                : <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
-              {t.msg}
+                ? <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                : t.type === 'info'
+                ? <svg className="w-4 h-4 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                : <svg className="w-4 h-4 text-green-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+              <span className="leading-snug">{t.msg}</span>
             </div>
           ))}
         </div>
@@ -226,30 +231,32 @@ export function Layout({ children }) {
         {/* Content */}
         <main className="flex-1 min-w-0 flex flex-col">
           {/* Topbar */}
-          <div className="sticky top-0 z-20 h-[60px] flex-shrink-0 bg-app/85 backdrop-blur-sm border-b border-line px-4 sm:px-7 flex items-center gap-2">
+          <div className="sticky top-0 z-20 h-[56px] flex-shrink-0 bg-app/88 backdrop-blur-md border-b border-line px-4 sm:px-7 flex items-center gap-2">
             <button onClick={() => setSideOpen(true)} className="lg:hidden p-1 text-ink-soft hover:text-ink">
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
             <div className="flex-1" />
-            <button onClick={toggleTheme} title={isDark ? '切换到浅色' : '切换到深色'}
-              className="inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md border border-transparent text-ink-mut hover:bg-raised transition-colors">
-              {isDark ? (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-              )}
-              <span className="hidden sm:inline">{isDark ? '浅色' : '深色'}</span>
-            </button>
-            <button onClick={toggleCopyFmt} title="切换复制代理连接的格式（URI / YAML）"
-              className={`inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md border transition-colors ${copyFmt === 'yaml' ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-ink-mut border-transparent hover:bg-raised'}`}>
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/></svg>
-              {copyFmt === 'yaml' ? 'YAML' : 'URI'}
-            </button>
-            <button onClick={toggleBlur} title="模糊敏感信息"
-              className={`inline-flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md border transition-colors ${blurred ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-ink-mut border-transparent hover:bg-raised'}`}>
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              <span className="hidden sm:inline">脱敏</span>
-            </button>
+            <div className="topbar-toggles" role="group" aria-label="显示选项">
+              <button type="button" onClick={toggleTheme} title={isDark ? '切换到浅色' : '切换到深色'}
+                className="topbar-toggle">
+                {isDark ? (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+                ) : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+                )}
+                <span className="hidden sm:inline">{isDark ? '浅色' : '深色'}</span>
+              </button>
+              <button type="button" onClick={toggleCopyFmt} title="切换复制代理连接的格式（URI / YAML）"
+                className={`topbar-toggle ${copyFmt === 'yaml' ? 'is-active' : ''}`}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/></svg>
+                {copyFmt === 'yaml' ? 'YAML' : 'URI'}
+              </button>
+              <button type="button" onClick={toggleBlur} title="模糊敏感信息"
+                className={`topbar-toggle ${blurred ? 'is-active' : ''}`}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span className="hidden sm:inline">脱敏</span>
+              </button>
+            </div>
           </div>
 
           {/* Page content */}

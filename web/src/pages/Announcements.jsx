@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, Badge, useConfirm } from '../components/ui'
-import { PageHeader, Panel, PanelToolbar, ToolbarButton, TableScroll } from '../components/page'
+import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll } from '../components/page'
 import { fmtDate, isExpired } from '../lib/fmt'
 
 export default function Announcements() {
@@ -54,9 +54,9 @@ export default function Announcements() {
       <PageHeader title="公告管理" count={list?.length || 0} unit="条" />
       <Panel fill>
         <PanelToolbar>
-          <div className="ml-auto">
+          <ToolbarActions>
             <ToolbarButton onClick={() => setShowForm(true)}>＋ 发布公告</ToolbarButton>
-          </div>
+          </ToolbarActions>
         </PanelToolbar>
 
         <TableScroll>
