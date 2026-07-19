@@ -47,8 +47,8 @@ export default function UserConfigCard({ userId, expiresAt, maxForwards, quotaBy
   }
 
   return (
-    <form onSubmit={submit} className="mt-5">
-      <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-3 items-center max-w-lg">
+    <form onSubmit={submit}>
+      <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-3.5 items-center max-w-xl">
         <label className="fl">到期时间</label>
         <div>
           <input className="input-field font-mono" type="date" value={form.expiresAt} onChange={set('expiresAt')} />

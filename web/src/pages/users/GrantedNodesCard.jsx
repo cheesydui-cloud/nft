@@ -22,10 +22,10 @@ function PerNodeMaxForwardsForm({ userId, nodeId, maxForwards, onDone }) {
     } catch (err) { toast(err.message, 'error') }
   }
   return (
-    <form onSubmit={submit} className="inline-flex items-center gap-1.5">
-      <input className="input-field font-mono" type="number" min="1" value={val}
-        onChange={e => setVal(e.target.value)} style={{ width: 64 }} />
-      <button type="submit" className="btn-secondary text-xs">设上限</button>
+    <form onSubmit={submit} className="inline-flex items-center gap-1">
+      <input className="input-field font-mono !h-8 !text-xs !px-2" type="number" min="1" value={val}
+        onChange={e => setVal(e.target.value)} style={{ width: 56 }} />
+      <button type="submit" className="btn-secondary !h-8 !px-2.5 text-[11px]">设</button>
     </form>
   )
 }
@@ -43,11 +43,11 @@ function PerNodeQuotaForm({ userId, nodeId, quotaBytes, onDone }) {
     } catch (err) { toast(err.message, 'error') }
   }
   return (
-    <form onSubmit={submit} className="inline-flex items-center gap-1.5">
-      <input className="input-field font-mono" type="number" min="0" step="0.1" value={gb}
-        onChange={e => setGb(e.target.value)} style={{ width: 80 }} title="0 = 不限" />
-      <span className="text-xs text-ink-mut">GB</span>
-      <button type="submit" className="btn-secondary text-xs">设配额</button>
+    <form onSubmit={submit} className="inline-flex items-center gap-1">
+      <input className="input-field font-mono !h-8 !text-xs !px-2" type="number" min="0" step="0.1" value={gb}
+        onChange={e => setGb(e.target.value)} style={{ width: 64 }} title="0 = 不限" />
+      <span className="text-[11px] text-ink-mut">GB</span>
+      <button type="submit" className="btn-secondary !h-8 !px-2.5 text-[11px]">设</button>
     </form>
   )
 }
@@ -65,11 +65,11 @@ function PerNodeRateForm({ userId, nodeId, rateMBytes, onDone }) {
     } catch (err) { toast(err.message, 'error') }
   }
   return (
-    <form onSubmit={submit} className="inline-flex items-center gap-1.5">
-      <input className="input-field font-mono" type="number" min="0" value={mb}
-        onChange={e => setMb(e.target.value)} style={{ width: 64 }} title="0 = 不限，同节点所有规则共享" />
-      <span className="text-xs text-ink-mut">Mbps</span>
-      <button type="submit" className="btn-secondary text-xs">设限速</button>
+    <form onSubmit={submit} className="inline-flex items-center gap-1">
+      <input className="input-field font-mono !h-8 !text-xs !px-2" type="number" min="0" value={mb}
+        onChange={e => setMb(e.target.value)} style={{ width: 56 }} title="0 = 不限，同节点所有规则共享" />
+      <span className="text-[11px] text-ink-mut">Mbps</span>
+      <button type="submit" className="btn-secondary !h-8 !px-2.5 text-[11px]">设</button>
     </form>
   )
 }
@@ -186,7 +186,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
   )
 }
 
-function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeedLimitMBytes, onDone }) {
+function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeedLimitMBytes, onDone, embedded = false }) {
   const [tab, setTab] = useState('single')
   const [selected, setSelected] = useState(new Set())
   const [revoking, setRevoking] = useState(false)
@@ -248,10 +248,17 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
     copyToClipboard(text).then(() => toast(`已复制 ${nodes.length} 个节点授权`)).catch(() => toast('复制失败', 'error'))
   }
 
+  const shellClass = embedded
+    ? 'detail-panel'
+    : 'card mb-5 soft-panel'
+
   return (
-    <div className="card mb-5 soft-panel">
-      <div className="card-header">
-        <h3 className="text-sm font-bold">已授权节点</h3>
+    <div className={shellClass}>
+      <div className={embedded ? 'detail-panel-header' : 'card-header'}>
+        <div className="min-w-0">
+          <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>已授权节点</h3>
+          {embedded && <div className="detail-panel-sub">{nodes.length} 个节点 · 单点/组合配额与限速</div>}
+        </div>
         <div className="flex items-center gap-1.5 ml-auto">
           {nodes.length > 0 && <button onClick={copyGrants} className="btn-secondary text-xs">复制授权</button>}
           <button onClick={() => setShowPaste(true)} className="btn-secondary text-xs">粘贴授权</button>
@@ -261,8 +268,10 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => { setTab(key); setSelected(new Set()) }}
-              className={`px-3 py-0.5 rounded text-xs border transition-colors ${
-                tab === key ? 'bg-blue-500 text-white border-blue-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
+              className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                tab === key
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
               }`}>{label} {n}</button>
           ))}
           {selected.size > 0 && (
@@ -279,7 +288,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
             <th className="w-8"><input type="checkbox" className="accent-blue-600"
               checked={tabNodes.length > 0 && tabNodes.every(n => selected.has(n.id))}
               onChange={toggleAll} /></th>
-            <th>节点</th><th>类型</th><th>节点规则数上限</th><th className="px-3 py-2.5 text-left text-xs font-semibold text-ink-soft">流量配额</th><th className="px-3 py-2.5 text-left text-xs font-semibold text-ink-soft">限速</th><th className="px-3 py-2.5 text-left text-xs font-semibold text-ink-soft">已用</th><th className="px-3 py-2.5 text-left text-xs font-semibold text-ink-soft w-16"></th><th className="text-right">操作</th>
+            <th>节点</th><th>类型</th><th>规则上限</th><th>流量配额</th><th>限速</th><th>已用</th><th className="w-16"></th><th className="text-right">操作</th>
           </tr></thead>
           <tbody>
             {tabNodes.map(n => (
@@ -289,22 +298,22 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
                   <Link to={`/nodes/${n.id}`} className="text-blue-600 hover:underline">{n.name}</Link>
                 </td>
                 <td><NodeTypeBadge type={n.node_type} /></td>
-                <td className="px-3 py-2">
+                <td>
                   <PerNodeMaxForwardsForm userId={userId} nodeId={n.id} maxForwards={grantByNode[n.id]?.max_forwards} onDone={onDone} />
                 </td>
-                <td className="px-3 py-2">
+                <td>
                   <PerNodeQuotaForm userId={userId} nodeId={n.id} quotaBytes={grantByNode[n.id]?.traffic_quota_bytes} onDone={onDone} />
                 </td>
-                <td className="px-3 py-2">
+                <td>
                   <PerNodeRateForm userId={userId} nodeId={n.id} rateMBytes={grantByNode[n.id]?.rate_limit_mbytes} onDone={onDone} />
                   {!grantByNode[n.id]?.rate_limit_mbytes && userSpeedLimitMBytes > 0 && (
                     <div className="mt-1 text-[11px] text-ink-mut">取用户全局值 {userSpeedLimitMBytes} Mbps</div>
                   )}
                 </td>
-                <td className="px-3 py-2 font-mono text-sm">
+                <td className="font-mono text-sm">
                   {fmtTrafficGB(grantByNode[n.id]?.traffic_used_bytes, grantByNode[n.id]?.traffic_quota_bytes)}
                 </td>
-                <td className="px-3 py-2">
+                <td>
                   {grantByNode[n.id]?.traffic_quota_bytes > 0 && grantByNode[n.id]?.traffic_used_bytes > 0 && (
                     <button onClick={() => resetNodeTraffic(n.id)} className="btn-danger-sm text-xs">重置</button>
                   )}

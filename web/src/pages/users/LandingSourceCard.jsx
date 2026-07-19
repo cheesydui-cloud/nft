@@ -48,7 +48,7 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
-export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp }) {
+export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp, embedded = false }) {
   const blurred = blurredProp ?? useBlur()
   const [url, setUrl] = useState(subURL || '')
   const [text, setText] = useState(uris || '')
@@ -150,13 +150,22 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
   }
   const selectedNodes = preview.filter((_, i) => sel.has(i))
 
+  const shellClass = embedded ? 'detail-panel' : 'card mb-5 soft-panel'
+
   return (
-    <div className="card mb-5 soft-panel">
-      <div className="card-header">
-        <h3 className="text-sm font-bold">落地节点来源</h3>
-        <span className="text-xs text-ink-mut">{preview.length} 个节点</span>
+    <div className={shellClass}>
+      <div className={embedded ? 'detail-panel-header' : 'card-header'}>
+        <div className="min-w-0">
+          <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>落地节点来源</h3>
+          {embedded && (
+            <div className="detail-panel-sub">
+              {preview.length} 个节点 · {landingCount} 落地 · {directCount} 直连 · {unconfiguredCount} 未配置
+            </div>
+          )}
+        </div>
+        {!embedded && <span className="text-xs text-ink-mut">{preview.length} 个节点</span>}
       </div>
-      <div className="p-5">
+      <div className={embedded ? 'detail-panel-body space-y-4' : 'p-5'}>
         <form onSubmit={submit} className="space-y-3">
           <div>
             <label className="fl block mb-1.5">订阅地址 <span className="text-ink-mut font-normal text-xs">(可选，支持 Remnawave 等面板的订阅链接)</span></label>
@@ -165,7 +174,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
           </div>
           <div>
             <label className="fl block mb-1.5">手动节点 URI <span className="text-ink-mut font-normal text-xs">(可选，每行一条，可与订阅组合)</span></label>
-            <textarea className={`input-field font-mono w-full ${blurred ? 'blur-[5px]' : ''}`} rows={10} value={text} onChange={e => setText(e.target.value)}
+            <textarea className={`input-field font-mono w-full min-h-[120px] h-auto py-2.5 ${blurred ? 'blur-[5px]' : ''}`} rows={6} value={text} onChange={e => setText(e.target.value)}
               placeholder={'vless://…\ntrojan://…'} />
           </div>
           <div className="flex items-center gap-3">

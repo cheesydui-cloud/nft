@@ -61,6 +61,84 @@ export function SearchInput({ value, onChange, placeholder }) {
   )
 }
 
+/* ---------- IdentityBar: sticky detail identity strip (ops console) ---------- */
+export function IdentityBar({ backTo, backLabel, avatar, title, badge, chips, meta, actions }) {
+  return (
+    <div className="identity-bar sticky top-0 z-20 mb-4">
+      {backTo && (
+        <a href={backTo} className="inline-flex items-center gap-1 text-blue-600 text-[13px] font-semibold hover:underline mb-3">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          {backLabel || '返回列表'}
+        </a>
+      )}
+      <div className="identity-bar-inner">
+        <div className="flex items-start gap-3.5 min-w-0 flex-1">
+          {avatar && (
+            <div className="identity-avatar shrink-0" aria-hidden="true">{avatar}</div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="m-0 text-[22px] font-bold tracking-tight text-ink">{title}</h1>
+              {badge}
+            </div>
+            {meta && <p className="mt-1 text-[12.5px] text-ink-mut">{meta}</p>}
+            {chips && chips.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                {chips.map((c, i) => (
+                  <span key={i} className={`identity-chip ${c.tone || ''}`} title={c.title || undefined}>
+                    {c.label && <span className="identity-chip-label">{c.label}</span>}
+                    <span className="identity-chip-value">{c.value}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        {actions && (
+          <div className="flex items-center gap-2 flex-wrap shrink-0 pt-0.5">{actions}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- DetailTabs: workspace switcher under the identity bar ---------- */
+export function DetailTabs({ tabs, active, onChange }) {
+  return (
+    <div className="detail-tabs" role="tablist">
+      {tabs.map(t => {
+        const isActive = t.id === active
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(t.id)}
+            className={`detail-tab ${isActive ? 'is-active' : ''}`}
+          >
+            <span>{t.label}</span>
+            {t.count != null && (
+              <span className={`detail-tab-count ${isActive ? 'is-active' : ''}`}>{t.count}</span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/* Compact metric tile for overview dashboards. */
+export function StatTile({ label, value, hint, tone }) {
+  return (
+    <div className={`stat-tile ${tone ? `stat-tile-${tone}` : ''}`}>
+      <div className="stat-tile-label">{label}</div>
+      <div className="stat-tile-value">{value}</div>
+      {hint != null && hint !== '' && <div className="stat-tile-hint">{hint}</div>}
+    </div>
+  )
+}
+
 /* ---------- DetailHeader: 详情页顶部统一标题区 ---------- */
 export function DetailHeader({ title, badge, meta, actions, backTo, backLabel }) {
   return (

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
-import { fmtBytes } from '../../lib/fmt'
+import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur } from '../../components/Layout'
-import { Loading, Empty } from '../../components/ui'
-import { DetailHeader, SectionCard, TableBox } from '../../components/page'
-import UserInfoCard from './UserInfoCard'
+import { Loading, Empty, Badge, Modal } from '../../components/ui'
+import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
+import { copyToClipboard } from '../../lib/clipboard'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
 import LandingSourceCard from './LandingSourceCard'
@@ -17,8 +17,9 @@ export default function UserDetail() {
   const blurred = useBlur()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-
   const [allUsers, setAllUsers] = useState([])
+  const [tab, setTab] = useState('overview')
+  const [newPassword, setNewPassword] = useState(null)
 
   const load = () => {
     setLoading(true)
@@ -26,6 +27,7 @@ export default function UserDetail() {
   }
   useEffect(load, [id])
   useEffect(() => { api.get('/users').then(d => setAllUsers(d?.users || [])) }, [])
+  useEffect(() => { setTab('overview') }, [id])
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="用户不存在" /></Layout>
@@ -34,6 +36,11 @@ export default function UserDetail() {
   const nodeMap = Object.fromEntries(all_nodes.map(n => [n.id, n]))
   const isRegularUser = user.role === 'user'
   const expiresAt = user.expires_at && user.expires_at > 0 ? user.expires_at : null
+  const rate = user.billing_rate ?? 1
+  const billableUsed = (user.traffic_used_bytes || 0) * rate
+  const quota = user.traffic_quota_bytes || 0
+  const billablePct = quota > 0 ? Number(pct(billableUsed, quota)) : 0
+  const exp = expiresAt ? expiryBadge(expiresAt) : null
 
   const toggleUser = async () => {
     try { await api.post(`/users/${id}/toggle`); toast(user.disabled ? '已启用' : '已禁用'); load() } catch (err) { toast(err.message, 'error') }
@@ -47,33 +54,183 @@ export default function UserDetail() {
   const resetPassword = async () => {
     try {
       const d = await api.post(`/users/${id}/reset-password`)
+      if (d?.new_password) setNewPassword(d.new_password)
       return d
     } catch (err) { toast(err.message, 'error') }
   }
 
+  const statusBadge = user.disabled
+    ? <Badge color="amber">已禁用</Badge>
+    : <Badge color="green">正常</Badge>
+
+  const chips = isRegularUser ? [
+    {
+      label: '流量',
+      value: fmtTrafficGB(billableUsed, quota),
+      tone: quota > 0 && billablePct >= 100 ? 'tone-danger' : quota > 0 && billablePct >= 80 ? 'tone-warn' : 'tone-blue',
+      title: '用户视角（已用×计费倍率）',
+    },
+    {
+      label: '规则',
+      value: `${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`,
+    },
+    {
+      label: '节点',
+      value: `${nodes.length}`,
+    },
+    {
+      label: '落地',
+      value: `${landing_nodes.length}`,
+    },
+    {
+      label: '到期',
+      value: expiresAt ? fmtDate(expiresAt) : '永不过期',
+      tone: exp?.color === 'red' ? 'tone-danger' : exp?.color === 'gray' ? 'tone-warn' : '',
+    },
+    user.speed_limit_mbytes > 0 ? {
+      label: '限速',
+      value: `${user.speed_limit_mbytes} Mbps`,
+      tone: 'tone-blue',
+    } : null,
+  ].filter(Boolean) : []
+
+  const tabs = [{ id: 'overview', label: '概览' }]
+  if (isRegularUser) {
+    tabs.push(
+      { id: 'config', label: '配置' },
+      { id: 'grants', label: '授权节点', count: nodes.length },
+      { id: 'landing', label: '落地节点', count: landing_nodes.length },
+    )
+  }
+  tabs.push({ id: 'rules', label: '规则', count: rules.length })
+
+  // If role changes mid-session, fall back to overview rather than rendering empty.
+  const activeTab = tabs.some(t => t.id === tab) ? tab : 'overview'
+  const avatar = (user.username || '?').slice(0, 2).toUpperCase()
+
+  const overviewItems = isRegularUser
+    ? [
+        { label: '用户名', value: user.username, accent: true },
+        { label: '角色', value: <span className="font-mono">{user.role}</span> },
+        { label: '规则配额', value: <span className="font-mono">{rules.length} / {user.max_forwards || '∞'}</span> },
+        { label: '真实流量', value: (
+            <span className="font-mono">
+              {fmtTrafficGB(user.traffic_used_bytes, user.traffic_quota_bytes)}
+              {quota > 0 && ` (${pct(user.traffic_used_bytes, quota)}%)`}
+              {user.traffic_reset_days > 0 && <span className="text-ink-mut text-xs ml-1">每{user.traffic_reset_days}天重置</span>}
+            </span>
+          )},
+        { label: '用户视角流量', value: (
+            <span className="font-mono">
+              {fmtTrafficGB(billableUsed, quota)}
+              {quota > 0 && ` (${pct(billableUsed, quota)}%)`}
+              <span className="text-ink-mut text-xs ml-1">已用×{rate}</span>
+            </span>
+          )},
+        { label: '计费倍率', value: <span className="font-mono">×{rate}</span> },
+        { label: '全局限速', value: <span className="font-mono">{user.speed_limit_mbytes > 0 ? `${user.speed_limit_mbytes} Mbps` : '不限'}</span> },
+        { label: '到期时间', value: (
+            <span className="font-mono">
+              {expiresAt ? <>{fmtDate(expiresAt)}{exp ? <Badge color={exp.color} className="ml-1">{exp.label}</Badge> : null}</> : '永不过期'}
+            </span>
+          )},
+        { label: '状态', value: (
+            <span>
+              {user.disabled ? (
+                <><Badge color="amber">已禁用</Badge> <span className="text-ink-soft text-xs ml-1">原因：{nullStr(user.disable_reason)}</span></>
+              ) : <Badge color="green">正常</Badge>}
+            </span>
+          )},
+        ...(user.admin_note ? [{ label: '管理备注', value: <span className="text-ink-soft text-[13px]">{user.admin_note}</span> }] : []),
+      ]
+    : [
+        { label: '用户名', value: user.username, accent: true },
+        { label: '角色', value: <span className="font-mono">{user.role}</span> },
+      ]
+
+  const trafficTone = !quota ? 'blue'
+    : billablePct >= 100 ? 'danger'
+    : billablePct >= 80 ? 'warn'
+    : 'ok'
+
   return (
     <Layout>
-      <DetailHeader
-        title={user.username}
-        meta={`ID: ${user.id} · ${user.role}`}
+      <IdentityBar
         backTo="/users"
         backLabel="返回用户列表"
+        avatar={avatar}
+        title={user.username}
+        badge={statusBadge}
+        meta={`ID ${user.id} · ${user.role}`}
+        chips={chips}
+        actions={isRegularUser ? (
+          <>
+            <button onClick={toggleUser} className="btn-secondary text-xs">{user.disabled ? '启用' : '禁用'}</button>
+            <button onClick={resetTraffic} className="btn-secondary text-xs">重置流量</button>
+            <button onClick={resetPassword} className="btn-secondary text-xs">重置密码</button>
+            <button onClick={deleteUser} className="btn-secondary text-xs text-red-600 border-red-200 hover:border-red-400">删除</button>
+          </>
+        ) : null}
       />
 
-      <UserInfoCard
-        user={user}
-        rules={rules}
-        isRegularUser={isRegularUser}
-        onToggle={toggleUser}
-        onResetTraffic={resetTraffic}
-        onResetPassword={resetPassword}
-        onDelete={deleteUser}
-        load={load}
-      />
+      <DetailTabs tabs={tabs} active={activeTab} onChange={setTab} />
 
-      {isRegularUser && (
-        <SectionCard title="可编辑配置">
-          <div className="px-6 py-[22px]">
+      {activeTab === 'overview' && (
+        <div className="space-y-4">
+          {isRegularUser && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatTile
+                label="用户视角流量"
+                value={fmtTrafficGB(billableUsed, quota)}
+                hint={quota > 0 ? `已用 ${billablePct}% · 倍率 ×${rate}` : `倍率 ×${rate} · 不限额`}
+                tone={trafficTone}
+              />
+              <StatTile
+                label="规则使用"
+                value={`${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`}
+                hint={user.max_forwards > 0 ? '已用 / 配额' : '规则总数 · 不限配额'}
+                tone="blue"
+              />
+              <StatTile
+                label="授权节点"
+                value={String(nodes.length)}
+                hint="已授权转发节点"
+              />
+              <StatTile
+                label="到期时间"
+                value={expiresAt ? fmtDate(expiresAt) : '永不过期'}
+                hint={exp ? exp.label : '未设置到期'}
+                tone={exp?.color === 'red' ? 'danger' : exp?.color === 'gray' ? 'warn' : undefined}
+              />
+            </div>
+          )}
+
+          <div className="detail-panel">
+            <div className="detail-panel-header">
+              <h3 className="detail-panel-title">基本信息</h3>
+              {isRegularUser && (
+                <div className="flex items-center gap-2">
+                  <button type="button" className="btn-secondary text-xs" onClick={() => setTab('config')}>编辑配置</button>
+                  <button type="button" className="btn-secondary text-xs" onClick={() => setTab('grants')}>管理授权</button>
+                </div>
+              )}
+            </div>
+            <div className="detail-panel-body">
+              <InfoGrid items={overviewItems} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'config' && isRegularUser && (
+        <div className="detail-panel">
+          <div className="detail-panel-header">
+            <div>
+              <h3 className="detail-panel-title">可编辑配置</h3>
+              <div className="detail-panel-sub">到期、配额、限速与备注</div>
+            </div>
+          </div>
+          <div className="detail-panel-body">
             <UserConfigCard
               userId={id}
               expiresAt={expiresAt}
@@ -86,10 +243,10 @@ export default function UserDetail() {
               onDone={load}
             />
           </div>
-        </SectionCard>
+        </div>
       )}
 
-      {isRegularUser && (
+      {activeTab === 'grants' && isRegularUser && (
         <GrantedNodesCard
           userId={id}
           nodes={nodes}
@@ -98,49 +255,64 @@ export default function UserDetail() {
           allUsers={allUsers}
           userSpeedLimitMBytes={user.speed_limit_mbytes || 0}
           onDone={load}
+          embedded
         />
       )}
 
-      {isRegularUser && (
+      {activeTab === 'landing' && isRegularUser && (
         <LandingSourceCard
           userId={id}
           subURL={user.landing_sub_url}
           uris={user.landing_uris}
           nodes={landing_nodes}
           blurred={blurred}
+          embedded
         />
       )}
 
-      <SectionCard title="该用户的规则" subtitle={`${rules.length} 条`}>
-        {rules.length ? (
-          <TableBox>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>ID</th><th>名称</th><th>节点</th><th>入口</th><th>出口</th>
-                <th className="text-right">真实用量</th>
-                <th className="text-right">显示用量(×{user.billing_rate ?? 1})</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map(r => (
-                <tr key={r.id}>
-                  <td className="font-mono text-xs text-ink-mut">{r.id}</td>
-                  <td className="font-semibold">
-                    <Link to={`/rules/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link>
-                  </td>
-                  <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
-                  <td className="font-mono text-xs">--</td>
-                  <td className="font-mono text-xs">--</td>
-                  <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
-                  <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * (user.billing_rate ?? 1)))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </TableBox>
-        ) : <Empty title="该用户尚无规则" />}
-      </SectionCard>
+      {activeTab === 'rules' && (
+        <SectionCard title="该用户的规则" subtitle={`${rules.length} 条`}>
+          {rules.length ? (
+            <TableBox>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>ID</th><th>名称</th><th>节点</th><th>入口</th><th>出口</th>
+                    <th className="text-right">真实用量</th>
+                    <th className="text-right">显示用量(×{rate})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map(r => (
+                    <tr key={r.id}>
+                      <td className="font-mono text-xs text-ink-mut">{r.id}</td>
+                      <td className="font-semibold">
+                        <Link to={`/rules/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link>
+                      </td>
+                      <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
+                      <td className="font-mono text-xs">--</td>
+                      <td className="font-mono text-xs">--</td>
+                      <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
+                      <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableBox>
+          ) : <Empty title="该用户尚无规则" />}
+        </SectionCard>
+      )}
+
+      <Modal open={!!newPassword} onClose={() => setNewPassword(null)} title="新密码">
+        <p className="text-sm text-ink-soft mb-3">新密码只显示这一次，请复制并妥善保存。关闭后将无法再次查看。</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 font-mono text-sm bg-raised border border-line rounded-lg px-3 py-2.5 break-all select-all">{newPassword}</code>
+          <button onClick={() => copyToClipboard(newPassword).then(() => toast('已复制')).catch(() => toast('复制失败', 'error'))} className="btn-primary flex-none px-4">复制</button>
+        </div>
+        <div className="flex justify-end mt-5">
+          <button onClick={() => setNewPassword(null)} className="btn-secondary">关闭</button>
+        </div>
+      </Modal>
     </Layout>
   )
 }
