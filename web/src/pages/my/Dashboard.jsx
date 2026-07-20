@@ -142,8 +142,8 @@ export default function MyDashboard() {
           <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
             {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
               <button key={key} onClick={() => setTab(key)}
-                className={`px-3 py-0.5 rounded text-xs border transition-colors ${
-                  tab === key ? 'bg-blue-500 text-white border-blue-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
+                className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
+                  tab === key ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
                 }`}>{label} {n}</button>
             ))}
           </div>
@@ -258,7 +258,7 @@ function AnnouncementArea() {
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-[16px] font-bold">公告</h3>
           {unreadCount > 0 && (
-            <button onClick={markAllRead} className="text-xs text-blue-600 font-semibold hover:underline">全部已读</button>
+            <button onClick={markAllRead} className="text-xs text-emerald-600 font-semibold hover:underline">全部已读</button>
           )}
         </div>
         {loading ? (

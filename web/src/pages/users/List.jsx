@@ -128,7 +128,7 @@ export default function UserList() {
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索用户名…" />
           {sel.size > 0 && (
-            <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入分组 ({sel.size})</button>
+            <button onClick={() => setShowMove(true)} className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">移入分组 ({sel.size})</button>
           )}
           <ToolbarActions className="hidden md:flex">
             <ToolbarButton onClick={() => setShowPaste(true)} secondary>粘贴授权</ToolbarButton>
@@ -145,7 +145,7 @@ export default function UserList() {
           {/* Desktop table */}
           {!isMobile && <table className="tbl">
             <thead><tr>
-              <th className="w-8"><input type="checkbox" className="accent-blue-600"
+              <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
               <th className="w-12">ID</th><th>用户名</th><th>分组</th><th>角色</th><th>规则配额</th><th>流量</th><th>状态</th>
               <th className="cursor-pointer select-none whitespace-nowrap" onClick={toggleExpirySort}>到期{sortBy === 'expires_asc' ? ' ↑' : sortBy === 'expires_desc' ? ' ↓' : ''}</th>
@@ -157,10 +157,10 @@ export default function UserList() {
                 return (
                   <tr key={u.id} className="cursor-pointer" onClick={() => navigate(`/users/${u.id}`)}>
                     <td onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" className="accent-blue-600" checked={sel.has(u.id)} onChange={e => toggleSel(u.id, e)} />
+                      <input type="checkbox" className="accent-emerald-600" checked={sel.has(u.id)} onChange={e => toggleSel(u.id, e)} />
                     </td>
                     <td className="font-mono text-xs text-ink-mut">{u.id}</td>
-                    <td className="text-blue-600 font-semibold">{u.username}</td>
+                    <td className="text-emerald-600 font-semibold">{u.username}</td>
                     <td className="text-xs">{u.group_name ? <Badge color="blue">{u.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                     <td><span className="inline-flex items-center font-mono text-xs bg-raised text-ink-soft px-1.5 py-0.5 rounded">{u.role}</span></td>
                     <td className="font-mono">{u.role === 'user' ? `${u.rule_count || 0} / ${u.max_forwards}` : '--'}</td>
@@ -202,7 +202,7 @@ export default function UserList() {
             {filtered.map(u => (
               <Link key={u.id} to={`/users/${u.id}`} className="mobile-card block no-underline text-ink">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-blue-600">{u.username}</span>
+                  <span className="font-semibold text-emerald-600">{u.username}</span>
                   {u.disabled
                     ? <Badge color="amber">已禁用</Badge>
                     : <Badge color="green">正常</Badge>}

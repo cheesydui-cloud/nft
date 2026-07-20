@@ -65,7 +65,7 @@ export default function MyDocs() {
                     onClick={() => setActiveId(d.id)}
                     className={`text-left px-3 py-2.5 rounded-[10px] text-[13.5px] font-medium transition-colors ${
                       d.id === activeId
-                        ? 'bg-blue-500/12 text-blue-700 dark:text-blue-300'
+                        ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
                         : 'text-ink-soft hover:bg-raised hover:text-ink'
                     }`}
                   >

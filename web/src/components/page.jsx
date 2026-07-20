@@ -74,7 +74,7 @@ export function SearchInput({ value, onChange, placeholder }) {
     <div className="relative flex-1 min-w-0 md:min-w-[240px] md:max-w-[340px]">
       <svg className="w-4 h-4 absolute left-[13px] top-1/2 -translate-y-1/2 text-ink-mut pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-xl outline-none text-ink transition-all hover:border-blue-400/50 focus:border-blue-500 focus:shadow-[0_0_0_4px_rgba(59,130,246,0.12)]" />
+        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-2xl outline-none text-ink transition-all hover:border-emerald-400/50 focus:border-emerald-500 focus:shadow-[0_0_0_4px_rgba(16,185,129,0.14)]" />
     </div>
   )
 }
@@ -84,7 +84,7 @@ export function IdentityBar({ backTo, backLabel, avatar, title, badge, chips, me
   return (
     <div className="identity-bar sticky top-0 z-20 mb-4">
       {backTo && (
-        <a href={backTo} className="inline-flex items-center gap-1 text-blue-600 text-[13px] font-semibold hover:underline mb-3">
+        <a href={backTo} className="inline-flex items-center gap-1 text-emerald-600 text-[13px] font-semibold hover:underline mb-3">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           {backLabel || '返回列表'}
         </a>
@@ -162,7 +162,7 @@ export function DetailHeader({ title, badge, meta, actions, backTo, backLabel })
   return (
     <div className="mb-[22px]">
       {backTo && (
-        <a href={backTo} className="inline-flex items-center gap-1 text-blue-600 text-[13px] font-semibold hover:underline mb-3">
+        <a href={backTo} className="inline-flex items-center gap-1 text-emerald-600 text-[13px] font-semibold hover:underline mb-3">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           {backLabel || '返回列表'}
         </a>
@@ -231,7 +231,7 @@ function InfoRow({ label, accent, mono, children }) {
 export function ToolbarButton({ onClick, children, className = '', secondary, type = 'button', disabled }) {
   return (
     <button type={type} onClick={onClick} disabled={disabled}
-      className={`${secondary ? 'btn-secondary' : 'btn-primary'} !h-[38px] ${className}`}>
+      className={`${secondary ? 'btn-secondary' : 'btn-primary'} !h-[40px] ${className}`}>
       {children}
     </button>
   )

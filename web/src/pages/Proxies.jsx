@@ -106,8 +106,8 @@ export default function Proxies() {
         <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['all', '全部', allProxies.length], ['direct', '直连', directProxies.length], ['relay', '中转', relayProxies.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`px-3 py-0.5 rounded text-xs border transition-colors ${
-                tab === key ? 'bg-blue-500 text-white border-blue-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
+              className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
+                tab === key ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
               }`}>{label} {n}</button>
           ))}
           {filtered.length > 0 && (
@@ -164,7 +164,7 @@ export default function Proxies() {
                     <td className="text-right">
                       {text && (
                         <CopyText text={text}>
-                          <span className="text-blue-600 font-sans text-xs font-semibold">
+                          <span className="text-emerald-600 font-sans text-xs font-semibold">
                             {copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri) ? '复制YAML' : '复制'}
                           </span>
                         </CopyText>

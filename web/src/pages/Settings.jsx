@@ -69,7 +69,7 @@ export default function Settings() {
             <div className="flex items-center gap-6 mb-[22px]">
               <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">显示倍率</label>
               <button type="button" role="switch" aria-checked={form.show_rate_to_user}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.show_rate_to_user ? 'bg-blue-600' : 'bg-gray-600'}`}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.show_rate_to_user ? 'bg-emerald-600' : 'bg-gray-600'}`}
                 onClick={() => set('show_rate_to_user', !form.show_rate_to_user)}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.show_rate_to_user ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>

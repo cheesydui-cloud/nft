@@ -200,7 +200,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
             <TableBox>
             <table className="tbl">
               <thead><tr>
-                <th className="w-8"><input type="checkbox" className="accent-blue-600"
+                <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                   checked={preview.length > 0 && sel.size === preview.length} onChange={toggleSelAll} /></th>
                 <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th><th className="text-right">操作</th></tr></thead>
               <tbody>
@@ -210,7 +210,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                   const exceeded = ex && ex.quota_bytes > 0 && ex.used_bytes >= ex.quota_bytes
                   return (
                     <tr key={i}>
-                      <td><input type="checkbox" className="accent-blue-600" checked={sel.has(i)} onChange={() => toggleSel(i)} /></td>
+                      <td><input type="checkbox" className="accent-emerald-600" checked={sel.has(i)} onChange={() => toggleSel(i)} /></td>
                       <td><span className="font-semibold">{n.name}</span></td>
                       <td className="font-mono text-xs text-ink-soft">{n.protocol}</td>
                       <td className="font-mono text-xs"><SensText blurred={blurred}>{n.host}:{n.port}</SensText></td>
@@ -368,7 +368,7 @@ function RepoPicker({ userId, onClose, onDone }) {
 
   return (
     <Modal open onClose={onClose} title="从落地仓库导入">
-      {selected.size > 0 && <div className="text-xs text-blue-600 font-semibold mb-3">已选 {selected.size} 个</div>}
+      {selected.size > 0 && <div className="text-xs text-emerald-600 font-semibold mb-3">已选 {selected.size} 个</div>}
       {loading ? (
             <div className="text-sm text-ink-mut text-center py-8">加载中…</div>
           ) : repoNodes.length === 0 ? (
@@ -377,7 +377,7 @@ function RepoPicker({ userId, onClose, onDone }) {
             <div className="space-y-1.5">
               {repoNodes.map(n => (
                 <label key={n.id} className="flex items-center gap-3 text-sm cursor-pointer py-2 px-3 rounded-lg hover:bg-raised transition-colors border border-transparent hover:border-line">
-                  <input type="checkbox" className="accent-blue-600" checked={selected.has(n.id)} onChange={() => toggle(n.id)} />
+                  <input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggle(n.id)} />
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold truncate">{n.name}</div>
                     <div className="text-xs text-ink-mut font-mono">{n.protocol || '—'} · {n.host}:{n.port}</div>

@@ -95,11 +95,11 @@ export default function RulesDetail() {
             <span className="font-semibold">{rule.name}</span>
             {rule.owner_id?.Valid && <><span className="text-ink-soft font-semibold">用户</span>
             <span className="font-semibold">
-              <Link to={`/users/${rule.owner_id.Int64}`} className="text-blue-600 hover:underline">{rule.owner_name}</Link>
+              <Link to={`/users/${rule.owner_id.Int64}`} className="text-emerald-600 hover:underline">{rule.owner_name}</Link>
             </span></>}
             <span className="text-ink-soft font-semibold">节点</span>
             <span className="inline-flex items-center gap-1.5 font-mono">
-              {node ? <Link to={`/nodes/${node.id}`} className="text-blue-600 hover:underline">{node.name}</Link> : `#${rule.node_id}`}
+              {node ? <Link to={`/nodes/${node.id}`} className="text-emerald-600 hover:underline">{node.name}</Link> : `#${rule.node_id}`}
             </span>
             <span className="text-ink-soft font-semibold">协议</span>
             <span><ProtoBadge proto={rule.proto} /></span>
@@ -136,7 +136,7 @@ export default function RulesDetail() {
                 return (
                   <tr key={h.position}>
                     <td className="font-mono text-xs text-ink-mut">{h.position + 1}</td>
-                    <td className="font-semibold"><Link to={`/nodes/${h.node_id}`} className="text-blue-600 hover:underline">{hopNode?.name || `#${h.node_id}`}</Link></td>
+                    <td className="font-semibold"><Link to={`/nodes/${h.node_id}`} className="text-emerald-600 hover:underline">{hopNode?.name || `#${h.node_id}`}</Link></td>
                     <td className="font-mono text-xs text-ink-soft">{viaNode?.name || `#${h.via_node_id}`}</td>
                     <td className="font-mono">:{h.listen_port}</td>
                     <td className="font-mono"><SensText blurred={blurred}>{h.target_host ? `${h.target_host}:${h.target_port}` : '--'}</SensText></td>
@@ -158,7 +158,7 @@ export default function RulesDetail() {
       <div className="flex items-center gap-3 flex-wrap mt-5">
         <button onClick={() => setShowEdit(true)} className="btn-primary text-xs">编辑规则</button>
         <button onClick={deleteRule} className="btn-secondary text-xs">删除规则</button>
-        <Link to={backTo} className="text-blue-600 text-[13px] font-semibold hover:underline inline-flex items-center gap-1">
+        <Link to={backTo} className="text-emerald-600 text-[13px] font-semibold hover:underline inline-flex items-center gap-1">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           返回规则列表
         </Link>

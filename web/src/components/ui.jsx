@@ -36,7 +36,7 @@ const badgeColors = {
   amber: 'bg-amber-500/[.14] text-amber-700 dark:text-amber-300 border-amber-500/35',
   red: 'bg-rose-500/[.14] text-rose-700 dark:text-rose-300 border-rose-500/35',
   gray: 'bg-raised text-ink-soft border-line',
-  blue: 'bg-blue-500/[.14] text-blue-700 dark:text-blue-300 border-blue-500/35',
+  blue: 'bg-sky-500/[.14] text-sky-700 dark:text-sky-300 border-sky-500/35',
   violet: 'bg-violet-500/[.14] text-violet-700 dark:text-violet-300 border-violet-500/35',
   teal: 'bg-teal-500/[.14] text-teal-700 dark:text-teal-300 border-teal-500/35',
   cyan: 'bg-cyan-500/[.14] text-cyan-700 dark:text-cyan-300 border-cyan-500/35',
@@ -75,7 +75,7 @@ export function NodeTypeBadge({ type }) {
 export function NodeTypeIcon({ type }) {
   if (!type) return null
   if (type === 'composite') return <span className="inline-flex text-violet-500 flex-none" title="组合节点">{nodeTypeIcon.composite}</span>
-  if (type === 'self') return <span className="inline-flex text-blue-500 flex-none" title="面板自身">{nodeTypeIcon.self}</span>
+  if (type === 'self') return <span className="inline-flex text-emerald-500 flex-none" title="面板自身">{nodeTypeIcon.self}</span>
   return <span className="inline-flex flex-none" title="单点节点">{nodeTypeIcon.single}</span>
 }
 
@@ -169,7 +169,7 @@ export function ErrorState({ title = '加载失败', desc, onRetry }) {
 export function Loading() {
   return (
     <div className="flex items-center justify-center py-20">
-      <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
     </div>
   )
 }
@@ -257,7 +257,7 @@ export function ProbeButton({ target, nodeId }) {
   return (
     <span className="inline-flex items-center gap-2">
       <button onClick={probe} disabled={state === 'loading'}
-        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-blue-500 hover:text-blue-600 disabled:opacity-50">
+        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50">
         {state === 'loading' ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
@@ -295,7 +295,7 @@ export function ProbeChainButton({ chainId, ruleId }) {
   return (
     <span className="inline-flex items-center gap-2">
       <button onClick={probe} disabled={state === 'loading'}
-        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-blue-500 hover:text-blue-600 disabled:opacity-50">
+        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50">
         {state === 'loading' ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
@@ -387,9 +387,9 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
     return (
       <button key={String(o.value)} type="button"
         onClick={() => choose(o)}
-        className={`w-full text-left px-3 py-1.5 text-[13.5px] transition-colors hover:bg-raised flex items-center gap-2 ${sel ? 'text-blue-600 font-semibold' : 'text-ink'}`}>
+        className={`w-full text-left px-3 py-1.5 text-[13.5px] transition-colors hover:bg-raised flex items-center gap-2 ${sel ? 'text-emerald-600 font-semibold' : 'text-ink'}`}>
         {multiple && (
-          <span className={`w-3.5 h-3.5 flex-none rounded border flex items-center justify-center ${sel ? 'bg-blue-600 border-blue-600' : 'border-line'}`}>
+          <span className={`w-3.5 h-3.5 flex-none rounded border flex items-center justify-center ${sel ? 'bg-emerald-600 border-emerald-600' : 'border-line'}`}>
             {sel && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
           </span>
         )}
@@ -414,7 +414,7 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
             <div className="flex border-b border-line-soft">
               {sections.map((s, i) => (
                 <button key={i} type="button" onClick={() => setActiveTab(i)}
-                  className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-blue-500 border-b-2 border-blue-600 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
+                  className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-emerald-600 border-b-2 border-emerald-600 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
                   {s.label} <span className="text-ink-mut font-normal">{s.options.length}</span>
                 </button>
               ))}

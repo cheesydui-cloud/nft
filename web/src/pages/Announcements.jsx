@@ -180,14 +180,14 @@ function AnnouncementForm({ users, onClose, onDone }) {
                 多选用户
               </label>
               {targetMode === 'select' && selectedIds.length > 0 && (
-                <span className="text-xs text-blue-600 font-semibold">已选 {selectedIds.length} 人</span>
+                <span className="text-xs text-emerald-600 font-semibold">已选 {selectedIds.length} 人</span>
               )}
             </div>
             {targetMode === 'select' && (
               <div className="border border-line rounded-lg p-3 max-h-[200px] overflow-y-auto">
                 <div className="flex items-center gap-2 mb-2">
                   <input className="input-field flex-1" placeholder="搜索用户名…" value={search} onChange={e => setSearch(e.target.value)} />
-                  <button type="button" onClick={() => setSelectedIds(filteredUsers.map(u => u.id))} className="text-xs text-blue-600 font-semibold px-2 py-1 hover:underline whitespace-nowrap">全选</button>
+                  <button type="button" onClick={() => setSelectedIds(filteredUsers.map(u => u.id))} className="text-xs text-emerald-600 font-semibold px-2 py-1 hover:underline whitespace-nowrap">全选</button>
                   <button type="button" onClick={() => setSelectedIds([])} className="text-xs text-ink-mut font-semibold px-2 py-1 hover:underline whitespace-nowrap">清空</button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">

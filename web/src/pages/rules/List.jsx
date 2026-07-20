@@ -269,7 +269,7 @@ function FilterDropdown({ label, icon, options, selected, onChange, searchPlaceh
         {icon}
         {label}
         {selected.size > 0 && (
-          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-bold inline-flex items-center justify-center">
+          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-600 text-white text-[11px] font-bold inline-flex items-center justify-center">
             {selected.size}
           </span>
         )}
@@ -290,7 +290,7 @@ function FilterDropdown({ label, icon, options, selected, onChange, searchPlaceh
               return (
                 <div key={o.value} onClick={() => toggle(o.value)}
                   className="flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg cursor-pointer text-[13px] text-ink hover:bg-raised transition-colors">
-                  <span className={`w-4 h-4 flex-none rounded border flex items-center justify-center ${checked ? 'bg-blue-600 border-blue-600' : 'border-line'}`}>
+                  <span className={`w-4 h-4 flex-none rounded border flex items-center justify-center ${checked ? 'bg-emerald-600 border-emerald-600' : 'border-line'}`}>
                     {checked && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
                   </span>
                   <span className="truncate">{o.label}</span>

@@ -135,7 +135,7 @@ export function ProxyURIEditor({ username, blurred }) {
 
         {/* Subscription URL input */}
         <button type="button" onClick={() => setShowSub(v => !v)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-500 mb-2 self-start transition-colors">
+          className="inline-flex items-center gap-1.5 text-[13px] text-emerald-600 hover:text-emerald-500 mb-2 self-start transition-colors">
           <svg className={`w-3 h-3 transition-transform ${showSub ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           订阅地址{subNodes.length > 0 && <span className="text-ink-mut">（{subNodes.length} 个节点）</span>}
         </button>
@@ -159,7 +159,7 @@ export function ProxyURIEditor({ username, blurred }) {
           <div className="mb-4 border border-line rounded-[10px] overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 bg-raised text-[12px]">
               <span className="text-ink-soft font-semibold flex items-center gap-2">
-                <input type="checkbox" className="accent-blue-600"
+                <input type="checkbox" className="accent-emerald-600"
                   checked={subNodes.length > 0 && selSub.size === subNodes.length}
                   onChange={toggleSelAll(setSelSub, subNodes.length)} />
                 {subNodes.length} 个节点
@@ -173,7 +173,7 @@ export function ProxyURIEditor({ username, blurred }) {
                 <tbody>
                   {subNodes.map((n, i) => (
                     <tr key={i} className="border-t border-line-soft">
-                      <td className="pl-3 py-1.5 w-6"><input type="checkbox" className="accent-blue-600"
+                      <td className="pl-3 py-1.5 w-6"><input type="checkbox" className="accent-emerald-600"
                         checked={selSub.has(i)} onChange={() => toggleSel(setSelSub)(i)} /></td>
                       <td className="px-2 py-1.5 truncate max-w-[200px]" title={n.name}>{n.name || '(未命名)'}</td>
                       <td className="px-2 py-1.5 text-ink-mut font-mono text-[11px]">{n.protocol}</td>
@@ -202,7 +202,7 @@ export function ProxyURIEditor({ username, blurred }) {
         {manualParsed.length > 0 && (
           <>
             <button type="button" onClick={() => setShowManualConfig(v => !v)}
-              className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-500 mt-3 self-start transition-colors">
+              className="inline-flex items-center gap-1.5 text-[13px] text-emerald-600 hover:text-emerald-500 mt-3 self-start transition-colors">
               <svg className={`w-3 h-3 transition-transform ${showManualConfig ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
               配置表<span className="text-ink-mut">（{manualParsed.length} 个节点）</span>
             </button>
@@ -210,7 +210,7 @@ export function ProxyURIEditor({ username, blurred }) {
               <div className="mt-2 border border-line rounded-[10px] overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 bg-raised text-[12px]">
                   <span className="text-ink-soft font-semibold flex items-center gap-2">
-                    <input type="checkbox" className="accent-blue-600"
+                    <input type="checkbox" className="accent-emerald-600"
                       checked={manualParsed.length > 0 && selManual.size === manualParsed.length}
                       onChange={toggleSelAll(setSelManual, manualParsed.length)} />
                     {manualParsed.length} 个节点
@@ -224,7 +224,7 @@ export function ProxyURIEditor({ username, blurred }) {
                     <tbody>
                       {manualParsed.map((n, i) => (
                         <tr key={i} className="border-t border-line-soft">
-                          <td className="pl-3 py-1.5 w-6"><input type="checkbox" className="accent-blue-600"
+                          <td className="pl-3 py-1.5 w-6"><input type="checkbox" className="accent-emerald-600"
                             checked={selManual.has(i)} onChange={() => toggleSel(setSelManual)(i)} /></td>
                           <td className="px-2 py-1.5 truncate max-w-[200px]" title={n.name}>{n.name || '(未命名)'}</td>
                           <td className="px-2 py-1.5 text-ink-mut font-mono text-[11px]">{n.protocol}</td>

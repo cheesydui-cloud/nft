@@ -105,7 +105,7 @@ export default function NodeRepo() {
           <SearchInput value={search} onChange={setSearch} placeholder="搜索名称、协议、地址…" />
           {sel.size > 0 && (
             <>
-              <button onClick={() => setShowMove(true)} className="text-blue-600 text-xs font-semibold px-3 py-1 rounded border border-blue-200 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-900/20">移入分组 ({sel.size})</button>
+              <button onClick={() => setShowMove(true)} className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">移入分组 ({sel.size})</button>
               <button onClick={bulkDelete} className="text-red-600 text-xs font-semibold px-3 py-1 rounded border border-red-200 hover:bg-red-50 dark:border-red-700 dark:hover:bg-red-900/20">删除选中 {sel.size}</button>
             </>
           )}
@@ -123,13 +123,13 @@ export default function NodeRepo() {
         ) : (<>
           {!isMobile && <table className="tbl">
             <thead><tr>
-              <th className="w-8"><input type="checkbox" className="accent-blue-600"
+              <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
               <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map(n => (
                 <tr key={n.id}>
-                  <td><input type="checkbox" className="accent-blue-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} /></td>
+                  <td><input type="checkbox" className="accent-emerald-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} /></td>
                   <td className="font-semibold">{n.name}</td>
                   <td className="text-xs">{n.group_name ? <Badge color="blue">{n.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                   <td className="font-mono text-xs text-ink-soft">{n.protocol || '—'}</td>
@@ -143,8 +143,8 @@ export default function NodeRepo() {
                   <td className="text-xs text-ink-mut">{new Date(n.created_at * 1000).toLocaleDateString('zh-CN')}</td>
                   <td className="text-right">
                     <div className="inline-flex items-center gap-3">
-                      {n.uri && <CopyText text={n.uri}><span className="text-blue-600 text-xs font-semibold hover:underline cursor-pointer">复制</span></CopyText>}
-                      <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-blue-600 text-xs font-semibold hover:underline">编辑</button>
+                      {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold hover:underline cursor-pointer">复制</span></CopyText>}
+                      <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
                       <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
                     </div>
                   </td>
@@ -157,12 +157,12 @@ export default function NodeRepo() {
               <div key={n.id} className="mobile-card">
                 <div className="flex items-center justify-between mb-1">
                   <label className="flex items-center gap-2 font-semibold">
-                    <input type="checkbox" className="accent-blue-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} />
+                    <input type="checkbox" className="accent-emerald-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} />
                     {n.name}
                   </label>
                   <span className="inline-flex items-center gap-2">
-                    {n.uri && <CopyText text={n.uri}><span className="text-blue-600 text-xs font-semibold">复制</span></CopyText>}
-                    <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-blue-600 text-xs font-semibold">编辑</button>
+                    {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold">复制</span></CopyText>}
+                    <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold">编辑</button>
                     <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold">删除</button>
                   </span>
                 </div>

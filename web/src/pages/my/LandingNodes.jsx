@@ -70,7 +70,7 @@ export default function MyLandingNodes() {
           {stale && <span className="text-xs text-amber-600 ml-2">订阅刷新失败，显示上次结果</span>}
           {hasDynamic && (
             <button onClick={refresh} disabled={refreshing}
-              className="ml-auto inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-ink-soft bg-surface border border-line hover:border-blue-500 hover:text-blue-600 px-[18px] py-[9px] rounded-[10px] transition-colors disabled:opacity-50">
+              className="ml-auto inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-ink-soft bg-surface border border-line hover:border-emerald-500 hover:text-emerald-600 px-[18px] py-[9px] rounded-[10px] transition-colors disabled:opacity-50">
               {refreshing ? '刷新中…' : '刷新订阅'}
             </button>
           )}
@@ -78,7 +78,7 @@ export default function MyLandingNodes() {
 
         <TableScroll>
         {nodes.length === 0 ? (
-          <Empty title="暂无落地节点" desc={<>在<Link to="/my" className="text-blue-600 font-semibold">概览页</Link>添加你的代理 URI，或联系管理员配置订阅。</>} />
+          <Empty title="暂无落地节点" desc={<>在<Link to="/my" className="text-emerald-600 font-semibold">概览页</Link>添加你的代理 URI，或联系管理员配置订阅。</>} />
         ) : filtered.length === 0 ? (
           <Empty title="无匹配节点" desc="试试别的关键词。" />
         ) : (
@@ -105,7 +105,7 @@ export default function MyLandingNodes() {
                   </td>
                   <td>{n.source === 'local' ? <Badge color="blue">本地</Badge> : <Badge color="gray">分配</Badge>}</td>
                   <td className="text-right">
-                    <CopyText text={`${n.host}:${n.port}`}><span className="text-blue-600 font-sans text-xs font-semibold">复制</span></CopyText>
+                    <CopyText text={`${n.host}:${n.port}`}><span className="text-emerald-600 font-sans text-xs font-semibold">复制</span></CopyText>
                   </td>
                 </tr>
               ))}

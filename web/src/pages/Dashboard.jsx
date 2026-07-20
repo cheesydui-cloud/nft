@@ -114,7 +114,7 @@ export default function Dashboard() {
               <tbody>
                 {nodes.map(n => (
                   <tr key={n.id}>
-                    <td><Link to={`/nodes/${n.id}`} className="font-semibold text-blue-600 hover:underline">{n.name}</Link></td>
+                    <td><Link to={`/nodes/${n.id}`} className="font-semibold text-emerald-600 hover:underline">{n.name}</Link></td>
                     <td className="font-mono text-xs text-ink-soft"><SensText blurred={blurred}>{n.relay_host || n.address || '--'}</SensText></td>
                     <td><NodeTypeBadge type={n.node_type} /></td>
                     <td className="font-mono text-ink-soft">{ruleCount[n.id] || 0}</td>
@@ -130,7 +130,7 @@ export default function Dashboard() {
               {nodes.map(n => (
                 <Link key={n.id} to={`/nodes/${n.id}`} className="mobile-card block no-underline text-ink">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-semibold text-blue-600">{n.name}</span>
+                    <span className="font-semibold text-emerald-600">{n.name}</span>
                     <NodeStatus node={n} />
                   </div>
                   <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">

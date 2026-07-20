@@ -30,7 +30,7 @@ export default function FolderBar({
       onClick={() => onFilter(key)}
       className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors whitespace-nowrap ${
         active
-          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
           : 'bg-surface text-ink-soft border-line hover:bg-raised hover:text-ink'
       }`}
     >
@@ -100,7 +100,7 @@ export default function FolderBar({
               <button
                 type="button"
                 title="重命名"
-                className="text-ink-mut hover:text-blue-600 p-0.5"
+                className="text-ink-mut hover:text-emerald-600 p-0.5"
                 onClick={() => { setRenaming(f); setName(f.name) }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -119,7 +119,7 @@ export default function FolderBar({
         <button
           type="button"
           onClick={() => { setShowCreate(true); setName('') }}
-          className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-dashed border-line text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+          className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-dashed border-line text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
         >
           ＋ 新建分组
         </button>

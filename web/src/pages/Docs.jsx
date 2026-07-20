@@ -132,11 +132,11 @@ export default function Docs() {
                           <button type="button" disabled={idx === list.length - 1} onClick={() => move(d, 'down')}
                             className="text-xs font-semibold text-ink-soft hover:text-ink disabled:opacity-30">下移</button>
                           <button type="button" onClick={() => togglePub(d)}
-                            className="text-xs font-semibold text-blue-600 hover:underline">
+                            className="text-xs font-semibold text-emerald-600 hover:underline">
                             {d.published ? '下架' : '发布'}
                           </button>
                           <button type="button" onClick={() => setEditing({ id: d.id })}
-                            className="text-xs font-semibold text-blue-600 hover:underline">编辑</button>
+                            className="text-xs font-semibold text-emerald-600 hover:underline">编辑</button>
                           <button type="button" onClick={() => del(d)}
                             className="text-xs font-semibold text-red-600 hover:underline">删除</button>
                         </div>
@@ -259,7 +259,7 @@ function DocEditor({ doc, onCancel, onSaved }) {
               autoFocus
             />
             <label className="inline-flex items-center gap-2 text-sm font-semibold text-ink-soft cursor-pointer whitespace-nowrap">
-              <input type="checkbox" className="accent-blue-600" checked={published} onChange={e => setPublished(e.target.checked)} />
+              <input type="checkbox" className="accent-emerald-600" checked={published} onChange={e => setPublished(e.target.checked)} />
               发布给用户
             </label>
           </div>

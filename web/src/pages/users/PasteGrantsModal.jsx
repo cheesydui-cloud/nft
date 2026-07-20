@@ -73,7 +73,7 @@ export default function PasteGrantsModal({ open, onClose, onDone, allNodes, allU
             options={userOptions} />
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" className="accent-blue-600" checked={applySettings} onChange={e => setApplySettings(e.target.checked)} />
+          <input type="checkbox" className="accent-emerald-600" checked={applySettings} onChange={e => setApplySettings(e.target.checked)} />
           应用文本中的 per-node 设置
         </label>
         {parsed.length > 0 && (

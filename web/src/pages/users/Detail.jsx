@@ -322,19 +322,19 @@ export default function UserDetail() {
                       <tr key={r.id}>
                         <td className="font-mono text-xs text-ink-mut">{r.id}</td>
                         <td className="font-semibold">
-                          <Link to={`/rules/${r.id}`} className="text-blue-600 hover:underline">{r.name}</Link>
+                          <Link to={`/rules/${r.id}`} className="text-emerald-600 hover:underline">{r.name}</Link>
                         </td>
                         <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
                         <td className="font-mono text-xs whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
                             <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
-                            <span className="text-blue-600">↓{fmtSpeed(sp.down)}</span>
+                            <span className="text-emerald-600">↓{fmtSpeed(sp.down)}</span>
                           </span>
                         </td>
                         <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
                         <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
                         <td className="text-right">
-                          <button onClick={copyRuleLink} className="text-blue-600 text-xs font-semibold hover:underline">复制</button>
+                          <button onClick={copyRuleLink} className="text-emerald-600 text-xs font-semibold hover:underline">复制</button>
                         </td>
                       </tr>
                     )

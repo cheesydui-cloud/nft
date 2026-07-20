@@ -83,7 +83,7 @@ export default function MyRuleDetail() {
     <Layout>
       <div className="h-full flex flex-col">
       <div className="flex items-baseline gap-3.5 mb-[22px]">
-        <Link to="/my/rules" className="text-blue-600 text-[13px] font-semibold hover:underline inline-flex items-center gap-1">
+        <Link to="/my/rules" className="text-emerald-600 text-[13px] font-semibold hover:underline inline-flex items-center gap-1">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           我的规则
         </Link>

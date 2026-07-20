@@ -92,9 +92,9 @@ function ExitNameCell({ userId, name, exit, onDone }) {
   if (!editing) return (
     <button type="button" onClick={start}
       title={exit.name_override ? `原名称: ${name || '(未命名)'}` : '点击改名'}
-      className="font-semibold text-left hover:text-blue-600 transition-colors">
+      className="font-semibold text-left hover:text-emerald-600 transition-colors">
       {effective}
-      {exit.name_override && <span className="text-blue-500 ml-1">*</span>}
+      {exit.name_override && <span className="text-emerald-500 ml-1">*</span>}
     </button>
   )
   return (
@@ -151,7 +151,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
   const [max, setMax] = useState('10')
   const [loading, setLoading] = useState(false)
   const toast = useToast()
-  if (!allNodes?.length) return <Empty desc={<Link to="/nodes" className="text-blue-600 text-xs font-semibold">请先创建节点</Link>} />
+  if (!allNodes?.length) return <Empty desc={<Link to="/nodes" className="text-emerald-600 text-xs font-semibold">请先创建节点</Link>} />
 
   const grantedIds = new Set((grantedNodes || []).map(n => n.id))
   const available = allNodes.filter(n => !grantedIds.has(n.id))
@@ -270,7 +270,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
             <button key={key} onClick={() => { setTab(key); setSelected(new Set()) }}
               className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${
                 tab === key
-                  ? 'bg-blue-600 text-white border-blue-600'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
                   : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
               }`}>{label} {n}</button>
           ))}
@@ -285,7 +285,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         <TableBox>
         <table className="tbl">
           <thead><tr>
-            <th className="w-8"><input type="checkbox" className="accent-blue-600"
+            <th className="w-8"><input type="checkbox" className="accent-emerald-600"
               checked={tabNodes.length > 0 && tabNodes.every(n => selected.has(n.id))}
               onChange={toggleAll} /></th>
             <th>节点</th><th>类型</th><th>规则上限</th><th>流量配额</th><th>限速</th><th>已用</th><th className="w-16"></th><th className="text-right">操作</th>
@@ -293,9 +293,9 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
           <tbody>
             {tabNodes.map(n => (
               <tr key={n.id}>
-                <td><input type="checkbox" className="accent-blue-600" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} /></td>
+                <td><input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} /></td>
                 <td className="font-semibold">
-                  <Link to={`/nodes/${n.id}`} className="text-blue-600 hover:underline">{n.name}</Link>
+                  <Link to={`/nodes/${n.id}`} className="text-emerald-600 hover:underline">{n.name}</Link>
                 </td>
                 <td><NodeTypeBadge type={n.node_type} /></td>
                 <td>

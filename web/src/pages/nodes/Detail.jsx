@@ -234,8 +234,8 @@ export default function NodeDetail() {
         {/* ===== HEADER ===== */}
         <header className={`${card} px-[26px] py-[22px]`}>
           <div className="flex items-start gap-5">
-            <div className="w-[52px] h-[52px] flex-none rounded-[14px] grid place-items-center text-blue-600 text-[22px] font-bold hidden md:grid"
-              style={{ background: 'linear-gradient(135deg,#eef3ff,#dbe6ff)' }}>⬡</div>
+            <div className="w-[52px] h-[52px] flex-none rounded-[14px] grid place-items-center text-emerald-600 text-[22px] font-bold hidden md:grid"
+              style={{ background: 'linear-gradient(135deg,#ecfdf5,#ccfbf1)' }}>⬡</div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="m-0 text-[22px] font-bold tracking-[-0.01em]">{node.name}</h1>
@@ -275,7 +275,7 @@ export default function NodeDetail() {
             )}
             <button onClick={remove} className="hidden md:inline-flex items-center px-3.5 py-[9px] rounded-[10px] text-[13px] font-semibold bg-surface text-[#b42318] border border-[#f1c7c2] hover:bg-[#fef3f2] transition-colors cursor-pointer">删除节点</button>
             {!isComposite && agentOutdated && (
-              <button onClick={upgrade} title={`推送升级到 ${latest_agent_version}`} className="hidden md:inline-flex items-center gap-1.5 px-4 py-[9px] rounded-[10px] text-[13px] font-semibold bg-blue-600 text-white hover:bg-blue-700 border-0 cursor-pointer transition-colors max-w-[280px] truncate">⤴ 推送升级到 {latest_agent_version}</button>
+              <button onClick={upgrade} title={`推送升级到 ${latest_agent_version}`} className="hidden md:inline-flex items-center gap-1.5 px-4 py-[9px] rounded-[10px] text-[13px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 border-0 cursor-pointer transition-colors max-w-[280px] truncate">⤴ 推送升级到 {latest_agent_version}</button>
             )}
           </div>
         </header>
@@ -298,7 +298,7 @@ export default function NodeDetail() {
             </ConfigField>
             <ConfigField label="直接转发" hint="禁止后本节点不能作为链尾直连目标，规则必须在其后级联线路层；对之后新建/编辑的规则生效">
               <div className="flex items-center gap-2">
-                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}>
+                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
                   {noDirectExit ? '禁止直接转发' : '允许直接转发'}
                 </button>
                 <span className="text-xs text-ink-mut">当前：{noDirectExit ? '禁止' : '允许'}</span>
@@ -371,12 +371,12 @@ export default function NodeDetail() {
             </div>
             {!panel_url_configured && (
               <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-[13px]">
-                尚未设置面板地址，下面用你当前访问的域名 <code className="bg-amber-100 px-1 rounded">{panel_url}</code> 推断。如 agent 走不同地址，请到<Link to="/nodes" className="text-blue-600 font-semibold">节点页</Link>设置后再复制。
+                尚未设置面板地址，下面用你当前访问的域名 <code className="bg-amber-100 px-1 rounded">{panel_url}</code> 推断。如 agent 走不同地址，请到<Link to="/nodes" className="text-emerald-600 font-semibold">节点页</Link>设置后再复制。
               </div>
             )}
             <div className="mb-3 flex items-center gap-2.5 flex-wrap text-[13px]">
               <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                <input type="checkbox" checked={useGhProxy} onChange={e => setUseGhProxy(e.target.checked)} className="accent-blue-600" />
+                <input type="checkbox" checked={useGhProxy} onChange={e => setUseGhProxy(e.target.checked)} className="accent-emerald-600" />
                 <span className="text-ink-soft">使用 gh-proxy（GitHub 受限网络）</span>
               </label>
               {useGhProxy && (
@@ -450,7 +450,7 @@ export default function NodeDetail() {
 
             <ConfigField label="计费方向" hint="单向计费只计算出站流量，双向计费计算出站+入站">
               <div className="flex items-center gap-2">
-                <button onClick={toggleBillingDir} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${unidirectional ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}>
+                <button onClick={toggleBillingDir} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${unidirectional ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
                   {unidirectional ? '单向计费（仅出站）' : '双向计费（出站+入站）'}
                 </button>
                 <span className="text-xs text-ink-mut">当前：{unidirectional ? '单向' : '双向'}</span>
@@ -459,7 +459,7 @@ export default function NodeDetail() {
 
             <ConfigField label="直接转发" hint="禁止后本节点不能作为链尾直连目标，规则必须在其后级联线路层；对之后新建/编辑的规则生效">
               <div className="flex items-center gap-2">
-                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}>
+                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
                   {noDirectExit ? '禁止直接转发' : '允许直接转发'}
                 </button>
                 <span className="text-xs text-ink-mut">当前：{noDirectExit ? '禁止' : '允许'}</span>
@@ -493,10 +493,10 @@ export default function NodeDetail() {
                 {ruleHops.map((rh, i) => (
                   <tr key={i}>
                     <td className="font-semibold">
-                      {rh.rule_id ? <Link to={`/rules/${rh.rule_id}`} className="text-blue-600 hover:underline">{rh.rule_name || `#${rh.rule_id}`}</Link> : '--'}
+                      {rh.rule_id ? <Link to={`/rules/${rh.rule_id}`} className="text-emerald-600 hover:underline">{rh.rule_name || `#${rh.rule_id}`}</Link> : '--'}
                     </td>
                     <td className="text-sm">
-                      {rh.owner_id ? <Link to={`/users/${rh.owner_id}`} className="text-blue-600 hover:underline">{rh.owner_name}</Link> : <span className="text-ink-mut">--</span>}
+                      {rh.owner_id ? <Link to={`/users/${rh.owner_id}`} className="text-emerald-600 hover:underline">{rh.owner_name}</Link> : <span className="text-ink-mut">--</span>}
                     </td>
                     <td className="text-xs whitespace-nowrap">
                       {rh.total_hops > 1
@@ -513,7 +513,7 @@ export default function NodeDetail() {
               </tbody>
             </table>
             </TableBox>
-          ) : <div className="pb-4"><Empty title="该节点尚无规则经过"><Link to="/rules" className="text-blue-600 text-xs font-semibold">去添加</Link></Empty></div>}
+          ) : <div className="pb-4"><Empty title="该节点尚无规则经过"><Link to="/rules" className="text-emerald-600 text-xs font-semibold">去添加</Link></Empty></div>}
         </section>
 
         {/* ===== 已授权用户 ===== */}
@@ -531,7 +531,7 @@ export default function NodeDetail() {
                 {grantedUsers.map(g => (
                   <tr key={g.user_id}>
                     <td className="font-semibold">
-                      <Link to={`/users/${g.user_id}`} className="text-blue-600 hover:underline">{g.username}</Link>
+                      <Link to={`/users/${g.user_id}`} className="text-emerald-600 hover:underline">{g.username}</Link>
                     </td>
                     <td className="font-mono">{g.max_forwards}</td>
                     <td className="text-xs text-ink-mut">{fmtTime(g.granted_at)}</td>
@@ -935,7 +935,7 @@ function RolesCard({ node, onDone }) {
   }
 
   const entryCls = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700'
-  const viaCls = 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700'
+  const viaCls = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700'
   const roleBtn = (bit, label, cls) => (
     <button type="button" onClick={() => toggle(bit)}
       className={`px-3 py-1 text-[12.5px] font-semibold rounded-md border transition-colors ${
