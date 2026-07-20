@@ -23,9 +23,11 @@ function ensureShared() {
   let ruleSpeeds = {}
   let ws = null
   let reconnectTimer = null
-  let delay = 3000
-  const initialDelay = 3000
-  const maxDelay = 30000
+  // Faster reconnect so live speeds recover quickly after a brief drop;
+  // still caps at maxDelay to avoid storming a flaky panel.
+  let delay = 1000
+  const initialDelay = 1000
+  const maxDelay = 10000
   let visible = typeof document !== 'undefined' ? !document.hidden : true
   let refCount = 0
 

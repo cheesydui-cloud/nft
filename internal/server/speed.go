@@ -25,9 +25,20 @@ type RuleSpeedEntry struct {
 	TS     int64 `json:"ts"`
 }
 
+// hopIdleTTL is how long a per-port hop may keep its last measured bps after
+// the agent stops reporting deltas for that port. Agents only push non-zero
+// deltas, so an idle listen port never reappears in a batch — without this
+// cutoff the last rate (e.g. ~300KB/s) would stick until the whole node went
+// silent for nodeStaleTTL, making every rule on a busy relay look active.
+const hopIdleTTL = 15 * time.Second
+
+// nodeStaleTTL drops a node from snapshots when no counter batch arrived.
+const nodeStaleTTL = 30 * time.Second
+
 // speedCache aggregates per-node throughput derived from agent counter
-// batches. Entries older than 30 seconds are excluded from snapshots so
-// disconnected nodes fade out automatically.
+// batches. Entries older than nodeStaleTTL are excluded from snapshots so
+// disconnected nodes fade out automatically. Individual hops also zero out
+// after hopIdleTTL without a sample so idle ports don't keep a stale rate.
 type speedCache struct {
 	mu sync.RWMutex
 	// per node: aggregated speed
@@ -133,12 +144,28 @@ func (sc *speedCache) snapshotRulesForUser(userID int64) []RuleSpeedEntry {
 	return sc.snapshotRulesFiltered(func(hs *hopState) bool { return hs.ownerID == userID })
 }
 
+// hopRate returns the hop's live bps, or zeros when the hop has gone idle
+// (no sample within hopIdleTTL). Agents omit zero-delta ports, so lastTime
+// is the only signal that traffic on this listen port has stopped.
+func hopRate(hs *hopState, now time.Time) (up, down float64) {
+	if hs == nil {
+		return 0, 0
+	}
+	if hs.lastTime.IsZero() || now.Sub(hs.lastTime) > hopIdleTTL {
+		return 0, 0
+	}
+	return hs.upBps, hs.downBps
+}
+
 // snapshotFiltered aggregates each node's hops that pass keep into one entry,
-// dropping nodes not seen in the last 30 s and nodes with no matching hop.
+// dropping nodes not seen in the last nodeStaleTTL and nodes with no matching hop.
+// Idle hops (no sample within hopIdleTTL) contribute 0 so one busy port cannot
+// keep a stale rate on every other port of the same node.
 func (sc *speedCache) snapshotFiltered(keep func(*hopState) bool) []SpeedEntry {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
-	cutoff := time.Now().Add(-30 * time.Second)
+	now := time.Now()
+	cutoff := now.Add(-nodeStaleTTL)
 	out := make([]SpeedEntry, 0, len(sc.nodes))
 	for nid, ns := range sc.nodes {
 		if ns.lastSeen.Before(cutoff) {
@@ -151,8 +178,9 @@ func (sc *speedCache) snapshotFiltered(keep func(*hopState) bool) []SpeedEntry {
 				continue
 			}
 			matched = true
-			totalUp += hs.upBps
-			totalDown += hs.downBps
+			up, down := hopRate(hs, now)
+			totalUp += up
+			totalDown += down
 		}
 		if !matched {
 			continue
@@ -171,11 +199,14 @@ func (sc *speedCache) snapshotFiltered(keep func(*hopState) bool) []SpeedEntry {
 // snapshotRulesFiltered builds one rate per rule. For each rule it picks the
 // lowest hop position that is currently reporting (entry preferred) and sums
 // multi-proto samples at that same position only — never every hop of a chain.
-// Stale nodes drop out after 30 s with no sample.
+// Stale nodes drop out after nodeStaleTTL; idle hops (no sample within
+// hopIdleTTL) contribute 0 so a busy port on the same relay cannot inflate
+// every other rule's live rate.
 func (sc *speedCache) snapshotRulesFiltered(keep func(*hopState) bool) []RuleSpeedEntry {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
-	cutoff := time.Now().Add(-30 * time.Second)
+	now := time.Now()
+	cutoff := now.Add(-nodeStaleTTL)
 	type agg struct {
 		up, down float64
 		ts       int64
@@ -187,14 +218,24 @@ func (sc *speedCache) snapshotRulesFiltered(keep func(*hopState) bool) []RuleSpe
 		if ns.lastSeen.Before(cutoff) {
 			continue
 		}
-		ts := ns.lastSeen.UnixMilli()
 		for _, hs := range ns.hops {
 			if hs.ruleID <= 0 || !keep(hs) {
+				continue
+			}
+			up, down := hopRate(hs, now)
+			// Skip fully-idle hops entirely so a rule with only stale ports
+			// does not appear in the map with a fake 0 row forever — the UI
+			// treats a missing rule_id as idle.
+			if up == 0 && down == 0 {
 				continue
 			}
 			pos := hs.hopPos
 			if pos < 0 {
 				pos = 1 << 20 // unknown pos sorts last; still usable as fallback
+			}
+			ts := hs.lastTime.UnixMilli()
+			if ts <= 0 {
+				ts = ns.lastSeen.UnixMilli()
 			}
 			a := byRule[hs.ruleID]
 			if a == nil {
@@ -203,7 +244,7 @@ func (sc *speedCache) snapshotRulesFiltered(keep func(*hopState) bool) []RuleSpe
 			}
 			if !a.hasPos || pos < a.pos {
 				// Switch to a better (closer-to-entry) hop; reset totals.
-				a.up, a.down = hs.upBps, hs.downBps
+				a.up, a.down = up, down
 				a.pos = pos
 				a.hasPos = true
 				a.ts = ts
@@ -211,8 +252,8 @@ func (sc *speedCache) snapshotRulesFiltered(keep func(*hopState) bool) []RuleSpe
 			}
 			if pos == a.pos {
 				// Same logical hop, multi-proto: sum tcp+udp.
-				a.up += hs.upBps
-				a.down += hs.downBps
+				a.up += up
+				a.down += down
 				if ts > a.ts {
 					a.ts = ts
 				}

@@ -6,6 +6,7 @@ import { fmtBytes, fmtDate, isExpired, expiryBadge } from '../lib/fmt'
 import { uriToClashYaml } from '../lib/yaml-convert'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
+import { useRuleSpeed, fmtSpeed } from '../lib/useSpeed'
 
 // Cap concurrent connectivity probes so "test all" doesn't fire one request per
 // rule at once (each fans out to every hop on the server side).
@@ -34,6 +35,9 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
   const isMobile = useIsMobile()
   const [sort, setSort] = useState({ col: null, dir: null })
   const { copyFmt } = useCopyFmt()
+  // Per-rule live rates only (never node totals) so rules sharing a relay show
+  // independent ↑/↓ even when only one of them carries traffic.
+  const ruleSpeeds = useRuleSpeed()
 
   const renderLandingExpiry = (r) => {
     if (!landingExpiry) return null
@@ -82,6 +86,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
             </th>
           )}
           <th>备注</th>
+          <th className="whitespace-nowrap">网速</th>
           <th className="text-right cursor-pointer select-none" onClick={() => cycleSort('traffic')}>
             <span className="inline-flex items-center justify-end">流量<SortArrow dir={sort.col === 'traffic' ? sort.dir : null} /></span>
           </th>
@@ -91,6 +96,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
       <tbody>
         {sorted.map(r => {
           const node = nodeMap[r.node_id]
+          const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
           return (
             <tr key={r.id}
               className={onRowClick ? 'cursor-pointer' : ''}
@@ -165,6 +171,12 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                     : r.comment
                   : <span className="text-ink-mut">-</span>}
               </td>
+              <td className="font-mono text-xs whitespace-nowrap">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
+                  <span className="text-emerald-600">↓{fmtSpeed(sp.down)}</span>
+                </span>
+              </td>
               <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round(((r.exit_bytes || 0)) * displayRate))}</td>
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
@@ -188,6 +200,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
     <div>
       {sorted.map(r => {
         const node = nodeMap[r.node_id]
+        const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
         return (
           <div key={r.id} className={`mobile-card ${onRowClick ? 'cursor-pointer' : ''}`}
             onClick={onRowClick ? () => onRowClick(r) : undefined}>
@@ -204,6 +217,8 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                 {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
               </span>
               {isAdmin && r.owner_name && <><span className="text-ink-mut">·</span><span>{r.owner_name}</span></>}
+              <span className="text-ink-mut">·</span>
+              <span className="font-mono text-emerald-600">↑{fmtSpeed(sp.up)} ↓{fmtSpeed(sp.down)}</span>
               <span className="text-ink-mut">·</span>
               <span className="font-mono text-ink-mut">{fmtBytes(Math.round((r.exit_bytes || 0) * displayRate))}</span>
             </div>

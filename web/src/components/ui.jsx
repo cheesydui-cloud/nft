@@ -343,16 +343,56 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [activeTab, setActiveTab] = useState(0)
+  // Fixed-position menu box: absolute menus get clipped by .card/.detail-panel
+  // overflow:hidden (e.g. user grant node picker), so place from the trigger rect.
+  const [menuBox, setMenuBox] = useState(null)
   const ref = useRef(null)
   const menuRef = useRef(null)
+  const triggerRef = useRef(null)
+
+  const placeMenu = useCallback(() => {
+    const r = triggerRef.current?.getBoundingClientRect()
+    if (!r) return
+    const gap = 6
+    const maxH = Math.min(320, Math.max(160, window.innerHeight - 24))
+    const spaceBelow = window.innerHeight - r.bottom - gap - 12
+    const spaceAbove = r.top - gap - 12
+    const openUp = spaceBelow < 200 && spaceAbove > spaceBelow
+    const avail = Math.max(140, openUp ? spaceAbove : spaceBelow)
+    const height = Math.min(maxH, avail)
+    setMenuBox({
+      left: Math.max(8, Math.min(r.left, window.innerWidth - r.width - 8)),
+      width: r.width,
+      top: openUp ? undefined : r.bottom + gap,
+      bottom: openUp ? window.innerHeight - r.top + gap : undefined,
+      maxHeight: height,
+    })
+  }, [])
+
   useEffect(() => {
-    if (!open) { setQuery(''); setActiveTab(0); return }
-    // 触发器靠近视口底部时菜单会被裁掉，自动滚动让菜单完整露出；已可见则不动。
-    menuRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    if (!open) {
+      setQuery('')
+      setActiveTab(0)
+      setMenuBox(null)
+      return
+    }
+    placeMenu()
+    const onDoc = (e) => {
+      if (ref.current?.contains(e.target) || menuRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const onReposition = () => placeMenu()
     document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
+    window.addEventListener('resize', onReposition)
+    // Capture scroll from nested panels so the fixed menu tracks the trigger.
+    window.addEventListener('scroll', onReposition, true)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('scroll', onReposition, true)
+    }
+  }, [open, placeMenu])
+
   // Normalize to labelled sections so flat `options` and grouped `groups` share
   // one render path. A null section label renders no header.
   const sections = groups ? groups : [{ label: null, options }]
@@ -398,9 +438,14 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
       </button>
     )
   }
+  // Header (tabs/search) stays put; only the option list scrolls inside the
+  // remaining height so long node lists stay fully selectable.
+  const headerH = (useTabs ? 48 : 0) + (searchable ? 58 : 0)
+  const listMaxH = menuBox ? Math.max(96, menuBox.maxHeight - headerH) : 220
+
   return (
     <div ref={ref} className={`relative ${className}`} style={style}>
-      <button type="button" disabled={disabled} onClick={() => setOpen(o => !o)}
+      <button ref={triggerRef} type="button" disabled={disabled} onClick={() => setOpen(o => !o)}
         className="input-field flex items-center justify-between gap-2 text-left disabled:opacity-60 disabled:cursor-not-allowed">
         <span className={`flex items-center gap-1.5 min-w-0 ${hasSelection ? 'text-ink' : 'text-ink-mut'}`}>
           {selected && selected.icon}
@@ -408,10 +453,20 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
         </span>
         <svg className={`w-4 h-4 flex-none text-ink-mut transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
-      {open && (
-        <div ref={menuRef} className="absolute z-50 mt-1.5 w-full bg-surface border border-line rounded-[11px] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] overflow-hidden">
+      {open && menuBox && (
+        <div ref={menuRef}
+          style={{
+            position: 'fixed',
+            left: menuBox.left,
+            width: menuBox.width,
+            top: menuBox.top,
+            bottom: menuBox.bottom,
+            maxHeight: menuBox.maxHeight,
+            zIndex: 80,
+          }}
+          className="bg-surface border border-line rounded-[11px] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] overflow-hidden flex flex-col">
           {useTabs && (
-            <div className="flex border-b border-line-soft">
+            <div className="flex border-b border-line-soft flex-none">
               {sections.map((s, i) => (
                 <button key={i} type="button" onClick={() => setActiveTab(i)}
                   className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-emerald-600 border-b-2 border-emerald-600 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
@@ -421,13 +476,13 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
             </div>
           )}
           {searchable && (
-            <div className="p-3 border-b border-line-soft">
+            <div className="p-3 border-b border-line-soft flex-none">
               <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索…"
                 onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
                 className="input-field w-full text-[13px]" style={{ height: 34 }} />
             </div>
           )}
-          <div className="max-h-[260px] overflow-auto py-1.5 px-1.5">
+          <div className="overflow-y-auto py-1.5 px-1.5 min-h-0" style={{ maxHeight: listMaxH }}>
             {empty ? (
               <div className="px-3 py-2 text-[13px] text-ink-mut">无匹配</div>
             ) : shownSections.map((s, i) => (

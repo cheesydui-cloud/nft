@@ -43,7 +43,11 @@ Wants=network-online.target
 
 [Service]
 ExecStart=$INSTALL_DIR/nft-agent daemon$extra_args
-Restart=on-failure
+# always: recover from hung/zombie processes (not just non-zero exits). A
+# long-lived agent can stall without exiting after days of NAT aging or a
+# half-open WS; on-failure would leave it offline forever.
+Restart=always
+RestartSec=3
 RuntimeDirectory=nft
 RuntimeDirectoryMode=0750
 StateDirectory=nft
@@ -64,7 +68,8 @@ After=nft-daemon.service
 
 [Service]
 ExecStart=$INSTALL_DIR/nft-server --addr $addr
-Restart=on-failure
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
@@ -897,3 +902,44 @@ EOF
 
   *) die "内部错误: 未处理的模式 $mode" ;;
 esac
+
+# One-shot bootstrap cleanup: when the operator ran a downloaded install.sh
+# (curl | bash, or a temp copy under /tmp), remove that file after a successful
+# install so credentials/URLs in shell history aren't left next to a leftover
+# script. Never touch the persisted upgrade wrapper at $SCRIPT_PATH
+# (/usr/local/sbin/nft-upgrade) — that is the intentional long-lived copy.
+cleanup_bootstrap_script() {
+  local self=""
+  if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    self="${BASH_SOURCE[0]}"
+  elif [[ -n "${0:-}" && "$0" != "bash" && "$0" != "-bash" && "$0" != "sh" ]]; then
+    self="$0"
+  fi
+  [[ -n "$self" && -f "$self" ]] || return 0
+  # Resolve to absolute when possible for the path checks below.
+  local abs="$self"
+  if command -v realpath >/dev/null 2>&1; then
+    abs="$(realpath "$self" 2>/dev/null || echo "$self")"
+  elif [[ "$self" != /* ]]; then
+    abs="$(pwd)/$self"
+  fi
+  # Keep the installed upgrade script and anything already under /etc/nft.
+  if [[ "$abs" == "$SCRIPT_PATH" || "$abs" == "$ETC_DIR"/* ]]; then
+    return 0
+  fi
+  # Only auto-remove common one-shot locations (tmp / home downloads / cwd copies
+  # named install.sh). Refuse to delete from package-managed paths.
+  case "$abs" in
+    /tmp/*|/var/tmp/*|/dev/shm/*)
+      rm -f -- "$abs" 2>/dev/null && note "已清除临时安装脚本: $abs" || true
+      ;;
+    */install.sh|*/install-*.sh)
+      # Home/desktop copies used once for bootstrap — remove after success.
+      # Skip if the file is the upgrade wrapper path (already guarded above).
+      if [[ "$abs" != /usr/* && "$abs" != /bin/* && "$abs" != /sbin/* && "$abs" != /lib/* ]]; then
+        rm -f -- "$abs" 2>/dev/null && note "已清除安装脚本: $abs" || true
+      fi
+      ;;
+  esac
+}
+cleanup_bootstrap_script

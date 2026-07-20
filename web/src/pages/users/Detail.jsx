@@ -6,7 +6,7 @@ import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
-import { useSpeed, useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
+import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { uriToClashYaml } from '../../lib/yaml-convert'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
@@ -18,7 +18,6 @@ export default function UserDetail() {
   const toast = useToast()
   const blurred = useBlur()
   const { copyFmt } = useCopyFmt()
-  const nodeSpeeds = useSpeed()
   const ruleSpeeds = useRuleSpeed()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -295,12 +294,10 @@ export default function UserDetail() {
                 </thead>
                 <tbody>
                   {rules.map(r => {
-                    // Prefer per-rule live rate (works for composite). Fall back to
-                    // entry physical node, then rules.node_id for single-node rules.
-                    const sp = ruleSpeeds[r.id]
-                      || (r.entry_node_id ? nodeSpeeds[r.entry_node_id] : null)
-                      || nodeSpeeds[r.node_id]
-                      || { up: 0, down: 0 }
+                    // Per-rule only — never fall back to node totals. Multiple rules
+                    // on the same relay/composite share a node_id; node speed would
+                    // make every row show the same rate when one of them is busy.
+                    const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
                     const copyRuleLink = async () => {
                       const parts = []
                       if (r.relay_uri) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri) : r.relay_uri)

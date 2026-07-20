@@ -26,12 +26,24 @@ const (
 	dialerReadTimeout      = 30 * time.Second
 	dialerWriteTimeout     = 20 * time.Second
 	dialerBackoffInitial   = 1 * time.Second
-	dialerBackoffMax       = 60 * time.Second
+	// Cap reconnect wait so a long-lived agent that drops after days (NAT
+	// aging, reverse-proxy idle kill, panel restart) is back online within
+	// ~15s rather than waiting a full minute at max backoff.
+	dialerBackoffMax = 15 * time.Second
 	// dialerStableSession is how long a post-hello_ack session must survive
-	// before we treat it as healthy and reset the reconnect backoff. Shorter
-	// sessions keep the backoff growing to avoid storming a panel that accepts
-	// then immediately drops us.
-	dialerStableSession = 30 * time.Second
+	// before we treat it as healthy and reset the reconnect backoff. A short
+	// window (10s) still avoids storming a panel that accepts then drops us,
+	// while a healthy multi-day session that dies once reconnects immediately.
+	dialerStableSession = 10 * time.Second
+	// dialerWatchdogInterval is how often the serve loop checks that the
+	// reader is still making progress. A hung TCP (middlebox half-open, no
+	// FIN) would otherwise leave the agent "connected" forever with no
+	// counters/ping reaching the panel — the watchdog forces a reconnect.
+	dialerWatchdogInterval = 15 * time.Second
+	// dialerWatchdogStale is the max age of the last successful read before
+	// the watchdog tears the session down. Must exceed dialerReadTimeout so
+	// a single slow frame does not false-trigger.
+	dialerWatchdogStale = 45 * time.Second
 )
 
 const (
@@ -446,6 +458,11 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	defer pingT.Stop()
 	countersT := time.NewTicker(dialerCountersInterval)
 	defer countersT.Stop()
+	watchdogT := time.NewTicker(dialerWatchdogInterval)
+	defer watchdogT.Stop()
+	// lastRead tracks the last successful frame so a half-open TCP that never
+	// errors can still be detected. Updated on every env from readCh.
+	lastRead := time.Now()
 
 	for {
 		select {
@@ -456,6 +473,7 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 		case err := <-errCh:
 			return helloAcked, err
 		case env := <-readCh:
+			lastRead = time.Now()
 			switch env.Type {
 			case wsproto.TypeApplyRuleset:
 				var ar wsproto.ApplyRuleset
@@ -559,6 +577,12 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				}
 				d.pendMu.Unlock()
 			}
+		case <-watchdogT.C:
+			// Half-open / silent-dead links: no frame for dialerWatchdogStale.
+			// Force the session to end so Run() reconnects with a fresh dial.
+			if time.Since(lastRead) > dialerWatchdogStale {
+				return helloAcked, fmt.Errorf("watchdog: no read for %v (stale threshold %v)", time.Since(lastRead).Round(time.Second), dialerWatchdogStale)
+			}
 		case <-pingT.C:
 			pp, err := json.Marshal(wsproto.Ping{TS: time.Now().UnixMilli()})
 			if err != nil {
@@ -568,7 +592,8 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypePing, ID: "ping-" + strconv.FormatInt(time.Now().UnixMilli(), 36), Payload: pp}); err != nil {
 				// One failed ping write on a flaky link is usually transient.
 				// The reader will detect a truly dead connection; tearing down
-				// here makes high-latency links oscillate.
+				// here makes high-latency links oscillate. The watchdog still
+				// covers the half-open case where writes appear to succeed.
 				log.Printf("dialer: write %s: %v", wsproto.TypePing, err)
 				continue
 			}
