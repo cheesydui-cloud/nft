@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"testing"
+	"time"
 )
 
 func TestAddUserNodeTraffic(t *testing.T) {
@@ -340,6 +341,44 @@ func TestLegacyChainBackfillPerHopSegments(t *testing.T) {
 	}
 	if got := viaOf(compRule, 1); got != comp.ID {
 		t.Fatalf("composite hop 1 via: want entry %d, got %d", comp.ID, got)
+	}
+}
+
+// dayKey must follow Asia/Shanghai even when the process Local zone is UTC,
+// otherwise a China operator sees "当日流量" keep yesterday's volume past 0:00.
+func TestDayKeyUsesShanghaiBusinessDay(t *testing.T) {
+	// 2026-07-20 19:30 UTC == 2026-07-21 03:30 Asia/Shanghai
+	utc := time.Date(2026, 7, 20, 19, 30, 0, 0, time.UTC)
+	if got, want := dayKey(utc), "2026-07-21"; got != want {
+		t.Fatalf("dayKey(UTC evening) = %s, want Shanghai next day %s", got, want)
+	}
+	// Still the previous Shanghai day just before midnight CST.
+	before := time.Date(2026, 7, 20, 15, 59, 0, 0, time.UTC) // 23:59 CST
+	if got, want := dayKey(before), "2026-07-20"; got != want {
+		t.Fatalf("dayKey before CST midnight = %s, want %s", got, want)
+	}
+}
+
+func TestTodayRawTrafficBytesShanghaiDay(t *testing.T) {
+	d := openTestDB(t)
+	nid := createTestNode(t, d, "raw")
+	// Seed a row on "yesterday" Shanghai and one on "today"; only today sums.
+	today := dayKey(time.Now())
+	yesterday := dayKey(time.Now().Add(-24 * time.Hour))
+	if _, err := d.Exec(`INSERT INTO daily_node_raw_traffic(day, node_id, raw_bytes) VALUES(?,?,?)`,
+		yesterday, nid, 9_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO daily_node_raw_traffic(day, node_id, raw_bytes) VALUES(?,?,?)`,
+		today, nid, 123); err != nil {
+		t.Fatal(err)
+	}
+	got, err := TodayRawTrafficBytes(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 123 {
+		t.Fatalf("TodayRawTrafficBytes = %d, want only today's 123 (not yesterday)", got)
 	}
 }
 

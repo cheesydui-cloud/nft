@@ -75,13 +75,32 @@ func AddNodeRawTraffic(d DBTX, nodeID, delta int64) error {
 	return err
 }
 
-// dayKey returns the local calendar day as YYYY-MM-DD for daily traffic buckets.
+// panelBusinessLocation is the calendar used for "当日流量" buckets.
+// Operator dashboards are China-facing; using the host's local TZ (often UTC
+// on cloud VMs) made China early-morning still land in the previous UTC day,
+// so the card kept showing yesterday's volume past 北京时间 0:00.
+//
+// Fixed to Asia/Shanghai rather than process Local. A future panel_timezone
+// setting can override this if multi-region operators need it.
+var panelBusinessLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		// tzdata missing on some minimal images — fall back to fixed UTC+8
+		// so the day boundary still matches 北京时间 even without zoneinfo.
+		return time.FixedZone("CST", 8*3600)
+	}
+	return loc
+}()
+
+// dayKey returns the business calendar day as YYYY-MM-DD for daily traffic
+// buckets (Asia/Shanghai, not the host's Local timezone).
 func dayKey(t time.Time) string {
-	return t.Format("2006-01-02")
+	return t.In(panelBusinessLocation).Format("2006-01-02")
 }
 
 // AddNodeDailyRawTraffic folds delta raw bytes into today's per-node ledger.
 // Same actual-traffic semantics as AddNodeRawTraffic (no billing multiplier).
+// "Today" is the Asia/Shanghai calendar day.
 func AddNodeDailyRawTraffic(d DBTX, nodeID, delta int64) error {
 	if delta == 0 {
 		return nil
@@ -94,6 +113,7 @@ func AddNodeDailyRawTraffic(d DBTX, nodeID, delta int64) error {
 }
 
 // TodayRawTrafficBytes sums today's actual (raw) traffic across all nodes.
+// "Today" is the Asia/Shanghai calendar day (北京时间 0 点切日).
 func TodayRawTrafficBytes(d *sql.DB) (int64, error) {
 	var total int64
 	err := d.QueryRow(`SELECT COALESCE(SUM(raw_bytes),0) FROM daily_node_raw_traffic WHERE day=?`,

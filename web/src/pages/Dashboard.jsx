@@ -72,7 +72,7 @@ export default function Dashboard() {
           icon={<><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></>} />
         <StatCard label="总流量（计费）" value={fmtBytes(total_bytes)} sub="累计计费当量"
           icon={<><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></>} />
-        <StatCard label="当日流量（实际）" value={fmtBytes(today_raw_bytes || 0)} sub="今日实际上行+下行"
+        <StatCard label="当日流量（实际）" value={fmtBytes(today_raw_bytes || 0)} sub="今日实际上行+下行 · 北京时间0点切日"
           icon={<><path d="M12 3v18"/><path d="m5 12 7-7 7 7"/></>} />
         <StatCard label="用户" value={user_count} sub="系统用户数"
           icon={<><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/></>} />
