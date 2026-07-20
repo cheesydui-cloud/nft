@@ -122,7 +122,7 @@ export default function Proxies() {
 
         <TableScroll>
         {allProxies.length === 0 ? (
-          <Empty title="暂无可用代理" desc="在概览页添加代理 URI 或订阅地址，并标记为直连或落地。" />
+          <Empty title="暂无可用代理" desc="请先配置代理 URI 或订阅地址，并标记为直连；或联系管理员分配落地节点后创建转发规则。" />
         ) : filtered.length === 0 ? (
           <Empty title="无匹配" desc="试试别的关键词。" />
         ) : (

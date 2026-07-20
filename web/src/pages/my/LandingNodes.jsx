@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
 import { Loading, Empty, CopyText, SensText, Badge } from '../../components/ui'
@@ -11,8 +10,7 @@ import { fmtDate, expiryBadge } from '../../lib/fmt'
    ones (resolved server-side from a subscription and/or URIs) plus the user's
    own browser-local URIs — each with a one-click copy of its original (direct)
    proxy URI. The user's own URIs win on a host:port collision. The refresh
-   button appears only for a dynamic source (a subscription URL); local URIs are
-   edited on the overview page. */
+   button appears only for a dynamic source (a subscription URL). */
 export default function MyLandingNodes() {
   const [serverNodes, setServerNodes] = useState(null)
   const [roles, setRoles] = useState(null)
@@ -78,7 +76,7 @@ export default function MyLandingNodes() {
 
         <TableScroll>
         {nodes.length === 0 ? (
-          <Empty title="暂无落地节点" desc={<>在<Link to="/my" className="text-emerald-600 font-semibold">概览页</Link>添加你的代理 URI，或联系管理员配置订阅。</>} />
+          <Empty title="暂无落地节点" desc="请联系管理员分配落地节点，或由管理员为你配置订阅来源。" />
         ) : filtered.length === 0 ? (
           <Empty title="无匹配节点" desc="试试别的关键词。" />
         ) : (

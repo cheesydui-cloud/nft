@@ -275,7 +275,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                 {landingOptions.length ? (
                   <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择出口节点 --" searchable options={landingOptions} className="flex-1" />
                 ) : (
-                  <div className="text-xs text-ink-mut">尚无可用出口节点，请在概览页添加代理 URI 或联系管理员。</div>
+                  <div className="text-xs text-ink-mut">尚无可用出口节点，请联系管理员分配落地节点或订阅来源。</div>
                 )}
                 {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
               </div>

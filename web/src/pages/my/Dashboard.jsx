@@ -2,20 +2,15 @@ import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import { pct, fmtTrafficGB, fmtDate, isExpired, nullStr } from '../../lib/fmt'
 import { useIsMobile } from '../../lib/useIsMobile'
-import { Layout, useToast, useBlur, useUser } from '../../components/Layout'
-import { Loading, Empty, Badge, NodeTypeBadge, useConfirm } from '../../components/ui'
+import { Layout } from '../../components/Layout'
+import { Loading, Empty, Badge, NodeTypeBadge } from '../../components/ui'
 import { TableBox } from '../../components/page'
-import { ProxyURIEditor } from '../../components/ProxyURIEditor'
 
 export default function MyDashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('single')
   const isMobile = useIsMobile()
-  const toast = useToast()
-  const confirm = useConfirm()
-  const blurred = useBlur()
-  const { user: sessionUser } = useUser()
 
   // 授权节点的展示顺序是个人偏好，只存本浏览器不上服务器；键按用户 id 区分，
   // 同一浏览器切换账号互不串扰。不在名单里的节点（新授权）按服务器顺序垫底。
@@ -125,12 +120,6 @@ export default function MyDashboard() {
 
         {/* Announcement area */}
         <AnnouncementArea />
-      </div>
-
-      {/* My proxy URIs (browser-local). Desktop: full editor; mobile: still shown
-          so empty states that point here stay accurate on small screens. */}
-      <div className="mb-[22px]">
-        <ProxyURIEditor username={sessionUser?.username || user.username} blurred={blurred} />
       </div>
 
       {/* Granted nodes */}
