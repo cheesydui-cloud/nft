@@ -5,7 +5,7 @@ import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
 import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { Layout, useToast } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, useConfirm, Select, CopyText } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, NodeBillingBadges, useConfirm, Select, CopyText } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 
 export default function NodeList() {
@@ -249,6 +249,7 @@ export default function NodeList() {
                       <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]' : 'bg-gray-400 shadow-[0_0_0_3px_rgba(154,163,176,0.16)]'}`} />
                       {n.name}
                       {(n.roles & 2) !== 0 && <Badge color="blue">中间层</Badge>}
+                      <NodeBillingBadges node={n} />
                     </span>
                   </td>
                   <td>
@@ -305,10 +306,11 @@ export default function NodeList() {
             {filtered.map(n => (
               <Link key={n.id} to={`/nodes/${n.id}`} className="mobile-card block no-underline text-ink">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="inline-flex items-center gap-2 font-semibold text-emerald-600">
+                  <span className="inline-flex items-center gap-2 font-semibold text-emerald-600 flex-wrap">
                     <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500' : 'bg-gray-400'}`} />
                     {n.name}
                     {(n.roles & 2) !== 0 && <Badge color="blue">中间层</Badge>}
+                    <NodeBillingBadges node={n} />
                   </span>
                   <NodeStatus node={n} />
                 </div>

@@ -41,10 +41,23 @@ export default function UserDetail() {
   const isRegularUser = user.role === 'user'
   const expiresAt = user.expires_at && user.expires_at > 0 ? user.expires_at : null
   const rate = user.billing_rate ?? 1
-  const billableUsed = (user.traffic_used_bytes || 0) * rate
+  const realUsed = user.traffic_used_bytes || 0
+  const billableUsed = realUsed * rate
   const quota = user.traffic_quota_bytes || 0
   const billablePct = quota > 0 ? Number(pct(billableUsed, quota)) : 0
+  const realPct = quota > 0 ? Number(pct(realUsed, quota)) : 0
+  // Remaining is computed on the user-visible (billable) side — that's what
+  // the quota gate enforces when billing_rate ≠ 1.
+  const remainingBillable = quota > 0 ? Math.max(0, quota - billableUsed) : null
+  const remainingReal = quota > 0 && rate > 0 ? Math.max(0, (quota / rate) - realUsed) : null
   const exp = expiresAt ? expiryBadge(expiresAt) : null
+  // Live total of this user's rules (admin-only overview signal).
+  const liveUp = rules.reduce((s, r) => s + ((ruleSpeeds[r.id] || {}).up || 0), 0)
+  const liveDown = rules.reduce((s, r) => s + ((ruleSpeeds[r.id] || {}).down || 0), 0)
+  const liveActive = rules.filter(r => {
+    const sp = ruleSpeeds[r.id] || {}
+    return (sp.up || 0) + (sp.down || 0) > 0
+  }).length
 
   const toggleUser = async () => {
     try { await api.post(`/users/${id}/toggle`); toast(user.disabled ? '已启用' : '已禁用'); load() } catch (err) { toast(err.message, 'error') }
@@ -123,19 +136,38 @@ export default function UserDetail() {
         { label: '规则配额', value: <span className="font-mono">{rules.length} / {user.max_forwards || '∞'}</span> },
         { label: '真实流量', value: (
             <span className="font-mono">
-              {fmtTrafficGB(user.traffic_used_bytes, user.traffic_quota_bytes)}
-              {quota > 0 && ` (${pct(user.traffic_used_bytes, quota)}%)`}
+              {fmtBytes(realUsed)}
+              {quota > 0 && <span className="text-ink-mut text-xs ml-1">相对配额 {realPct}%</span>}
               {user.traffic_reset_days > 0 && <span className="text-ink-mut text-xs ml-1">每{user.traffic_reset_days}天重置</span>}
             </span>
           )},
         { label: '用户视角流量', value: (
             <span className="font-mono">
               {fmtTrafficGB(billableUsed, quota)}
-              {quota > 0 && ` (${pct(billableUsed, quota)}%)`}
-              <span className="text-ink-mut text-xs ml-1">已用×{rate}</span>
+              {quota > 0 && ` (${billablePct}%)`}
+              <span className="text-ink-mut text-xs ml-1">真实×{rate}</span>
+            </span>
+          )},
+        { label: '剩余额度', value: (
+            <span className="font-mono">
+              {quota > 0
+                ? <>{fmtBytes(remainingBillable)} <span className="text-ink-mut text-xs">视角</span>
+                    {rate !== 1 && remainingReal != null && (
+                      <span className="text-ink-mut text-xs ml-1">· 真实约 {fmtBytes(remainingReal)}</span>
+                    )}
+                  </>
+                : '不限额'}
             </span>
           )},
         { label: '计费倍率', value: <span className="font-mono">×{rate}</span> },
+        { label: '实时网速', value: (
+            <span className="font-mono text-xs">
+              <span className="text-emerald-600">↑{fmtSpeed(liveUp)}</span>
+              {' '}
+              <span className="text-emerald-600">↓{fmtSpeed(liveDown)}</span>
+              <span className="text-ink-mut ml-1">{liveActive}/{rules.length} 活跃</span>
+            </span>
+          )},
         { label: '全局限速', value: <span className="font-mono">{user.speed_limit_mbytes > 0 ? `${user.speed_limit_mbytes} Mbps` : '不限'}</span> },
         { label: '到期时间', value: (
             <span className="font-mono">
@@ -157,6 +189,10 @@ export default function UserDetail() {
       ]
 
   const trafficTone = !quota ? 'blue'
+    : billablePct >= 100 ? 'danger'
+    : billablePct >= 80 ? 'warn'
+    : 'ok'
+  const remainTone = !quota ? 'blue'
     : billablePct >= 100 ? 'danger'
     : billablePct >= 80 ? 'warn'
     : 'ok'
@@ -186,32 +222,64 @@ export default function UserDetail() {
       {activeTab === 'overview' && (
         <div className="space-y-4">
           {isRegularUser && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatTile
-                label="用户视角流量"
-                value={fmtTrafficGB(billableUsed, quota)}
-                hint={quota > 0 ? `已用 ${billablePct}% · 倍率 ×${rate}` : `倍率 ×${rate} · 不限额`}
-                tone={trafficTone}
-              />
-              <StatTile
-                label="规则使用"
-                value={`${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`}
-                hint={user.max_forwards > 0 ? '已用 / 配额' : '规则总数 · 不限配额'}
-                tone="violet"
-              />
-              <StatTile
-                label="授权节点"
-                value={String(nodes.length)}
-                hint="已授权转发节点"
-                tone="teal"
-              />
-              <StatTile
-                label="到期时间"
-                value={expiresAt ? fmtDate(expiresAt) : '永不过期'}
-                hint={exp ? exp.label : '未设置到期'}
-                tone={exp?.color === 'red' ? 'danger' : exp?.color === 'gray' ? 'warn' : 'ok'}
-              />
-            </div>
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <StatTile
+                  label="真实流量"
+                  value={fmtBytes(realUsed)}
+                  hint={quota > 0 ? `相对配额 ${realPct}% · 不乘倍率` : '出站+入站累计 · 不乘倍率'}
+                  tone="blue"
+                />
+                <StatTile
+                  label="用户视角流量"
+                  value={fmtTrafficGB(billableUsed, quota)}
+                  hint={quota > 0 ? `已用 ${billablePct}% · 真实×${rate}` : `倍率 ×${rate} · 不限额`}
+                  tone={trafficTone}
+                />
+                <StatTile
+                  label="剩余额度"
+                  value={quota > 0 ? fmtBytes(remainingBillable) : '∞'}
+                  hint={quota > 0
+                    ? (rate !== 1 && remainingReal != null
+                      ? `视角剩余 · 真实约 ${fmtBytes(remainingReal)}`
+                      : '按用户视角计算')
+                    : '未设置配额'}
+                  tone={remainTone}
+                />
+                <StatTile
+                  label="实时网速"
+                  value={<span className="text-[18px] sm:text-[20px]"><span className="text-emerald-600">↑{fmtSpeed(liveUp)}</span> <span className="text-emerald-600">↓{fmtSpeed(liveDown)}</span></span>}
+                  hint={`${liveActive} / ${rules.length} 条规则有流量`}
+                  tone="teal"
+                />
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <StatTile
+                  label="规则使用"
+                  value={`${rules.length}${user.max_forwards > 0 ? ` / ${user.max_forwards}` : ''}`}
+                  hint={user.max_forwards > 0 ? '已用 / 配额' : '规则总数 · 不限配额'}
+                  tone="violet"
+                />
+                <StatTile
+                  label="授权节点"
+                  value={String(nodes.length)}
+                  hint="已授权转发节点"
+                  tone="teal"
+                />
+                <StatTile
+                  label="计费倍率"
+                  value={`×${rate}`}
+                  hint="用户视角 = 真实 × 倍率"
+                  tone="blue"
+                />
+                <StatTile
+                  label="到期时间"
+                  value={expiresAt ? fmtDate(expiresAt) : '永不过期'}
+                  hint={exp ? exp.label : '未设置到期'}
+                  tone={exp?.color === 'red' ? 'danger' : exp?.color === 'gray' ? 'warn' : 'ok'}
+                />
+              </div>
+            </>
           )}
 
           <div className="detail-panel">
@@ -228,6 +296,58 @@ export default function UserDetail() {
               <InfoGrid items={overviewItems} />
             </div>
           </div>
+
+          {isRegularUser && rules.length > 0 && (
+            <SectionCard title="规则实时网速" subtitle={`共 ${rules.length} 条 · 仅管理员可见`}>
+              <TableBox>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>节点</th>
+                      <th>实时</th>
+                      <th className="text-right">真实用量</th>
+                      <th className="text-right">显示用量</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...rules]
+                      .sort((a, b) => {
+                        const sa = ruleSpeeds[a.id] || {}
+                        const sb = ruleSpeeds[b.id] || {}
+                        return ((sb.up || 0) + (sb.down || 0)) - ((sa.up || 0) + (sa.down || 0))
+                      })
+                      .slice(0, 8)
+                      .map(r => {
+                        const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
+                        return (
+                          <tr key={r.id}>
+                            <td className="font-semibold">
+                              <Link to={`/rules/${r.id}`} className="text-emerald-600 hover:underline">{r.name}</Link>
+                            </td>
+                            <td className="font-mono text-xs text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
+                            <td className="font-mono text-xs whitespace-nowrap">
+                              <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
+                              {' '}
+                              <span className="text-emerald-600">↓{fmtSpeed(sp.down)}</span>
+                            </td>
+                            <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
+                            <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </TableBox>
+              {rules.length > 8 && (
+                <div className="mt-2 text-right">
+                  <button type="button" className="text-xs text-emerald-600 font-semibold hover:underline" onClick={() => setTab('rules')}>
+                    查看全部 {rules.length} 条规则
+                  </button>
+                </div>
+              )}
+            </SectionCard>
+          )}
         </div>
       )}
 

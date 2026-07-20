@@ -51,6 +51,11 @@ func NewWithDocsDir(d *sql.DB, docsDir string) (*Server, error) {
 	if _, err := EnsureSelfNode(d); err != nil {
 		return nil, fmt.Errorf("ensure self node: %w", err)
 	}
+	// Panel restart empties the in-memory WS map. Any online=1 left from the
+	// previous process would show green until agents re-hello — clear them now.
+	if err := db.MarkAllAgentNodesOffline(d); err != nil {
+		log.Printf("server: MarkAllAgentNodesOffline: %v", err)
+	}
 	hub := NewHub(d)
 	disp := &Dispatcher{DB: d, Hub: hub}
 	s := &Server{
@@ -73,6 +78,27 @@ func NewWithDocsDir(d *sql.DB, docsDir string) (*Server, error) {
 	safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
 	safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
 	return s, nil
+}
+
+// reconcileNodeOnline aligns DB online flags with the live hub map and demotes
+// nodes whose last_seen is older than the stale TTL (假在线). Call before any
+// list/dashboard that surfaces node.online to operators.
+func (s *Server) reconcileNodeOnline(nodes []*db.Node) {
+	if s.Hub != nil {
+		for _, n := range nodes {
+			if n == nil || n.NodeType == "self" || n.NodeType == "composite" {
+				continue
+			}
+			live := s.Hub.IsOnline(n.ID)
+			if live && n.Online != 1 {
+				n.Online = 1
+			} else if !live && n.Online == 1 {
+				n.Online = 0
+				_ = db.MarkNodeOffline(s.DB, n.ID)
+			}
+		}
+	}
+	db.ApplyStaleOnlinePolicy(s.DB, nodes)
 }
 
 // expiryEnforcer periodically scans for users whose expires_at has passed

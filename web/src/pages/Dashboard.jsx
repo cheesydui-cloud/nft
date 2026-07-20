@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtBytes, fmtTime, nullStr, nullInt } from '../lib/fmt'
 import { Layout, useBlur, useUser } from '../components/Layout'
-import { Loading, Empty, Badge, ErrorState, SensText, NodeTypeBadge } from '../components/ui'
+import { Loading, Empty, Badge, ErrorState, SensText, NodeTypeBadge, NodeBillingBadges } from '../components/ui'
 import { ProxyURIEditor } from '../components/ProxyURIEditor'
 import { PageHeader, TableBox } from '../components/page'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -37,6 +37,7 @@ export default function Dashboard() {
   useEffect(() => { load() }, [])
 
   const attention = useMemo(() => buildAttention(data, users), [data, users])
+  const opsSummary = useMemo(() => buildOpsSummary(data, users), [data, users])
 
   if (loading) return <Layout><Loading /></Layout>
   if (error || !data) {
@@ -85,7 +86,7 @@ export default function Dashboard() {
             <span className="text-[12.5px] text-ink-mut">{attention.length ? `${attention.length} 项` : '状态正常'}</span>
           </div>
           {attention.length === 0 ? (
-            <div className="px-5 py-10 text-center text-[13px] text-ink-mut">暂无需要处理的事项</div>
+            <OpsSummaryPanel summary={opsSummary} />
           ) : (
             <div className="attention-list">
               {attention.map(item => (
@@ -114,7 +115,12 @@ export default function Dashboard() {
               <tbody>
                 {nodes.map(n => (
                   <tr key={n.id}>
-                    <td><Link to={`/nodes/${n.id}`} className="font-semibold text-emerald-600 hover:underline">{n.name}</Link></td>
+                    <td>
+                      <Link to={`/nodes/${n.id}`} className="font-semibold text-emerald-600 hover:underline inline-flex items-center gap-1.5 flex-wrap">
+                        {n.name}
+                        <NodeBillingBadges node={n} />
+                      </Link>
+                    </td>
                     <td className="font-mono text-xs text-ink-soft"><SensText blurred={blurred}>{n.relay_host || n.address || '--'}</SensText></td>
                     <td><NodeTypeBadge type={n.node_type} /></td>
                     <td className="font-mono text-ink-soft">{ruleCount[n.id] || 0}</td>
@@ -130,7 +136,10 @@ export default function Dashboard() {
               {nodes.map(n => (
                 <Link key={n.id} to={`/nodes/${n.id}`} className="mobile-card block no-underline text-ink">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-semibold text-emerald-600">{n.name}</span>
+                    <span className="font-semibold text-emerald-600 inline-flex items-center gap-1.5 flex-wrap">
+                      {n.name}
+                      <NodeBillingBadges node={n} />
+                    </span>
                     <NodeStatus node={n} />
                   </div>
                   <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
@@ -252,6 +261,135 @@ function buildAttention(data, users) {
   const rank = { danger: 0, warn: 1, info: 2 }
   items.sort((a, b) => (rank[a.tone] ?? 9) - (rank[b.tone] ?? 9))
   return items.slice(0, 5)
+}
+
+// When attention is empty, fill the card with dense ops summaries so the
+// overview still carries signal (top traffic, recent offline, expiring soon).
+function buildOpsSummary(data, users) {
+  const nodes = data?.nodes || []
+  const traffic = data?.node_traffic || {}
+  const now = Math.floor(Date.now() / 1000)
+
+  const topNodes = [...nodes]
+    .map(n => ({ id: n.id, name: n.name, bytes: traffic[n.id] || 0 }))
+    .filter(n => n.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes)
+    .slice(0, 3)
+
+  const topUsers = (Array.isArray(users) ? users : [])
+    .filter(u => u.role !== 'admin')
+    .map(u => {
+      const rate = u.billing_rate > 0 ? u.billing_rate : 1
+      const real = u.traffic_used_bytes || 0
+      return {
+        id: u.id,
+        username: u.username,
+        real,
+        display: Math.round(real * rate),
+        rate,
+      }
+    })
+    .filter(u => u.real > 0)
+    .sort((a, b) => b.real - a.real)
+    .slice(0, 3)
+
+  const recentOffline = nodes
+    .filter(n => !n.disabled && n.online !== 1 && n.node_type !== 'composite')
+    .map(n => ({
+      id: n.id,
+      name: n.name,
+      last_seen: n.last_seen || 0,
+    }))
+    .sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0))
+    .slice(0, 3)
+
+  const expiringSoon = (Array.isArray(users) ? users : [])
+    .filter(u => u.role !== 'admin' && !u.disabled)
+    .map(u => {
+      const exp = nullInt(u.expires_at) || 0
+      return { id: u.id, username: u.username, exp }
+    })
+    .filter(u => u.exp > now && u.exp - now <= 14 * DAY)
+    .sort((a, b) => a.exp - b.exp)
+    .slice(0, 3)
+
+  return { topNodes, topUsers, recentOffline, expiringSoon }
+}
+
+function OpsSummaryPanel({ summary }) {
+  const { topNodes = [], topUsers = [], recentOffline = [], expiringSoon = [] } = summary || {}
+  const empty = !topNodes.length && !topUsers.length && !recentOffline.length && !expiringSoon.length
+  if (empty) {
+    return (
+      <div className="px-5 py-10 text-center text-[13px] text-ink-mut">
+        暂无需要处理的事项 · 运营数据也还不多
+      </div>
+    )
+  }
+
+  const Section = ({ title, children, to, more }) => (
+    <div className="px-4 py-3 border-b border-line-soft last:border-b-0">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[12px] font-semibold text-ink-soft uppercase tracking-wide">{title}</span>
+        {to && more ? <Link to={to} className="text-[11.5px] text-emerald-600 hover:underline">{more}</Link> : null}
+      </div>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  )
+
+  const Row = ({ to, left, right }) => (
+    <Link to={to} className="flex items-center justify-between gap-2 text-[13px] hover:bg-raised/60 rounded-md px-1.5 py-1 -mx-1.5 transition-colors">
+      <span className="min-w-0 truncate font-medium text-ink">{left}</span>
+      <span className="flex-none font-mono text-[12px] text-ink-mut">{right}</span>
+    </Link>
+  )
+
+  return (
+    <div className="divide-y divide-line-soft">
+      {topNodes.length > 0 && (
+        <Section title="流量 Top 节点" to="/nodes" more="节点">
+          {topNodes.map(n => (
+            <Row key={n.id} to={`/nodes/${n.id}`} left={n.name} right={fmtBytes(n.bytes)} />
+          ))}
+        </Section>
+      )}
+      {topUsers.length > 0 && (
+        <Section title="用量 Top 用户" to="/users" more="用户">
+          {topUsers.map(u => (
+            <Row
+              key={u.id}
+              to={`/users/${u.id}`}
+              left={u.username}
+              right={`${fmtBytes(u.real)}${u.rate !== 1 ? ` · 视 ${fmtBytes(u.display)}` : ''}`}
+            />
+          ))}
+        </Section>
+      )}
+      {recentOffline.length > 0 && (
+        <Section title="最近离线" to="/nodes" more="节点">
+          {recentOffline.map(n => (
+            <Row
+              key={n.id}
+              to={`/nodes/${n.id}`}
+              left={n.name}
+              right={n.last_seen ? fmtTime(n.last_seen) : '暂无心跳'}
+            />
+          ))}
+        </Section>
+      )}
+      {expiringSoon.length > 0 && (
+        <Section title="14 天内到期" to="/users" more="用户">
+          {expiringSoon.map(u => {
+            const days = Math.max(1, Math.ceil((u.exp - Math.floor(Date.now() / 1000)) / DAY))
+            return (
+              <Row key={u.id} to={`/users/${u.id}`} left={u.username} right={`${days} 天后`} />
+            )
+          })}
+        </Section>
+      )}
+      <div className="px-4 py-2.5 text-[11.5px] text-ink-mut">暂无紧急事项 · 以上为运营摘要</div>
+    </div>
+  )
 }
 
 function StatCard({ label, value, unit, sub, accent, icon }) {

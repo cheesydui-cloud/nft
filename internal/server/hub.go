@@ -273,6 +273,11 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 		case wsproto.TypePing:
 			pong, _ := json.Marshal(wsproto.Pong{TS: time.Now().UnixMilli()})
 			ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypePong, ID: env.ID, Payload: pong})
+			// Refresh last_seen on every ping so "假在线" stale-detection has a
+			// live clock; agents ping ~10s so this is cheap and bounds drift.
+			if err := db.TouchNodeLastSeen(h.DB, ac.nodeID); err != nil {
+				log.Printf("hub: TouchNodeLastSeen node %d: %v", ac.nodeID, err)
+			}
 		case wsproto.TypeCounters:
 			var co wsproto.Counters
 			if err := json.Unmarshal(env.Payload, &co); err != nil {

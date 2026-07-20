@@ -40,14 +40,21 @@ write_daemon_unit() {
 Description=nft host daemon (nftables controller)
 After=network-online.target nftables.service
 Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=8
 
 [Service]
+Type=simple
 ExecStart=$INSTALL_DIR/nft-agent daemon$extra_args
 # always: recover from hung/zombie processes (not just non-zero exits). A
 # long-lived agent can stall without exiting after days of NAT aging or a
 # half-open WS; on-failure would leave it offline forever.
 Restart=always
 RestartSec=3
+# systemd-level hang detection: agent sd_notify WATCHDOG=1 roughly every
+# WatchdogSec/2. A deadlocked process that never exits is killed and restarted.
+WatchdogSec=60
+NotifyAccess=main
 RuntimeDirectory=nft
 RuntimeDirectoryMode=0750
 StateDirectory=nft

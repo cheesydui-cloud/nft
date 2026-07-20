@@ -102,6 +102,24 @@ export function NodeStackBadge({ node }) {
   )
 }
 
+/* ---------- NodeBillingBadges ---------- */
+// Admin list / dashboard: surface non-default billing so operators don't
+// need to open each node detail. Multiplier=1 and bidirectional stay silent
+// to avoid noise on the common case.
+export function NodeBillingBadges({ node, className = '' }) {
+  if (!node) return null
+  const mult = Number(node.rate_multiplier)
+  const showMult = Number.isFinite(mult) && mult > 0 && mult !== 1
+  const uni = !!node.unidirectional
+  if (!showMult && !uni) return null
+  return (
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      {showMult && <Badge color="blue" title="计费倍率">×{mult % 1 === 0 ? mult.toFixed(0) : mult}</Badge>}
+      {uni && <Badge color="amber" title="单向计费：只计出站">单向</Badge>}
+    </span>
+  )
+}
+
 /* ---------- ExitKindBadge ---------- */
 // Distinguishes a landing-node exit (resolved from the user's subscription)
 // from a custom host:port exit. Landing exits show the concrete protocol

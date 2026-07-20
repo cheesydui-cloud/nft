@@ -8,8 +8,10 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +46,11 @@ const (
 	// the watchdog tears the session down. Must exceed dialerReadTimeout so
 	// a single slow frame does not false-trigger.
 	dialerWatchdogStale = 45 * time.Second
+	// dialerTCPKeepAlive probes the TCP layer so middleboxes that silently
+	// drop idle sockets surface a reset instead of a half-open forever.
+	// Interval is short enough to catch NAT aging (~30–60s on some clouds)
+	// while staying well under typical panel read/ping budgets.
+	dialerTCPKeepAlive = 15 * time.Second
 )
 
 const (
@@ -264,8 +271,13 @@ func (d *Dialer) Run(ctx context.Context) {
 		}
 		sessionStart := time.Now()
 		helloAcked, err := d.runOnceSafe(ctx)
+		reason := classifyDialerEnd(err, helloAcked, time.Since(sessionStart))
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("dialer: connection ended: %v", err)
+			log.Printf("dialer: reconnect reason=%s duration=%s hello_acked=%v err=%v",
+				reason, time.Since(sessionStart).Round(time.Millisecond), helloAcked, err)
+		} else if err == nil {
+			log.Printf("dialer: reconnect reason=%s duration=%s hello_acked=%v",
+				reason, time.Since(sessionStart).Round(time.Millisecond), helloAcked)
 		}
 		// Reset backoff only when a session both got past hello_ack AND stayed
 		// up long enough to count as stable. A node that's been authenticated
@@ -293,6 +305,54 @@ func (d *Dialer) Run(ctx context.Context) {
 	}
 }
 
+// classifyDialerEnd maps a session end to a short stable label so operators
+// can grep journalctl for "reconnect reason=" without parsing free-form errors.
+func classifyDialerEnd(err error, helloAcked bool, lived time.Duration) string {
+	if err == nil {
+		return "agent_stop"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_canceled"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "watchdog:"):
+		return "watchdog_stale"
+	case strings.HasPrefix(msg, "dial "):
+		return "dial_fail"
+	case strings.Contains(msg, "hello rejected"):
+		return "hello_rejected"
+	case strings.Contains(msg, "read hello_ack"):
+		return "hello_timeout"
+	case strings.Contains(msg, "write hello"):
+		return "hello_write_fail"
+	case strings.Contains(msg, "session panic"):
+		return "session_panic"
+	case strings.Contains(msg, "status = StatusGoingAway") || strings.Contains(msg, "StatusGoingAway"):
+		return "panel_going_away"
+	case strings.Contains(msg, "status = StatusNormalClosure") || strings.Contains(msg, "StatusNormalClosure"):
+		return "panel_close"
+	case strings.Contains(msg, "status = StatusPolicyViolation"):
+		return "panel_policy"
+	case strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "deadline exceeded"):
+		if helloAcked {
+			return "read_timeout"
+		}
+		return "dial_or_hello_timeout"
+	case strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "EOF"):
+		if helloAcked {
+			return "connection_drop"
+		}
+		return "dial_drop"
+	case !helloAcked:
+		return "pre_hello_fail"
+	case lived < dialerStableSession:
+		return "short_session"
+	default:
+		return "session_error"
+	}
+}
+
 // runOnceSafe wraps runOnce with panic recovery so a single panic in a
 // session does not kill the whole Dialer reconnect loop.
 func (d *Dialer) runOnceSafe(ctx context.Context) (helloAcked bool, err error) {
@@ -312,7 +372,7 @@ func (d *Dialer) runOnceSafe(ctx context.Context) (helloAcked bool, err error) {
 // after a single panel hiccup.
 func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	ws, _, err := websocket.Dial(dctx, d.cfg.URL, nil)
+	ws, _, err := websocket.Dial(dctx, d.cfg.URL, dialOptions())
 	cancel()
 	if err != nil {
 		return false, fmt.Errorf("dial %s: %w", d.cfg.URL, err)
@@ -696,4 +756,27 @@ func probeOutboundIP(network, target string) string {
 // between reconnects is picked up without an agent restart.
 func probeOutboundIPs() (v4, v6 string) {
 	return probeOutboundIP("udp4", probeV4Target), probeOutboundIP("udp6", probeV6Target)
+}
+
+// dialOptions enables TCP keepalive on the underlying connection so silent
+// middlebox drops surface as resets instead of half-open forever (the
+// application-level watchdog still covers the case where keepalives are
+// filtered). NetDial/NetDialContext leave TLS/proxy handling to coder/websocket.
+func dialOptions() *websocket.DialOptions {
+	nd := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: dialerTCPKeepAlive,
+	}
+	return &websocket.DialOptions{
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
+				DialContext:         nd.DialContext,
+				ForceAttemptHTTP2:   true,
+				MaxIdleConns:        4,
+				IdleConnTimeout:     90 * time.Second,
+				TLSHandshakeTimeout: 15 * time.Second,
+			},
+		},
+	}
 }

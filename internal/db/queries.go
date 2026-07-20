@@ -1017,6 +1017,57 @@ func MarkNodeOffline(d *sql.DB, id int64) error {
 	return err
 }
 
+// MarkAllAgentNodesOffline clears online for every agent-managed node. Call on
+// panel boot: WebSocket maps are empty after a restart, so any leftover
+// online=1 from a previous process is "假在线" until agents re-hello.
+// Self/composite rows are left alone (self has no agent; composite online is
+// derived from children at read time).
+func MarkAllAgentNodesOffline(d *sql.DB) error {
+	_, err := d.Exec(`UPDATE nodes SET online=0 WHERE node_type NOT IN ('self','composite')`)
+	return err
+}
+
+// TouchNodeLastSeen refreshes last_seen without flipping online. Used on agent
+// pings so the UI's "最后心跳" tracks a live session, not only the original hello.
+func TouchNodeLastSeen(d *sql.DB, id int64) error {
+	_, err := d.Exec(`UPDATE nodes SET last_seen=? WHERE id=? AND online=1`, now(), id)
+	return err
+}
+
+// nodeStaleOnlineTTL is how long a node may keep online=1 without a fresh
+// last_seen before list/dashboard treat it as offline. Must exceed the agent's
+// ping interval (10s) plus a couple of missed pings and network jitter.
+const nodeStaleOnlineTTL = 45 // seconds
+
+// ApplyStaleOnlinePolicy demotes agent nodes whose last_seen is older than
+// nodeStaleOnlineTTL (or missing) from online=1 → 0 in the returned slice.
+// Also persists the flip so the next page load does not re-show them green.
+// Composite online is re-derived later via ResolveCompositeOnline.
+func ApplyStaleOnlinePolicy(d *sql.DB, nodes []*Node) {
+	cutoff := now() - nodeStaleOnlineTTL
+	var staleIDs []int64
+	for _, n := range nodes {
+		if n == nil || n.NodeType == "self" || n.NodeType == "composite" {
+			continue
+		}
+		if n.Online != 1 {
+			continue
+		}
+		// last_seen is *int64 in JSON; scan may leave it nil if column null.
+		var seen int64
+		if n.LastSeen != nil {
+			seen = *n.LastSeen
+		}
+		if seen == 0 || seen < cutoff {
+			n.Online = 0
+			staleIDs = append(staleIDs, n.ID)
+		}
+	}
+	for _, id := range staleIDs {
+		_ = MarkNodeOffline(d, id)
+	}
+}
+
 // MarkNodeApplied stamps last_apply_at and clears last_error after a
 // successful dispatch. Templates render "已同步" when last_apply_at is
 // set and last_error is empty. warning carries a non-fatal, dispatch-level

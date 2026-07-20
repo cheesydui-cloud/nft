@@ -238,6 +238,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer os.Remove(d.socketPath)
 	srv := &http.Server{Handler: d.Handler()}
 
+	// systemd WatchdogSec + NOTIFY_SOCKET: keep the unit alive only while
+	// this process is making progress. Without it, a hung daemon with
+	// Restart=always stays "active" forever and never gets restarted.
+	wdStop := make(chan struct{})
+	defer close(wdStop)
+	safeGo(func() { runSystemdWatchdog(wdStop) })
+
 	serveErr := make(chan error, 1)
 	safeGo(func() { serveErr <- srv.Serve(l) })
 

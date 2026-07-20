@@ -288,6 +288,7 @@ func (s *Server) apiChangeUsername(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 	nodes, _ := db.ListNodes(s.DB)
+	s.reconcileNodeOnline(nodes)
 	db.ResolveCompositeOnline(s.DB, nodes)
 	nodeTraffic, _ := db.NodeTrafficSums(s.DB)
 	// The dashboard only shows aggregates over rules/users, so compute them
@@ -318,6 +319,7 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.reconcileNodeOnline(nodes)
 	db.ResolveCompositeAll(s.DB, nodes)
 	panelURL, _ := db.GetSetting(s.DB, "panel_url")
 	panelName, _ := db.GetSetting(s.DB, "panel_name")
@@ -513,6 +515,20 @@ func (s *Server) apiGetNode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErr(w, http.StatusNotFound, "节点不存在")
 		return
+	}
+	s.reconcileNodeOnline([]*db.Node{n})
+	if n.NodeType == "composite" {
+		// Composite online is derived from children — load siblings for resolve.
+		if all, err := db.ListNodes(s.DB); err == nil {
+			s.reconcileNodeOnline(all)
+			db.ResolveCompositeOnline(s.DB, all)
+			for _, x := range all {
+				if x.ID == n.ID {
+					n.Online = x.Online
+					break
+				}
+			}
+		}
 	}
 	ruleHops, _ := db.ListRuleHopsByNode(s.DB, n.ID)
 	if n.NodeType == "composite" {
@@ -2728,6 +2744,7 @@ func (s *Server) apiMyDashboard(w http.ResponseWriter, r *http.Request) {
 	// A composite's online state is derived from its children, which may not be
 	// in the user's granted set — resolve over the full node list, then project
 	// the result onto the granted nodes so the dashboard shows accurate status.
+	s.reconcileNodeOnline(nodes)
 	db.ResolveCompositeOnline(s.DB, nodes)
 	onlineByID := make(map[int64]int, len(nodes))
 	for _, n := range nodes {
