@@ -146,16 +146,19 @@ export function Layout({ children }) {
           {/* Brand */}
           <div className={`flex items-center gap-3 pt-5 pb-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
             <div className="w-[42px] h-[42px] rounded-[14px] flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(16,185,129,0.65)] ring-1 ring-white/25"
-              title={collapsed && version ? version : undefined}
+              title={collapsed && isAdmin && version ? version : undefined}
               style={{ background: 'linear-gradient(145deg, #10b981 0%, #14b8a6 52%, #0d9488 100%)' }}>
               <BrandMark />
             </div>
             {!collapsed && <div className="min-w-0">
               <div className="text-[15.5px] font-bold tracking-tight sb-text truncate">{panelName || 'nft'}</div>
-              <div className="text-[11.5px] sb-text-mut mt-0.5">
-                {isAdmin ? '管理面板' : '用户面板'}
-                {version && <span className="font-mono"> · {version}</span>}
-              </div>
+              {/* Admin keeps role + version; users only see the panel name. */}
+              {isAdmin && (
+                <div className="text-[11.5px] sb-text-mut mt-0.5">
+                  管理面板
+                  {version && <span className="font-mono"> · {version}</span>}
+                </div>
+              )}
             </div>}
           </div>
 
@@ -214,7 +217,8 @@ export function Layout({ children }) {
                 </div>
                 <div className="min-w-0">
                   <div className="text-[13.5px] sb-text font-semibold leading-tight truncate">{user.username}</div>
-                  <div className="text-[12px] sb-text-mut mt-px">{user.role}</div>
+                  {/* Role label is admin-only; users only see their username. */}
+                  {isAdmin && <div className="text-[12px] sb-text-mut mt-px">{user.role}</div>}
                 </div>
               </div>
               <div className="flex gap-2">
