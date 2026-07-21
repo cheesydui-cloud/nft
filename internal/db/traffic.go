@@ -140,16 +140,33 @@ func AddUserDailyTraffic(d DBTX, userID, delta int64) error {
 	return err
 }
 
-// TodayUserTrafficBytes returns one user's raw traffic for the current
-// Asia/Shanghai calendar day (北京时间 0 点切日). Missing rows are 0.
-func TodayUserTrafficBytes(d *sql.DB, userID int64) (int64, error) {
+// UserTrafficBytesOnDay returns one user's raw traffic for the given
+// Asia/Shanghai YYYY-MM-DD day key. Missing rows are 0.
+func UserTrafficBytesOnDay(d *sql.DB, userID int64, day string) (int64, error) {
 	var total int64
 	err := d.QueryRow(`SELECT COALESCE(raw_bytes,0) FROM daily_user_traffic WHERE day=? AND user_id=?`,
-		dayKey(time.Now()), userID).Scan(&total)
+		day, userID).Scan(&total)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
 	return total, err
+}
+
+// TodayUserTrafficBytes returns one user's raw traffic for the current
+// Asia/Shanghai calendar day (北京时间 0 点切日). Missing rows are 0.
+func TodayUserTrafficBytes(d *sql.DB, userID int64) (int64, error) {
+	return UserTrafficBytesOnDay(d, userID, dayKey(time.Now()))
+}
+
+// YesterdayUserTrafficBytes returns one user's raw traffic for the previous
+// Asia/Shanghai calendar day. Missing rows are 0.
+func YesterdayUserTrafficBytes(d *sql.DB, userID int64) (int64, error) {
+	return UserTrafficBytesOnDay(d, userID, dayKey(time.Now().Add(-24*time.Hour)))
+}
+
+// DayKeyYesterday is the Asia/Shanghai YYYY-MM-DD for "yesterday".
+func DayKeyYesterday() string {
+	return dayKey(time.Now().Add(-24 * time.Hour))
 }
 
 // NodeRawTraffic returns every node's cumulative raw bytes keyed by id. Nodes

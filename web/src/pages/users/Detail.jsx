@@ -100,6 +100,9 @@ export default function UserDetail() {
   const todayRaw = data?.today_raw_bytes || 0
   const todayBillable = todayRaw * rate
   const todayDay = data?.today_day || ''
+  const yesterdayRaw = data?.yesterday_raw_bytes || 0
+  const yesterdayBillable = yesterdayRaw * rate
+  const yesterdayDay = data?.yesterday_day || ''
 
   const chips = isRegularUser ? [
     {
@@ -107,22 +110,6 @@ export default function UserDetail() {
       value: fmtTrafficGB(billableUsed, quota),
       tone: quota > 0 && billablePct >= 100 ? 'tone-danger' : quota > 0 && billablePct >= 80 ? 'tone-warn' : 'tone-blue',
       title: '用户视角累计（已用×计费倍率）',
-    },
-    {
-      label: '今日真实',
-      value: fmtBytes(todayRaw),
-      tone: 'tone-teal',
-      title: todayDay
-        ? `当日真实流量（北京时间 ${todayDay} 0:00–23:59，不计倍率）`
-        : '当日真实流量（北京时间 0:00–23:59，不计倍率）',
-    },
-    {
-      label: '今日视角',
-      value: fmtBytes(todayBillable),
-      tone: 'tone-blue',
-      title: todayDay
-        ? `当日用户视角 = 今日真实 × ${rate}（北京时间 ${todayDay}）`
-        : `当日用户视角 = 今日真实 × ${rate}`,
     },
     {
       label: '规则',
@@ -253,6 +240,43 @@ export default function UserDetail() {
           </>
         ) : null}
       />
+
+      {isRegularUser && (
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-line-soft bg-surface/80 px-4 py-3">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <span className="text-[12px] font-bold text-ink tracking-wide">今日</span>
+              <span className="text-[11px] text-ink-mut tabular-nums">{todayDay || '北京时间'} · 0:00–23:59</span>
+            </div>
+            <div className="flex items-end gap-5">
+              <div>
+                <div className="text-[11px] text-ink-mut mb-0.5">真实</div>
+                <div className="text-[18px] font-bold tabular-nums text-ink leading-tight">{fmtBytes(todayRaw)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-ink-mut mb-0.5">视角{rate !== 1 ? ` ×${rate}` : ''}</div>
+                <div className="text-[18px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400 leading-tight">{fmtBytes(todayBillable)}</div>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-line-soft bg-surface/80 px-4 py-3">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <span className="text-[12px] font-bold text-ink tracking-wide">昨日</span>
+              <span className="text-[11px] text-ink-mut tabular-nums">{yesterdayDay || '上一自然日'}</span>
+            </div>
+            <div className="flex items-end gap-5">
+              <div>
+                <div className="text-[11px] text-ink-mut mb-0.5">真实</div>
+                <div className="text-[18px] font-bold tabular-nums text-ink leading-tight">{fmtBytes(yesterdayRaw)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-ink-mut mb-0.5">视角{rate !== 1 ? ` ×${rate}` : ''}</div>
+                <div className="text-[18px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400 leading-tight">{fmtBytes(yesterdayBillable)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DetailTabs tabs={tabs} active={activeTab} onChange={setTab} />
 

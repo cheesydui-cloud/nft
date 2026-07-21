@@ -2265,16 +2265,19 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 		item.classifyExit(idx, true)
 		ruleViews = append(ruleViews, item)
 	}
-	// Today raw is the Asia/Shanghai calendar day (北京时间 0–23:59). Billable
-	// today is computed client-side as raw × billing_rate to match total usage.
+	// Day buckets use Asia/Shanghai calendar days (北京时间 0–23:59).
+	// Billable view is raw × billing_rate on the client.
 	todayRaw, _ := db.TodayUserTrafficBytes(s.DB, id)
+	yesterdayRaw, _ := db.YesterdayUserTrafficBytes(s.DB, id)
 	jsonOK(w, map[string]any{
 		"user": apiUserFullView(target), "nodes": grantedNodes,
 		"grants": grants, "all_nodes": allNodes,
-		"rules":           ruleViews,
-		"landing_nodes":   landingPreview,
-		"today_raw_bytes": todayRaw,
-		"today_day":       db.DayKeyNow(),
+		"rules":               ruleViews,
+		"landing_nodes":       landingPreview,
+		"today_raw_bytes":     todayRaw,
+		"today_day":           db.DayKeyNow(),
+		"yesterday_raw_bytes": yesterdayRaw,
+		"yesterday_day":       db.DayKeyYesterday(),
 	})
 }
 

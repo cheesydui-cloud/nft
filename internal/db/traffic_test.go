@@ -413,6 +413,36 @@ func TestTodayUserTrafficBytesShanghaiDay(t *testing.T) {
 	}
 }
 
+func TestYesterdayUserTrafficBytesShanghaiDay(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	today := dayKey(time.Now())
+	yesterday := dayKey(time.Now().Add(-24 * time.Hour))
+	if _, err := d.Exec(`INSERT INTO daily_user_traffic(day, user_id, raw_bytes) VALUES(?,?,?)`,
+		today, uid, 11); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO daily_user_traffic(day, user_id, raw_bytes) VALUES(?,?,?)`,
+		yesterday, uid, 77); err != nil {
+		t.Fatal(err)
+	}
+	got, err := YesterdayUserTrafficBytes(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 77 {
+		t.Fatalf("YesterdayUserTrafficBytes = %d, want 77 (day %s)", got, yesterday)
+	}
+	// Today must remain independent.
+	td, err := TodayUserTrafficBytes(d, uid)
+	if err != nil || td != 11 {
+		t.Fatalf("TodayUserTrafficBytes = %d err %v, want 11", td, err)
+	}
+	if DayKeyYesterday() != yesterday {
+		t.Fatalf("DayKeyYesterday=%s want %s", DayKeyYesterday(), yesterday)
+	}
+}
+
 // --- test helpers ---
 
 func openTestDB(t *testing.T) *sql.DB {
