@@ -3,16 +3,20 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal, useConfirm } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, useConfirm, ProbeChainButton } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { uriToClashYaml } from '../../lib/yaml-convert'
 import { fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
+import { createLimiter } from '../../lib/limiter'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
 import LandingSourceCard from './LandingSourceCard'
+
+// Cap concurrent probe-chain calls for 「测试全部」 (each request fans out hops).
+const detailProbeLimit = createLimiter(6)
 
 export default function UserDetail() {
   const { id } = useParams()
@@ -30,6 +34,7 @@ export default function UserDetail() {
   const [editRule, setEditRule] = useState(null)
   const [bindings, setBindings] = useState([])
   const [nodeRoles, setNodeRoles] = useState({})
+  const [probeAllTrigger, setProbeAllTrigger] = useState(0)
   const confirm = useConfirm()
 
   const load = () => {
@@ -40,7 +45,7 @@ export default function UserDetail() {
   useEffect(() => { api.get('/users').then(d => setAllUsers(d?.users || [])) }, [])
   useEffect(() => { api.get('/node-bindings').then(d => setBindings(d?.bindings || [])).catch(console.error) }, [])
   useEffect(() => { fetchNodeRoles().then(setNodeRoles).catch(() => setNodeRoles({})) }, [])
-  useEffect(() => { setTab('overview'); setCreateOpen(false); setEditRule(null) }, [id])
+  useEffect(() => { setTab('overview'); setCreateOpen(false); setEditRule(null); setProbeAllTrigger(0) }, [id])
 
   // Acting as this user: only their granted relay nodes and landing-marked exits.
   const rawLanding = data?.landing_nodes || []
@@ -465,9 +470,20 @@ export default function UserDetail() {
           title="该用户的规则"
           subtitle={`${rules.length} 条`}
           actions={
-            <button type="button" className="btn-primary text-xs" onClick={() => setCreateOpen(true)}>
-              ＋ 替用户创建规则
-            </button>
+            <div className="flex items-center gap-2">
+              {rules.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => setProbeAllTrigger(t => t + 1)}
+                >
+                  测试全部
+                </button>
+              )}
+              <button type="button" className="btn-primary text-xs" onClick={() => setCreateOpen(true)}>
+                ＋ 替用户创建规则
+              </button>
+            </div>
           }
         >
           {rules.length ? (
@@ -530,7 +546,12 @@ export default function UserDetail() {
                         <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
                         <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
                         <td className="text-right">
-                          <div className="inline-flex items-center gap-2.5">
+                          <div className="inline-flex items-center gap-2.5 flex-wrap justify-end">
+                            <ProbeChainButton
+                              ruleId={r.id}
+                              probeAllTrigger={probeAllTrigger}
+                              limit={detailProbeLimit}
+                            />
                             <button onClick={copyRuleLink} className="text-emerald-600 text-xs font-semibold hover:underline">复制</button>
                             <button onClick={() => setEditRule(r)} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
                             <button onClick={deleteRule} className="text-red-600 text-xs font-semibold hover:underline">删除</button>

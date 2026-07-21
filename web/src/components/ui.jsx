@@ -261,10 +261,14 @@ export function SensText({ children, blurred }) {
 }
 
 /* ---------- ProbeButton ---------- */
-export function ProbeButton({ target, nodeId }) {
+// Exit-leg probe from a node (or chain tail). Always render the control even when
+// target/node aren't ready yet — callers pass disabled + disabledTitle so the
+// affordance stays visible in create/edit forms instead of vanishing.
+export function ProbeButton({ target, nodeId, disabled = false, disabledTitle = '' }) {
   const [state, setState] = useState('idle') // idle | loading | ok | fail
   const [result, setResult] = useState('')
   const probe = () => {
+    if (disabled || !target) return
     setState('loading')
     let url = `/api/probe?target=${encodeURIComponent(target)}`
     if (nodeId) url += `&node=${nodeId}`
@@ -273,27 +277,34 @@ export function ProbeButton({ target, nodeId }) {
       else { setState('fail'); setResult('不通') }
     }).catch(() => { setState('fail'); setResult('请求失败') })
   }
+  const busy = state === 'loading'
   return (
     <span className="inline-flex items-center gap-2">
-      <button onClick={probe} disabled={state === 'loading'}
-        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50">
-        {state === 'loading' ? <Spinner className="w-3 h-3" /> : '测试'}
+      <button type="button" onClick={probe} disabled={disabled || busy}
+        title={disabled ? (disabledTitle || '请先选择入口与出口') : undefined}
+        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-line disabled:hover:text-ink-soft">
+        {busy ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
       {state === 'fail' && <span className="text-[11px] text-red-600">{result}</span>}
-      {state === 'loading' && <span className="text-[11px] text-ink-mut">测试中...</span>}
+      {busy && <span className="text-[11px] text-ink-mut">测试中...</span>}
     </span>
   )
 }
 
 /* ---------- ProbeChainButton ---------- */
-export function ProbeChainButton({ chainId, ruleId }) {
+// Full-path probe for a saved rule (or explicit chain id). Optional probeAllTrigger
+// re-runs when the parent bumps a counter (「测试全部」); run optional limit() to
+// cap concurrency so N rules don't each fan out hops at once.
+export function ProbeChainButton({ chainId, ruleId, probeAllTrigger, limit }) {
   const [state, setState] = useState('idle')
   const [result, setResult] = useState('')
   const probe = () => {
     setState('loading')
     const param = ruleId ? `rule_id=${ruleId}` : `chain=${chainId}`
-    fetch(`/api/probe-chain?${param}`).then(r => r.json()).then(d => {
+    const run = () => fetch(`/api/probe-chain?${param}`).then(r => r.json())
+    const p = typeof limit === 'function' ? limit(run) : run()
+    p.then(d => {
       if (d.hops && d.hops.length) {
         const parts = d.hops.map(h => h.error ? 'x' : h.latency_ms + 'ms')
         const joined = parts.join(' + ')
@@ -311,15 +322,20 @@ export function ProbeChainButton({ chainId, ruleId }) {
       }
     }).catch(() => { setState('fail'); setResult('请求失败') })
   }
+  useEffect(() => {
+    if (probeAllTrigger) probe()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probeAllTrigger])
+  const busy = state === 'loading'
   return (
     <span className="inline-flex items-center gap-2">
-      <button onClick={probe} disabled={state === 'loading'}
+      <button type="button" onClick={probe} disabled={busy}
         className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50">
-        {state === 'loading' ? <Spinner className="w-3 h-3" /> : '测试'}
+        {busy ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
       {state === 'fail' && <span className="text-[11px] text-red-600">{result}</span>}
-      {state === 'loading' && <span className="text-[11px] text-ink-mut">测试中...</span>}
+      {busy && <span className="text-[11px] text-ink-mut">测试中...</span>}
     </span>
   )
 }

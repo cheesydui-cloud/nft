@@ -197,7 +197,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     <Modal open={open} onClose={onClose} title={title}>
       <form onSubmit={submit} className="space-y-[22px]">
         <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
-          <label className="fl">入口节点</label>
+          <label className="fl">选择线路</label>
           <Select value={form.node_id} onChange={pickEntry} placeholder="-- 选择节点 --" searchable tabs groups={groups} />
           {viaLevels.map(({ level, cands, chosen, mustVia }) => (
             <Fragment key={level}>
@@ -264,28 +264,38 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               </>
             )
           })()}
-          <label className="fl">入口端口 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+          <label className="fl">端口设置 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
           <input className="input-field font-mono" type="number" min="1" max="65535" value={form.entry_port} onChange={e => set('entry_port', e.target.value)}
             placeholder="留空自动分配" style={{ maxWidth: 200 }} />
 
           {landingEnabled ? (
             <>
-              <label className="fl">出口节点</label>
+              <label className="fl">落地IP</label>
               <div className="flex items-center gap-3">
                 {landingOptions.length ? (
-                  <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择出口节点 --" searchable options={landingOptions} className="flex-1" />
+                  <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1" />
                 ) : (
-                  <div className="text-xs text-ink-mut">尚无可用出口节点，请联系管理员分配落地节点或订阅来源。</div>
+                  <div className="text-xs text-ink-mut flex-1">尚无可用落地IP，请联系管理员分配落地节点或订阅来源。</div>
                 )}
-                {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
+                <ProbeButton
+                  target={form.exit}
+                  nodeId={tailNode?.id ?? form.node_id}
+                  disabled={!form.node_id || !form.exit}
+                  disabledTitle={!form.node_id ? '请先选择线路' : '请先选择落地IP'}
+                />
               </div>
             </>
           ) : (
             <>
-              <label className="fl">出口</label>
+              <label className="fl">落地IP</label>
               <div className="flex items-center gap-3">
                 <input className="input-field font-mono flex-1" value={form.exit} onChange={e => set('exit', e.target.value)} required placeholder="host:port" />
-                {form.node_id && form.exit && <ProbeButton target={form.exit} nodeId={tailNode?.id ?? form.node_id} />}
+                <ProbeButton
+                  target={form.exit}
+                  nodeId={tailNode?.id ?? form.node_id}
+                  disabled={!form.node_id || !form.exit}
+                  disabledTitle={!form.node_id ? '请先选择线路' : '请先填写落地 host:port'}
+                />
               </div>
             </>
           )}
