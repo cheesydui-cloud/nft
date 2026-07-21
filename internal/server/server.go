@@ -736,6 +736,8 @@ func (s *Server) Router() http.Handler {
 			// Announcements
 			r.Get("/announcements", s.apiListAnnouncements)
 			r.Post("/announcements", s.apiCreateAnnouncement)
+			r.Put("/announcements/{id}", s.apiUpdateAnnouncement)
+			r.Patch("/announcements/{id}", s.apiPatchAnnouncementFlags)
 			r.Delete("/announcements/{id}", s.apiDeleteAnnouncement)
 
 			// Usage docs (admin write). Static paths before {id}.
@@ -769,6 +771,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/my", s.apiMyDashboard)
 			r.Get("/my/landing-nodes", s.apiMyLandingNodes)
 			r.Get("/my/announcements", s.apiMyAnnouncements)
+			r.Get("/my/login-announcement", s.apiMyLoginAnnouncement)
 			r.Get("/my/docs", s.apiMyDocs)
 			r.Get("/my/docs/{id}", s.apiMyGetDoc)
 			r.Get("/my/rules", s.apiMyListRules)

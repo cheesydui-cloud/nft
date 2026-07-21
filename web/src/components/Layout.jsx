@@ -5,6 +5,7 @@ import { resolvedDark, getStoredTheme, setStoredTheme } from '../lib/theme'
 import { hasLocalURIs, hasLocalProxies } from '../lib/landing'
 import { Loading } from './ui'
 import { BrandMark } from './BrandMark'
+import { LoginAnnouncementModal, clearLoginAnnouncementSession } from './LoginAnnouncementModal'
 
 /* ---------- User context ---------- */
 const UserCtx = createContext(null)
@@ -61,8 +62,17 @@ export function UserProvider({ children }) {
     timersRef.current.push(timer)
   }, [])
 
+  // applySession patches user + branding from a login/me-shaped payload so the
+  // sidebar brand is correct on the first paint after login (not stuck on "nft").
+  const applySession = useCallback((data) => {
+    if (!data) return
+    if (data.user !== undefined) setUser(data.user)
+    if (data.panel_name !== undefined) setPanelName(data.panel_name || '')
+    if (data.version !== undefined) setVersion(data.version || '')
+  }, [])
+
   return (
-    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser }}>
+    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser, applySession }}>
       <ToastCtx.Provider value={toast}>
         {children}
         {/* Toast stack */}
@@ -121,6 +131,8 @@ export function Layout({ children }) {
 
   const handleLogout = async () => {
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
+    // Allow the login-popup to show again after the next successful login.
+    clearLoginAnnouncementSession()
     window.location.href = '/login'
   }
 
@@ -272,6 +284,9 @@ export function Layout({ children }) {
             </div>
           </div>
         </main>
+
+        {/* User-end login announcement (admin-designated). Manual close or 30s. */}
+        {!isAdmin && <LoginAnnouncementModal />}
     </div>
   )
 }

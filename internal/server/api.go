@@ -207,7 +207,15 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, newSessionCookie(r, token, int(sessionTTL.Seconds())))
 	db.WriteAudit(s.DB, u.ID, "login", "", "")
-	jsonOK(w, map[string]any{"user": apiUserView(u)})
+	// Include panel_name/version so the SPA can brand the sidebar immediately
+	// after login without waiting for a second /me round-trip (which used to
+	// leave the brand stuck on the "nft" fallback until a full page refresh).
+	panelName, _ := db.GetSetting(s.DB, "panel_name")
+	jsonOK(w, map[string]any{
+		"user":       apiUserView(u),
+		"panel_name": panelName,
+		"version":    serverVersion(),
+	})
 }
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {

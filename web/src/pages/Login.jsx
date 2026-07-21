@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useUser } from '../components/Layout'
 import { BrandMark } from '../components/BrandMark'
+import { clearLoginAnnouncementSession } from '../components/LoginAnnouncementModal'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -11,7 +12,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [panelName, setPanelName] = useState('')
   const navigate = useNavigate()
-  const { setUser } = useUser()
+  const { applySession, refreshUser } = useUser()
 
   useEffect(() => {
     api.get('/branding').then(d => setPanelName(d?.panel_name || '')).catch(() => {})
@@ -23,14 +24,15 @@ export default function Login() {
     setLoading(true)
     try {
       const data = await api.post('/login', { username, password })
-      // Login API returns {user: {...}} — set user directly from the response
-      // so that by the time navigate() triggers the route re-render, the
-      // user state is already committed.  If we waited for a second /api/me
-      // call instead, React state would still be pending when RootRedirect
-      // reads it, causing it to see null and bounce back to /login.
+      // Fresh login session may show the admin-designated popup once.
+      clearLoginAnnouncementSession()
+      // Commit user + panel_name/version immediately so RootRedirect sees a
+      // logged-in user and the sidebar brand is not stuck on the "nft" fallback.
       if (data?.user) {
-        setUser(data.user)
+        applySession(data)
       }
+      // Enrich with full /me fields (has_landing_source, etc.). Brand already set.
+      try { await refreshUser() } catch { /* session already applied */ }
       navigate('/', { replace: true })
     } catch (err) {
       setError(err.message || '登录失败')

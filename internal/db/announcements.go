@@ -11,18 +11,50 @@ type Announcement struct {
 	ID            int64  `json:"id"`
 	Title         string `json:"title"`
 	Content       string `json:"content"`
-	TargetUserID  int64  `json:"target_user_id"`           // 0 = all users (legacy single-target)
+	TargetUserID  int64  `json:"target_user_id"`            // 0 = all users (legacy single-target)
 	TargetUserIDs string `json:"target_user_ids,omitempty"` // JSON array of user IDs, e.g. "[1,3,5]"
 	CreatedAt     int64  `json:"created_at"`
 	ExpiresAt     int64  `json:"expires_at"` // 0 = never
+	// Pinned sorts the notice above non-pinned ones in list views.
+	Pinned int `json:"pinned"`
+	// Color is a short token used by the UI for emphasis (default/red/amber/blue/green).
+	Color string `json:"color"`
+	// LoginPopup marks the single notice shown as a modal on every user login.
+	LoginPopup int `json:"login_popup"`
+}
+
+// NormalizeAnnouncementColor maps free-form color input to a known token.
+func NormalizeAnnouncementColor(c string) string {
+	switch strings.ToLower(strings.TrimSpace(c)) {
+	case "red", "amber", "blue", "green":
+		return strings.ToLower(strings.TrimSpace(c))
+	default:
+		return "default"
+	}
 }
 
 // CreateAnnouncement inserts a new announcement and returns it.
 // targetUserIDs is a JSON array string (e.g. "[1,3,5]"), empty string means use targetUserID.
-func CreateAnnouncement(d *sql.DB, title, content string, targetUserID, expiresAt int64, targetUserIDs string) (Announcement, error) {
-	a := Announcement{Title: title, Content: content, TargetUserID: targetUserID, TargetUserIDs: targetUserIDs, ExpiresAt: expiresAt, CreatedAt: now()}
-	res, err := d.Exec(`INSERT INTO announcements (title, content, target_user_id, target_user_ids, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		a.Title, a.Content, a.TargetUserID, a.TargetUserIDs, a.CreatedAt, a.ExpiresAt)
+func CreateAnnouncement(d *sql.DB, title, content string, targetUserID, expiresAt int64, targetUserIDs string, pinned int, color string, loginPopup int) (Announcement, error) {
+	color = NormalizeAnnouncementColor(color)
+	if pinned != 0 {
+		pinned = 1
+	}
+	if loginPopup != 0 {
+		loginPopup = 1
+	}
+	a := Announcement{
+		Title: title, Content: content, TargetUserID: targetUserID, TargetUserIDs: targetUserIDs,
+		ExpiresAt: expiresAt, CreatedAt: now(), Pinned: pinned, Color: color, LoginPopup: loginPopup,
+	}
+	if loginPopup == 1 {
+		// Only one login-popup notice is active at a time.
+		if _, err := d.Exec(`UPDATE announcements SET login_popup = 0 WHERE login_popup != 0`); err != nil {
+			return a, err
+		}
+	}
+	res, err := d.Exec(`INSERT INTO announcements (title, content, target_user_id, target_user_ids, created_at, expires_at, pinned, color, login_popup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Title, a.Content, a.TargetUserID, nullIfEmpty(a.TargetUserIDs), a.CreatedAt, a.ExpiresAt, a.Pinned, a.Color, a.LoginPopup)
 	if err != nil {
 		return a, err
 	}
@@ -30,18 +62,92 @@ func CreateAnnouncement(d *sql.DB, title, content string, targetUserID, expiresA
 	return a, nil
 }
 
-func scanAnnouncement(rows *sql.Rows, a *Announcement) error {
+// UpdateAnnouncement rewrites mutable fields on an existing notice.
+func UpdateAnnouncement(d *sql.DB, id int64, title, content string, targetUserID, expiresAt int64, targetUserIDs string, pinned int, color string, loginPopup int) (Announcement, error) {
+	color = NormalizeAnnouncementColor(color)
+	if pinned != 0 {
+		pinned = 1
+	}
+	if loginPopup != 0 {
+		loginPopup = 1
+	}
+	if loginPopup == 1 {
+		if _, err := d.Exec(`UPDATE announcements SET login_popup = 0 WHERE login_popup != 0 AND id != ?`, id); err != nil {
+			return Announcement{}, err
+		}
+	}
+	_, err := d.Exec(`UPDATE announcements SET title=?, content=?, target_user_id=?, target_user_ids=?, expires_at=?, pinned=?, color=?, login_popup=? WHERE id=?`,
+		title, content, targetUserID, nullIfEmpty(targetUserIDs), expiresAt, pinned, color, loginPopup, id)
+	if err != nil {
+		return Announcement{}, err
+	}
+	return GetAnnouncement(d, id)
+}
+
+// GetAnnouncement loads one notice by id.
+func GetAnnouncement(d *sql.DB, id int64) (Announcement, error) {
+	row := d.QueryRow(`SELECT id, title, content, target_user_id, target_user_ids, created_at, expires_at, pinned, color, login_popup FROM announcements WHERE id = ?`, id)
+	var a Announcement
+	if err := scanAnnouncementRow(row, &a); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+// SetAnnouncementLoginPopup toggles the login-popup flag; enabling one clears others.
+func SetAnnouncementLoginPopup(d *sql.DB, id int64, on bool) error {
+	if on {
+		if _, err := d.Exec(`UPDATE announcements SET login_popup = 0 WHERE login_popup != 0`); err != nil {
+			return err
+		}
+		_, err := d.Exec(`UPDATE announcements SET login_popup = 1 WHERE id = ?`, id)
+		return err
+	}
+	_, err := d.Exec(`UPDATE announcements SET login_popup = 0 WHERE id = ?`, id)
+	return err
+}
+
+// SetAnnouncementPinned sets the pinned flag.
+func SetAnnouncementPinned(d *sql.DB, id int64, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := d.Exec(`UPDATE announcements SET pinned = ? WHERE id = ?`, v, id)
+	return err
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+func scanAnnouncementRow(row scannable, a *Announcement) error {
 	var targetUserIDs sql.NullString
-	if err := rows.Scan(&a.ID, &a.Title, &a.Content, &a.TargetUserID, &targetUserIDs, &a.CreatedAt, &a.ExpiresAt); err != nil {
+	var color sql.NullString
+	if err := row.Scan(&a.ID, &a.Title, &a.Content, &a.TargetUserID, &targetUserIDs, &a.CreatedAt, &a.ExpiresAt, &a.Pinned, &color, &a.LoginPopup); err != nil {
 		return err
 	}
 	a.TargetUserIDs = targetUserIDs.String
+	a.Color = NormalizeAnnouncementColor(color.String)
 	return nil
 }
 
-// ListAnnouncements returns all announcements (admin view).
+func scanAnnouncement(rows *sql.Rows, a *Announcement) error {
+	return scanAnnouncementRow(rows, a)
+}
+
+const announcementSelect = `SELECT id, title, content, target_user_id, target_user_ids, created_at, expires_at, pinned, color, login_popup FROM announcements`
+
+// ListAnnouncements returns all announcements (admin view), pinned first.
 func ListAnnouncements(d *sql.DB) ([]Announcement, error) {
-	rows, err := d.Query(`SELECT id, title, content, target_user_id, target_user_ids, created_at, expires_at FROM announcements ORDER BY created_at DESC`)
+	rows, err := d.Query(announcementSelect + ` ORDER BY pinned DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -62,9 +168,11 @@ func ListAnnouncements(d *sql.DB) ([]Announcement, error) {
 //   - target_user_ids is non-empty and contains the user's ID, OR
 //   - target_user_ids is empty and target_user_id = 0 (all users), OR
 //   - target_user_ids is empty and target_user_id = the user's ID
+//
+// Results are pinned-first then newest-first.
 func ListAnnouncementsForUser(d *sql.DB, userID int64) ([]Announcement, error) {
 	n := now()
-	rows, err := d.Query(`SELECT id, title, content, target_user_id, target_user_ids, created_at, expires_at FROM announcements WHERE (expires_at = 0 OR expires_at > ?) ORDER BY created_at DESC`, n)
+	rows, err := d.Query(announcementSelect+` WHERE (expires_at = 0 OR expires_at > ?) ORDER BY pinned DESC, created_at DESC`, n)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +188,27 @@ func ListAnnouncementsForUser(d *sql.DB, userID int64) ([]Announcement, error) {
 		}
 	}
 	return out, nil
+}
+
+// GetLoginPopupForUser returns the active login-popup notice for a user, if any.
+// Prefer the marked login_popup row that targets the user; otherwise nil.
+func GetLoginPopupForUser(d *sql.DB, userID int64) (*Announcement, error) {
+	n := now()
+	rows, err := d.Query(announcementSelect+` WHERE login_popup = 1 AND (expires_at = 0 OR expires_at > ?) ORDER BY created_at DESC`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a Announcement
+		if err := scanAnnouncement(rows, &a); err != nil {
+			return nil, err
+		}
+		if isTargetedToUser(a, userID) {
+			return &a, nil
+		}
+	}
+	return nil, nil
 }
 
 // isTargetedToUser checks if an announcement targets a specific user.
@@ -101,7 +230,7 @@ func isTargetedToUser(a Announcement, userID int64) bool {
 	return a.TargetUserID == 0 || a.TargetUserID == userID
 }
 
-// targetUserNames returns a display string for the target column.
+// TargetUserNames returns a display string for the target column.
 func TargetUserNames(a Announcement, userNames map[int64]string) string {
 	if a.TargetUserIDs != "" {
 		var ids []int64

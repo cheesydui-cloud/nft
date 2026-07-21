@@ -3,11 +3,12 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, useConfirm } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { uriToClashYaml } from '../../lib/yaml-convert'
+import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
 import LandingSourceCard from './LandingSourceCard'
@@ -24,6 +25,10 @@ export default function UserDetail() {
   const [allUsers, setAllUsers] = useState([])
   const [tab, setTab] = useState('overview')
   const [newPassword, setNewPassword] = useState(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editRule, setEditRule] = useState(null)
+  const [bindings, setBindings] = useState([])
+  const confirm = useConfirm()
 
   const load = () => {
     setLoading(true)
@@ -31,7 +36,8 @@ export default function UserDetail() {
   }
   useEffect(load, [id])
   useEffect(() => { api.get('/users').then(d => setAllUsers(d?.users || [])) }, [])
-  useEffect(() => { setTab('overview') }, [id])
+  useEffect(() => { api.get('/node-bindings').then(d => setBindings(d?.bindings || [])).catch(console.error) }, [])
+  useEffect(() => { setTab('overview'); setCreateOpen(false); setEditRule(null) }, [id])
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="用户不存在" /></Layout>
@@ -400,7 +406,15 @@ export default function UserDetail() {
       )}
 
       {activeTab === 'rules' && (
-        <SectionCard title="该用户的规则" subtitle={`${rules.length} 条`}>
+        <SectionCard
+          title="该用户的规则"
+          subtitle={`${rules.length} 条`}
+          actions={
+            <button type="button" className="btn-primary text-xs" onClick={() => setCreateOpen(true)}>
+              ＋ 替用户创建规则
+            </button>
+          }
+        >
           {rules.length ? (
             <TableBox>
               <table className="tbl">
@@ -435,6 +449,16 @@ export default function UserDetail() {
                         toast('复制失败', 'error')
                       }
                     }
+                    const deleteRule = async () => {
+                      if (!(await confirm({ title: '删除规则', message: `确认删除规则「${r.name}」？`, confirmText: '删除', danger: true }))) return
+                      try {
+                        await api.del(`/rules/${r.id}`)
+                        toast('已删除')
+                        load()
+                      } catch (err) {
+                        toast(err.message, 'error')
+                      }
+                    }
                     return (
                       <tr key={r.id}>
                         <td className="font-mono text-xs text-ink-mut">{r.id}</td>
@@ -451,7 +475,11 @@ export default function UserDetail() {
                         <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(r.exit_bytes || 0)}</td>
                         <td className="text-right font-mono text-xs">{fmtBytes(Math.round((r.exit_bytes || 0) * rate))}</td>
                         <td className="text-right">
-                          <button onClick={copyRuleLink} className="text-emerald-600 text-xs font-semibold hover:underline">复制</button>
+                          <div className="inline-flex items-center gap-2.5">
+                            <button onClick={copyRuleLink} className="text-emerald-600 text-xs font-semibold hover:underline">复制</button>
+                            <button onClick={() => setEditRule(r)} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
+                            <button onClick={deleteRule} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -459,9 +487,47 @@ export default function UserDetail() {
                 </tbody>
               </table>
             </TableBox>
-          ) : <Empty title="该用户尚无规则" />}
+          ) : <Empty title="该用户尚无规则" desc="可点击右上角「替用户创建规则」。" />}
         </SectionCard>
       )}
+
+      <RuleFormModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title={`替 ${user.username} 创建规则`}
+        submitLabel="创建规则"
+        nodes={all_nodes}
+        // Only enable landing exit picker when this user actually has landing nodes;
+        // otherwise keep the plain host:port box (same as admin global create).
+        landingNodes={landing_nodes.length ? landing_nodes : undefined}
+        bindings={bindings}
+        initial={{ owner_id: Number(id) }}
+        onSubmit={async (form) => {
+          const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
+          await api.post('/rules', payload)
+          toast('规则已创建')
+          setCreateOpen(false)
+          load()
+        }}
+      />
+
+      <RuleFormModal
+        open={!!editRule}
+        onClose={() => setEditRule(null)}
+        title="编辑规则"
+        submitLabel="保存并重下发"
+        nodes={all_nodes}
+        landingNodes={landing_nodes.length ? landing_nodes : undefined}
+        bindings={bindings}
+        initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
+        onSubmit={async (form) => {
+          const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
+          await api.put(`/rules/${editRule.id}`, payload)
+          toast('已保存并重下发')
+          setEditRule(null)
+          load()
+        }}
+      />
 
       <Modal open={!!newPassword} onClose={() => setNewPassword(null)} title="新密码">
         <p className="text-sm text-ink-soft mb-3">新密码只显示这一次，请复制并妥善保存。关闭后将无法再次查看。</p>

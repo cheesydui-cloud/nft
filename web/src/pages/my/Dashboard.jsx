@@ -210,12 +210,19 @@ function NodeOnline({ node }) {
   return node.online === 1 ? <Badge color="green">在线</Badge> : <Badge color="gray">离线</Badge>
 }
 
+const annColorMeta = {
+  red: { badge: 'red', label: '紧急', bar: 'border-l-rose-500' },
+  amber: { badge: 'amber', label: '重要', bar: 'border-l-amber-500' },
+  blue: { badge: 'blue', label: '信息', bar: 'border-l-sky-500' },
+  green: { badge: 'green', label: '成功', bar: 'border-l-emerald-500' },
+}
+
 // AnnouncementArea shows admin-published notices on the user dashboard.
 function AnnouncementArea() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Read / write read IDs from localStorage
+  // Read / unread IDs from localStorage
   const readKey = 'announcements.read'
   const [readIds, setReadIds] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem(readKey) || '[]')) } catch { return new Set() }
@@ -258,13 +265,21 @@ function AnnouncementArea() {
           <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
             {items.map(a => {
               const isRead = readIds.has(a.id)
+              const pinned = a.pinned === 1 || a.pinned === true
+              const meta = annColorMeta[a.color]
+              const privateMsg = a.target_user_id > 0 || (a.target_user_ids && a.target_user_ids !== '[]')
               return (
-                <div key={a.id} className={`border-b border-line-soft pb-3 last:border-0 last:pb-0 cursor-pointer transition-opacity ${isRead ? 'opacity-60' : ''}`}
-                  onClick={() => markRead(a.id)}>
-                  <div className="flex items-center gap-2 mb-1">
+                <div
+                  key={a.id}
+                  className={`border-b border-line-soft pb-3 last:border-0 last:pb-0 cursor-pointer transition-opacity border-l-2 pl-3 ${meta?.bar || 'border-l-transparent'} ${isRead ? 'opacity-60' : ''}`}
+                  onClick={() => markRead(a.id)}
+                >
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    {pinned && <Badge color="amber">置顶</Badge>}
+                    {meta && <Badge color={meta.badge}>{meta.label}</Badge>}
                     <span className="font-semibold text-[14px]">{a.title}</span>
                     {!isRead && <Badge color="red">新</Badge>}
-                    {a.target_user_id > 0 && <Badge color="blue">私信</Badge>}
+                    {privateMsg && <Badge color="blue">私信</Badge>}
                   </div>
                   <div className="text-[13px] text-ink-soft whitespace-pre-wrap">{a.content}</div>
                   <div className="text-[11px] text-ink-mut mt-1">{fmtDate(a.created_at)}</div>
