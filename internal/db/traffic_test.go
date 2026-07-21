@@ -382,6 +382,37 @@ func TestTodayRawTrafficBytesShanghaiDay(t *testing.T) {
 	}
 }
 
+func TestTodayUserTrafficBytesShanghaiDay(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	today := dayKey(time.Now())
+	yesterday := dayKey(time.Now().Add(-24 * time.Hour))
+	if err := AddUserDailyTraffic(d, uid, 50); err != nil {
+		t.Fatal(err)
+	}
+	// Second add same day should accumulate.
+	if err := AddUserDailyTraffic(d, uid, 70); err != nil {
+		t.Fatal(err)
+	}
+	// Seed a yesterday row that must not be counted.
+	if _, err := d.Exec(`INSERT INTO daily_user_traffic(day, user_id, raw_bytes) VALUES(?,?,?)`,
+		yesterday, uid, 9_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	got, err := TodayUserTrafficBytes(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 120 {
+		t.Fatalf("TodayUserTrafficBytes = %d, want 120 for day %s", got, today)
+	}
+	// Unknown user → 0, no error.
+	z, err := TodayUserTrafficBytes(d, uid+9999)
+	if err != nil || z != 0 {
+		t.Fatalf("missing user: got %d err %v", z, err)
+	}
+}
+
 // --- test helpers ---
 
 func openTestDB(t *testing.T) *sql.DB {

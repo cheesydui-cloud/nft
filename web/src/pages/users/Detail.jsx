@@ -96,12 +96,33 @@ export default function UserDetail() {
     ? <Badge color="amber">已禁用</Badge>
     : <Badge color="green">正常</Badge>
 
+  // Asia/Shanghai calendar day raw traffic (0:00–23:59); billable = raw × rate.
+  const todayRaw = data?.today_raw_bytes || 0
+  const todayBillable = todayRaw * rate
+  const todayDay = data?.today_day || ''
+
   const chips = isRegularUser ? [
     {
       label: '流量',
       value: fmtTrafficGB(billableUsed, quota),
       tone: quota > 0 && billablePct >= 100 ? 'tone-danger' : quota > 0 && billablePct >= 80 ? 'tone-warn' : 'tone-blue',
-      title: '用户视角（已用×计费倍率）',
+      title: '用户视角累计（已用×计费倍率）',
+    },
+    {
+      label: '今日真实',
+      value: fmtBytes(todayRaw),
+      tone: 'tone-teal',
+      title: todayDay
+        ? `当日真实流量（北京时间 ${todayDay} 0:00–23:59，不计倍率）`
+        : '当日真实流量（北京时间 0:00–23:59，不计倍率）',
+    },
+    {
+      label: '今日视角',
+      value: fmtBytes(todayBillable),
+      tone: 'tone-blue',
+      title: todayDay
+        ? `当日用户视角 = 今日真实 × ${rate}（北京时间 ${todayDay}）`
+        : `当日用户视角 = 今日真实 × ${rate}`,
     },
     {
       label: '规则',

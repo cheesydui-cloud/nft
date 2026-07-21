@@ -915,6 +915,13 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 					ok = false
 					break
 				}
+				// Same raw final-hop delta into today's per-user day bucket
+				// (Asia/Shanghai). Independent of billing_rate / admin reset.
+				if err := db.AddUserDailyTraffic(tx, uid, delta); err != nil {
+					log.Printf("hub: user %d daily traffic add: %v", uid, err)
+					ok = false
+					break
+				}
 			}
 			for uid, delta := range totalUserAdds {
 				if !ok {

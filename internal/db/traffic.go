@@ -98,6 +98,11 @@ func dayKey(t time.Time) string {
 	return t.In(panelBusinessLocation).Format("2006-01-02")
 }
 
+// DayKeyNow is the Asia/Shanghai YYYY-MM-DD for "today" (北京时间切日).
+func DayKeyNow() string {
+	return dayKey(time.Now())
+}
+
 // AddNodeDailyRawTraffic folds delta raw bytes into today's per-node ledger.
 // Same actual-traffic semantics as AddNodeRawTraffic (no billing multiplier).
 // "Today" is the Asia/Shanghai calendar day.
@@ -118,6 +123,32 @@ func TodayRawTrafficBytes(d *sql.DB) (int64, error) {
 	var total int64
 	err := d.QueryRow(`SELECT COALESCE(SUM(raw_bytes),0) FROM daily_node_raw_traffic WHERE day=?`,
 		dayKey(time.Now())).Scan(&total)
+	return total, err
+}
+
+// AddUserDailyTraffic folds delta raw bytes into today's per-user ledger.
+// Delta is the same raw final-hop volume that advances users.traffic_used_bytes
+// (not rate-multiplied). "Today" is the Asia/Shanghai calendar day.
+func AddUserDailyTraffic(d DBTX, userID, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	day := dayKey(time.Now())
+	_, err := d.Exec(`INSERT INTO daily_user_traffic(day, user_id, raw_bytes) VALUES(?,?,?)
+		ON CONFLICT(day, user_id) DO UPDATE SET raw_bytes = raw_bytes + excluded.raw_bytes`,
+		day, userID, delta)
+	return err
+}
+
+// TodayUserTrafficBytes returns one user's raw traffic for the current
+// Asia/Shanghai calendar day (北京时间 0 点切日). Missing rows are 0.
+func TodayUserTrafficBytes(d *sql.DB, userID int64) (int64, error) {
+	var total int64
+	err := d.QueryRow(`SELECT COALESCE(raw_bytes,0) FROM daily_user_traffic WHERE day=? AND user_id=?`,
+		dayKey(time.Now()), userID).Scan(&total)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
 	return total, err
 }
 
