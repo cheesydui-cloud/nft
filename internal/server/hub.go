@@ -31,7 +31,21 @@ const (
 	// hubMaxReadBytes bounds a single WebSocket frame. Counters samples and
 	// rule command payloads are small; anything larger is malformed or malicious.
 	hubMaxReadBytes = 4 << 20
+	// hubWriteTimeoutMax caps size-based write deadlines (see writeTimeoutFor).
+	hubWriteTimeoutMax = 5 * time.Minute
 )
+
+// writeTimeoutFor scales the per-frame write deadline with payload size so a
+// rare large frame (legacy inline upgrade, big apply payload) is not cut off
+// by the default 10s budget on slow reverse links.
+func writeTimeoutFor(size int) time.Duration {
+	const perMB = 3 * time.Second
+	d := hubWriteTimeout + time.Duration(size/(1<<20))*perMB
+	if d > hubWriteTimeoutMax {
+		return hubWriteTimeoutMax
+	}
+	return d
+}
 
 type Hub struct {
 	DB *sql.DB
@@ -239,7 +253,7 @@ func (h *Hub) writerLoop(ac *agentConn) {
 		case <-ac.closed:
 			return
 		case b := <-ac.writeCh:
-			ctx, cancel := context.WithTimeout(context.Background(), hubWriteTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), writeTimeoutFor(len(b)))
 			err := ac.ws.Write(ctx, websocket.MessageText, b)
 			cancel()
 			if err != nil {
@@ -628,7 +642,7 @@ func writeEnvelope(ctx context.Context, ws *websocket.Conn, env wsproto.Envelope
 	if err != nil {
 		return err
 	}
-	wctx, cancel := context.WithTimeout(ctx, hubWriteTimeout)
+	wctx, cancel := context.WithTimeout(ctx, writeTimeoutFor(len(b)))
 	defer cancel()
 	return ws.Write(wctx, websocket.MessageText, b)
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, createContext, useContext } from 'react'
+import { createPortal } from 'react-dom'
 import { copyToClipboard } from '../lib/clipboard'
 
 /* ---------- Modal ---------- */
@@ -461,6 +462,52 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
   const headerH = (useTabs ? 48 : 0) + (searchable ? 58 : 0)
   const listMaxH = menuBox ? Math.max(96, menuBox.maxHeight - headerH) : 220
 
+  // Menu is portaled to document.body so position:fixed is relative to the
+  // viewport. Nested Modal/card transforms (e.g. animate-in) would otherwise
+  // re-root fixed coordinates and fling the menu off-screen.
+  const menu = open && menuBox ? createPortal(
+    <div ref={menuRef}
+      style={{
+        position: 'fixed',
+        left: menuBox.left,
+        width: menuBox.width,
+        top: menuBox.top,
+        bottom: menuBox.bottom,
+        maxHeight: menuBox.maxHeight,
+        zIndex: 200,
+      }}
+      className="bg-surface border border-line rounded-[11px] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] overflow-hidden flex flex-col">
+      {useTabs && (
+        <div className="flex border-b border-line-soft flex-none">
+          {sections.map((s, i) => (
+            <button key={i} type="button" onClick={() => setActiveTab(i)}
+              className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-emerald-600 border-b-2 border-emerald-600 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
+              {s.label} <span className="text-ink-mut font-normal">{s.options.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {searchable && (
+        <div className="p-3 border-b border-line-soft flex-none">
+          <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索…"
+            onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
+            className="input-field w-full text-[13px]" style={{ height: 34 }} />
+        </div>
+      )}
+      <div className="overflow-y-auto py-1.5 px-1.5 min-h-0" style={{ maxHeight: listMaxH }}>
+        {empty ? (
+          <div className="px-3 py-2 text-[13px] text-ink-mut">无匹配</div>
+        ) : shownSections.map((s, i) => (
+          <div key={i}>
+            {s.label && <div className="px-3 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-ink-mut">{s.label}</div>}
+            {s.options.map(renderOption)}
+          </div>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  ) : null
+
   return (
     <div ref={ref} className={`relative ${className}`} style={style}>
       <button ref={triggerRef} type="button" disabled={disabled} onClick={() => setOpen(o => !o)}
@@ -471,47 +518,7 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
         </span>
         <svg className={`w-4 h-4 flex-none text-ink-mut transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
-      {open && menuBox && (
-        <div ref={menuRef}
-          style={{
-            position: 'fixed',
-            left: menuBox.left,
-            width: menuBox.width,
-            top: menuBox.top,
-            bottom: menuBox.bottom,
-            maxHeight: menuBox.maxHeight,
-            zIndex: 80,
-          }}
-          className="bg-surface border border-line rounded-[11px] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] overflow-hidden flex flex-col">
-          {useTabs && (
-            <div className="flex border-b border-line-soft flex-none">
-              {sections.map((s, i) => (
-                <button key={i} type="button" onClick={() => setActiveTab(i)}
-                  className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-emerald-600 border-b-2 border-emerald-600 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
-                  {s.label} <span className="text-ink-mut font-normal">{s.options.length}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {searchable && (
-            <div className="p-3 border-b border-line-soft flex-none">
-              <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索…"
-                onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
-                className="input-field w-full text-[13px]" style={{ height: 34 }} />
-            </div>
-          )}
-          <div className="overflow-y-auto py-1.5 px-1.5 min-h-0" style={{ maxHeight: listMaxH }}>
-            {empty ? (
-              <div className="px-3 py-2 text-[13px] text-ink-mut">无匹配</div>
-            ) : shownSections.map((s, i) => (
-              <div key={i}>
-                {s.label && <div className="px-3 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-ink-mut">{s.label}</div>}
-                {s.options.map(renderOption)}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {menu}
     </div>
   )
 }

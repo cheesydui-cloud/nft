@@ -178,9 +178,11 @@ type Upgrade struct {
 	SHA256     string `json:"sha256"`
 	Size       int64  `json:"size"`
 	DownloadAt string `json:"download_at"`
-	// Data, when non-empty, carries the binary inline so daemons that cannot
-	// reach the panel over HTTP still upgrade over the WS link. DownloadAt
-	// remains the fallback for daemons that predate inline transport.
+	// Data is retained for protocol compatibility. Current panels send an
+	// empty Data and a DownloadAt URL so the agent fetches the binary over
+	// HTTP — multi-MB inline WS frames were unreliable on high-latency /
+	// domestic reverse links (write timeouts → connection drop mid-upgrade).
+	// Agents still accept non-empty Data when present (legacy / offline panels).
 	Data []byte `json:"data,omitempty"`
 }
 

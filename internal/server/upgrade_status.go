@@ -9,9 +9,10 @@ import (
 )
 
 // upgradeGrace is how long after an acked upgrade we still treat an unchanged
-// agent_version as "in progress" (the daemon restarts and reconnects). Past it,
-// an unchanged version means the restart almost certainly failed.
-const upgradeGrace = 90 * time.Second
+// agent_version as "in progress" (download + binary replace + systemd restart +
+// reconnect). Past it, an unchanged version means the upgrade almost certainly
+// failed. Sized for slow domestic HTTP downloads of the ~13MB agent.
+const upgradeGrace = 4 * time.Minute
 
 // upgradeView is the derived upgrade state shown on the node detail page.
 type upgradeView struct {

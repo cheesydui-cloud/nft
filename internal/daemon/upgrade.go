@@ -80,7 +80,10 @@ func upgradeBinary(u wsproto.Upgrade) ([]byte, error) {
 }
 
 func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Slow reverse / domestic links routinely need >2 minutes for ~13MB; keep
+	// well under the panel's upgradeAckTimeout so a successful download can still
+	// be acked before the panel gives up waiting.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	client := &http.Client{}
@@ -88,6 +91,7 @@ func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "nft-agent-upgrade")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", u.DownloadAt, err)
@@ -97,11 +101,16 @@ func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 		return nil, fmt.Errorf("GET %s: status %d", u.DownloadAt, resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, u.Size+1024))
+	limit := u.Size + 1024
+	if limit < 1 {
+		// Size missing from older panels: still bound the read.
+		limit = 64 << 20
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
-	log.Printf("upgrade: downloaded %d bytes", len(data))
+	log.Printf("upgrade: downloaded %d bytes from %s", len(data), u.DownloadAt)
 
 	h := sha256.Sum256(data)
 	got := hex.EncodeToString(h[:])

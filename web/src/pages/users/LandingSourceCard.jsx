@@ -48,6 +48,39 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
+function ExitNameCell({ userId, name, exit, onDone }) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState('')
+  const toast = useToast()
+  const effective = (exit?.name_override || name) || '(未命名)'
+  if (!exit) return <span className="font-semibold">{effective}</span>
+  const start = () => { setVal(exit.name_override || name || ''); setEditing(true) }
+  const save = async () => {
+    try {
+      await api.post(`/users/${userId}/landing-exits/rename`, { host: exit.host, port: exit.port, name: val.trim() })
+      toast(val.trim() ? '已改名' : '已恢复原名')
+      setEditing(false)
+      onDone()
+    } catch (err) { toast(err.message, 'error') }
+  }
+  if (!editing) return (
+    <button type="button" onClick={start}
+      title={exit.name_override ? `原名称: ${name || '(未命名)'}` : '点击改名'}
+      className="font-semibold text-left hover:text-emerald-600 transition-colors">
+      {effective}
+      {exit.name_override && <span className="text-emerald-500 ml-1">*</span>}
+    </button>
+  )
+  return (
+    <form onSubmit={e => { e.preventDefault(); save() }} className="inline-flex items-center gap-1.5">
+      <input autoFocus className="input-field" value={val} onChange={e => setVal(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }}
+        placeholder="留空恢复原名" style={{ width: 140 }} />
+      <button type="submit" className="btn-secondary text-xs">保存</button>
+    </form>
+  )
+}
+
 export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp, embedded = false }) {
   const blurred = blurredProp ?? useBlur()
   const [url, setUrl] = useState(subURL || '')
@@ -77,8 +110,11 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
         setPreview(ex.filter(e => e.present).map(e => ({
           host: e.host,
           port: e.port,
-          name: e.name || '',
+          name: e.name_override || e.name || '',
+          // Keep source name so rename UI can restore / show original.
+          source_name: e.name || '',
           protocol: e.protocol || '',
+          expires_at: e.expires_at || 0,
         })))
       })
       .catch(err => toast(err.message, 'error'))
@@ -211,7 +247,14 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                   return (
                     <tr key={i}>
                       <td><input type="checkbox" className="accent-emerald-600" checked={sel.has(i)} onChange={() => toggleSel(i)} /></td>
-                      <td><span className="font-semibold">{n.name}</span></td>
+                      <td>
+                        <ExitNameCell
+                          userId={userId}
+                          name={n.source_name || n.name}
+                          exit={exitByAddr[`${n.host}:${n.port}`]}
+                          onDone={reloadLanding}
+                        />
+                      </td>
                       <td className="font-mono text-xs text-ink-soft">{n.protocol}</td>
                       <td className="font-mono text-xs"><SensText blurred={blurred}>{n.host}:{n.port}</SensText></td>
                       <td>{ex ? <ExitQuotaForm userId={userId} exit={ex} onDone={reloadLanding} /> : <span className="text-xs text-ink-mut">—</span>}</td>
@@ -245,8 +288,10 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
                     <tr key={`residual-${i}`} className="opacity-50">
                       <td></td>
                       <td>
-                        <span className="font-semibold">{ex.name}</span>
-                        <Badge color="gray">已不在来源</Badge>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <ExitNameCell userId={userId} name={ex.name} exit={ex} onDone={reloadLanding} />
+                          <Badge color="gray">已不在来源</Badge>
+                        </div>
                       </td>
                       <td className="font-mono text-xs text-ink-soft">{ex.protocol}</td>
                       <td className="font-mono text-xs"><SensText blurred={blurred}>{ex.host}:{ex.port}</SensText></td>

@@ -127,7 +127,19 @@ func (s *Server) landingIndexFromDB(userID int64) map[string]landing.Node {
 	for _, e := range exits {
 		key := net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 		if _, ok := m[key]; !ok {
-			m[key] = landing.Node{Name: e.Name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, URI: e.URI}
+			// Prefer admin rename so rule pickers / previews match what the
+			// operator set in the user landing tab.
+			name := e.Name
+			if e.NameOverride != "" {
+				name = e.NameOverride
+			}
+			uri := e.URI
+			if e.NameOverride != "" {
+				if rewritten, err := landing.RewriteName(e.URI, e.NameOverride); err == nil {
+					uri = rewritten
+				}
+			}
+			m[key] = landing.Node{Name: name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, URI: uri}
 		}
 	}
 	return m

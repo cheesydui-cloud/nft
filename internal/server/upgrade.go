@@ -20,10 +20,10 @@ import (
 	"nft/internal/wsproto"
 )
 
-// agentRepo / agentCacheRoot locate the nft-agent the panel pushes. Since the
-// split the panel no longer contains the agent; it fetches the asset for its own
-// release version from the GitHub release once and caches it on disk, then ships
-// it to nodes over the WS link so the nodes never reach GitHub themselves.
+// agentRepo / agentCacheRoot locate the nft-agent the panel serves. Since the
+// split the panel no longer embeds the agent; it fetches the asset for its own
+// release version from the GitHub release once, caches it on disk, and lets
+// nodes pull it over HTTP (/v1/binary) so they never reach GitHub themselves.
 const (
 	agentRepo      = "cheesydui-cloud/nft"
 	agentCacheRoot = "/var/lib/nft/agent-cache"
@@ -151,17 +151,25 @@ func httpGetBytes(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// upgradeFor builds the Upgrade to send a node: a label-only sync (empty Data)
-// when the node already runs the target binary by sha, else the full payload
-// with the inline binary and an HTTP fallback URL.
+// upgradeFor builds the Upgrade to send a node: a label-only sync (empty
+// DownloadAt) when the node already runs the target binary by sha, else a
+// metadata frame that points the agent at the panel's /v1/binary so it
+// downloads over plain HTTP.
+//
+// We intentionally do NOT ship the ~13MB agent inline on the control WS.
+// Domestic / high-latency reverse links routinely fail a single multi-MB
+// WebSocket write (hubWriteTimeout used to be a hard 10s), which closed the
+// connection and surfaced as 「连接在升级期间断开」even though the agent was
+// fine. HTTP range-friendly GETs tolerate flaky bandwidth far better.
 func upgradeFor(node *db.Node, art *agentArtifact, panelURL string) wsproto.Upgrade {
 	if node.AgentSHA != "" && node.AgentSHA == art.SHA {
 		return wsproto.Upgrade{Version: art.Version, SHA256: art.SHA}
 	}
 	return wsproto.Upgrade{
-		Version: art.Version, SHA256: art.SHA,
-		Size: int64(len(art.Data)), DownloadAt: panelURL + "/v1/binary",
-		Data: art.Data,
+		Version:    art.Version,
+		SHA256:     art.SHA,
+		Size:       int64(len(art.Data)),
+		DownloadAt: strings.TrimRight(panelURL, "/") + "/v1/binary",
 	}
 }
 
@@ -176,6 +184,10 @@ func (s *Server) serveBinary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-SHA256", art.SHA)
 	w.Write(art.Data)
 }
+
+// upgradeAckTimeout covers download + replace + ack on slow links. The agent
+// HTTP download itself allows up to ~3 minutes; add headroom for replace.
+const upgradeAckTimeout = 4 * time.Minute
 
 func (h *Hub) SendUpgrade(nodeID int64, u wsproto.Upgrade) error {
 	h.mu.RLock()
@@ -209,10 +221,13 @@ func (h *Hub) SendUpgrade(nodeID int64, u wsproto.Upgrade) error {
 			return fmt.Errorf("%s", ack.Error)
 		}
 		return nil
-	case <-time.After(60 * time.Second):
+	case <-time.After(upgradeAckTimeout):
 		return fmt.Errorf("升级应答超时")
 	case <-ac.closed:
-		return fmt.Errorf("连接在升级期间断开")
+		// Frame was already queued. Disconnect usually means the agent is
+		// downloading / replacing / restarting (or the NAT dropped a quiet
+		// link). Treat as dispatched: deriveUpgradeStatus will confirm via
+		// version/SHA after reconnect instead of failing the push outright.
+		return nil
 	}
 }
-

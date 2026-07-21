@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
@@ -8,6 +8,7 @@ import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } fr
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { uriToClashYaml } from '../../lib/yaml-convert'
+import { fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
@@ -28,6 +29,7 @@ export default function UserDetail() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editRule, setEditRule] = useState(null)
   const [bindings, setBindings] = useState([])
+  const [nodeRoles, setNodeRoles] = useState({})
   const confirm = useConfirm()
 
   const load = () => {
@@ -37,7 +39,15 @@ export default function UserDetail() {
   useEffect(load, [id])
   useEffect(() => { api.get('/users').then(d => setAllUsers(d?.users || [])) }, [])
   useEffect(() => { api.get('/node-bindings').then(d => setBindings(d?.bindings || [])).catch(console.error) }, [])
+  useEffect(() => { fetchNodeRoles().then(setNodeRoles).catch(() => setNodeRoles({})) }, [])
   useEffect(() => { setTab('overview'); setCreateOpen(false); setEditRule(null) }, [id])
+
+  // Acting as this user: only their granted relay nodes and landing-marked exits.
+  const rawLanding = data?.landing_nodes || []
+  const ruleFormLandingNodes = useMemo(
+    () => rawLanding.filter(n => nodeHasRole(nodeRoles, n, ROLE_LANDING)),
+    [rawLanding, nodeRoles],
+  )
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="用户不存在" /></Layout>
@@ -496,10 +506,9 @@ export default function UserDetail() {
         onClose={() => setCreateOpen(false)}
         title={`替 ${user.username} 创建规则`}
         submitLabel="创建规则"
-        nodes={all_nodes}
-        // Only enable landing exit picker when this user actually has landing nodes;
-        // otherwise keep the plain host:port box (same as admin global create).
-        landingNodes={landing_nodes.length ? landing_nodes : undefined}
+        nodes={nodes}
+        // Only this user's landing-marked exits (same scope as the user panel).
+        landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={{ owner_id: Number(id) }}
         onSubmit={async (form) => {
@@ -516,8 +525,8 @@ export default function UserDetail() {
         onClose={() => setEditRule(null)}
         title="编辑规则"
         submitLabel="保存并重下发"
-        nodes={all_nodes}
-        landingNodes={landing_nodes.length ? landing_nodes : undefined}
+        nodes={nodes}
+        landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
         onSubmit={async (form) => {
