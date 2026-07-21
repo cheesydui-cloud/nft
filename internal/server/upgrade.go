@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -168,6 +169,28 @@ func normalizePanelBaseURL(panelURL string) string {
 		base = "http://" + base
 	}
 	return base
+}
+
+// panelBaseURL resolves the panel origin used in upgrade DownloadAt links:
+// settings.panel_url (scheme-normalized), else the current HTTP request host.
+func panelBaseURL(d *sql.DB, r *http.Request) string {
+	if d != nil {
+		if v, err := db.GetSetting(d, "panel_url"); err == nil {
+			if base := normalizePanelBaseURL(v); base != "" {
+				return base
+			}
+		}
+	}
+	if r == nil || r.Host == "" {
+		return ""
+	}
+	// Prefer the scheme the browser actually used (common for IP:port panels
+	// without TLS). Honor reverse-proxy X-Forwarded-Proto when present.
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 // upgradeFor builds the Upgrade to send a node: a label-only sync (empty

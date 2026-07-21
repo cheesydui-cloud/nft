@@ -55,7 +55,10 @@ export default function Settings() {
           <form onSubmit={submit}>
             <div className="flex items-center gap-6 mb-[22px]">
               <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">面板地址</label>
-              <input className="input-field max-w-[560px]" type="text" placeholder="https://panel.example.com" value={form.panel_url} onChange={e => set('panel_url', e.target.value)} />
+              <div className="flex-1 max-w-[560px]">
+                <input className="input-field w-full" type="text" placeholder="http://1.2.3.4:7788 或 https://panel.example.com" value={form.panel_url} onChange={e => set('panel_url', e.target.value)} />
+                <p className="text-[12px] text-ink-mut mt-1.5 m-0">节点升级会从该地址下载 agent。请带协议（http/https）；只写 IP:端口 时保存会自动补 http://。</p>
+              </div>
             </div>
             <div className="flex items-center gap-6 pb-[22px] border-b border-line-soft">
               <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">面板名称</label>

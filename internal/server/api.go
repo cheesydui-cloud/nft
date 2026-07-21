@@ -1255,11 +1255,7 @@ func (s *Server) apiUpgradeNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	panelURL, _ := db.GetSetting(s.DB, "panel_url")
-	if panelURL == "" {
-		panelURL = "https://" + r.Host
-	}
-	err = s.Hub.SendUpgrade(id, upgradeFor(node, art, panelURL))
+	err = s.Hub.SendUpgrade(id, upgradeFor(node, art, panelBaseURL(s.DB, r)))
 	// Record the dispatch outcome so the node detail can surface a silent
 	// failure later (an acked upgrade whose version never takes).
 	status, errText := "acked", ""
@@ -1425,10 +1421,7 @@ func (s *Server) apiUpgradeAllNodes(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	panelURL, _ := db.GetSetting(s.DB, "panel_url")
-	if panelURL == "" {
-		panelURL = "https://" + r.Host
-	}
+	panelURL := panelBaseURL(s.DB, r)
 	nodes, err := db.ListNodes(s.DB)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -1479,11 +1472,14 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	if err := db.SetSetting(s.DB, "panel_url", strings.TrimSpace(body.PanelURL)); err != nil {
+	// Persist a scheme-normalized URL so upgrade download links and install
+	// snippets never see bare "host:port" (invalid as an absolute URL).
+	savedPanelURL := normalizePanelBaseURL(body.PanelURL)
+	if err := db.SetSetting(s.DB, "panel_url", savedPanelURL); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	db.WriteAudit(s.DB, u.ID, "settings.panel_url", strings.TrimSpace(body.PanelURL), "")
+	db.WriteAudit(s.DB, u.ID, "settings.panel_url", savedPanelURL, "")
 	if body.PanelName != nil {
 		name := strings.TrimSpace(*body.PanelName)
 		if err := db.SetSetting(s.DB, "panel_name", name); err != nil {

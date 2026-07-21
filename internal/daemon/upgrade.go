@@ -79,6 +79,20 @@ func upgradeBinary(u wsproto.Upgrade) ([]byte, error) {
 	return downloadBinary(u)
 }
 
+// fixUpgradeDownloadURL repairs bare host:port download URLs from older panels
+// that omitted the scheme (e.g. "1.2.3.4:7788/v1/binary"), which net/http
+// rejects with "first path segment in URL cannot contain colon".
+func fixUpgradeDownloadURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	if strings.Contains(raw, "://") {
+		return raw
+	}
+	return "http://" + raw
+}
+
 func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 	// Slow reverse / domestic links routinely need >2 minutes for ~13MB; keep
 	// well under the panel's upgradeAckTimeout so a successful download can still
@@ -86,19 +100,20 @@ func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	url := fixUpgradeDownloadURL(u.DownloadAt)
 	client := &http.Client{}
-	req, err := http.NewRequestWithContext(ctx, "GET", u.DownloadAt, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nft-agent-upgrade")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", u.DownloadAt, err)
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", u.DownloadAt, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
 	}
 
 	limit := u.Size + 1024
@@ -110,7 +125,7 @@ func downloadBinary(u wsproto.Upgrade) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
-	log.Printf("upgrade: downloaded %d bytes from %s", len(data), u.DownloadAt)
+	log.Printf("upgrade: downloaded %d bytes from %s", len(data), url)
 
 	h := sha256.Sum256(data)
 	got := hex.EncodeToString(h[:])
