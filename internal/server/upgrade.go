@@ -151,6 +151,25 @@ func httpGetBytes(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// normalizePanelBaseURL turns a stored panel_url into an absolute base the agent
+// can GET. Operators often save bare "host:port" (no scheme); concatenating that
+// with "/v1/binary" yields "1.2.3.4:7788/v1/binary", which net/http rejects with
+// "first path segment in URL cannot contain colon". Empty input stays empty so
+// callers can still fall back to the request host.
+func normalizePanelBaseURL(panelURL string) string {
+	base := strings.TrimSpace(panelURL)
+	if base == "" {
+		return ""
+	}
+	base = strings.TrimRight(base, "/")
+	if !strings.Contains(base, "://") {
+		// Bare host[:port] — default http so self-hosted IP:port panels work
+		// without TLS; operators who terminate TLS should set https:// explicitly.
+		base = "http://" + base
+	}
+	return base
+}
+
 // upgradeFor builds the Upgrade to send a node: a label-only sync (empty
 // DownloadAt) when the node already runs the target binary by sha, else a
 // metadata frame that points the agent at the panel's /v1/binary so it
@@ -165,11 +184,12 @@ func upgradeFor(node *db.Node, art *agentArtifact, panelURL string) wsproto.Upgr
 	if node.AgentSHA != "" && node.AgentSHA == art.SHA {
 		return wsproto.Upgrade{Version: art.Version, SHA256: art.SHA}
 	}
+	base := normalizePanelBaseURL(panelURL)
 	return wsproto.Upgrade{
 		Version:    art.Version,
 		SHA256:     art.SHA,
 		Size:       int64(len(art.Data)),
-		DownloadAt: strings.TrimRight(panelURL, "/") + "/v1/binary",
+		DownloadAt: base + "/v1/binary",
 	}
 }
 
