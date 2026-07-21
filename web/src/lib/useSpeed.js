@@ -137,9 +137,17 @@ export function useSpeed() {
 
 // Per-rule live rates keyed by rule_id. Prefer this on any rules table; the
 // node-level map misses composite rules (logical node_id never reports).
-export function useRuleSpeed() {
+// Pass { enabled: false } to skip the WS subscription (e.g. user-facing lists
+// that hide the speed column entirely).
+export function useRuleSpeed({ enabled = true } = {}) {
   const [ruleSpeeds, setRuleSpeeds] = useState({})
-  useEffect(() => ensureShared().subscribe(({ ruleSpeeds: s }) => setRuleSpeeds(s)), [])
+  useEffect(() => {
+    if (!enabled) {
+      setRuleSpeeds({})
+      return
+    }
+    return ensureShared().subscribe(({ ruleSpeeds: s }) => setRuleSpeeds(s))
+  }, [enabled])
   return ruleSpeeds
 }
 
