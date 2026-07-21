@@ -48,6 +48,16 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
+function PencilIcon({ className = '' }) {
+  return (
+    <svg className={className} width="12" height="12" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  )
+}
+
 function ExitNameCell({ userId, name, exit, onDone }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState('')
@@ -65,18 +75,29 @@ function ExitNameCell({ userId, name, exit, onDone }) {
   }
   if (!editing) return (
     <button type="button" onClick={start}
-      title={exit.name_override ? `原名称: ${name || '(未命名)'}` : '点击改名'}
-      className="font-semibold text-left hover:text-emerald-600 transition-colors">
-      {effective}
-      {exit.name_override && <span className="text-emerald-500 ml-1">*</span>}
+      title={exit.name_override ? `原名称: ${name || '(未命名)'} · 点击改名` : '点击改名'}
+      className="group/name inline-flex items-center gap-1.5 max-w-full text-left rounded-md -mx-1 px-1 py-0.5
+        border border-transparent hover:border-emerald-500/40 hover:bg-emerald-500/[.06]
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 transition-colors">
+      <span className="font-semibold text-ink group-hover/name:text-emerald-700 dark:group-hover/name:text-emerald-400 truncate">
+        {effective}
+      </span>
+      {exit.name_override && (
+        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex-none">已改</span>
+      )}
+      <span className="inline-flex items-center gap-0.5 flex-none text-ink-mut group-hover/name:text-emerald-600">
+        <PencilIcon className="opacity-55 group-hover/name:opacity-100" />
+        <span className="text-[11px] font-semibold opacity-70 group-hover/name:opacity-100">改名</span>
+      </span>
     </button>
   )
   return (
-    <form onSubmit={e => { e.preventDefault(); save() }} className="inline-flex items-center gap-1.5">
+    <form onSubmit={e => { e.preventDefault(); save() }} className="inline-flex items-center gap-1.5 flex-wrap">
       <input autoFocus className="input-field" value={val} onChange={e => setVal(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }}
         placeholder="留空恢复原名" style={{ width: 140 }} />
       <button type="submit" className="btn-secondary text-xs">保存</button>
+      <button type="button" className="text-xs text-ink-mut hover:text-ink" onClick={() => setEditing(false)}>取消</button>
     </form>
   )
 }
@@ -238,7 +259,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
               <thead><tr>
                 <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                   checked={preview.length > 0 && sel.size === preview.length} onChange={toggleSelAll} /></th>
-                <th>名称</th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th><th className="text-right">操作</th></tr></thead>
+                <th>名称 <span className="font-normal text-ink-mut normal-case">（可改名）</span></th><th>协议</th><th>地址</th><th>限额</th><th>已用</th><th>到期时间</th><th className="text-right">用途</th><th className="text-right">操作</th></tr></thead>
               <tbody>
                 {preview.map((n, i) => {
                   const st = roleOf(n)
