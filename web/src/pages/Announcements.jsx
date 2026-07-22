@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
-import { Loading, Empty, Badge, useConfirm } from '../components/ui'
+import { Loading, Empty, Badge, useConfirm, DateInput} from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll } from '../components/page'
 import { fmtDate, isExpired } from '../lib/fmt'
 
@@ -335,7 +335,7 @@ function AnnouncementForm({ users, initial, onClose, onDone }) {
               设置到期时间
             </label>
             {hasExpiry && (
-              <input type="date" className="input-field" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} />
+              <DateInput value={expiryDate} onChange={setExpiryDate} className="w-full" />
             )}
           </div>
           <div className="flex gap-2 pt-2">

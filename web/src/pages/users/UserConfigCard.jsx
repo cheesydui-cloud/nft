@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../../lib/api'
 import { fmtDateInput } from '../../lib/fmt'
 import { useToast } from '../../components/Layout'
+import { DateInput } from '../../components/ui'
 
 export default function UserConfigCard({ userId, expiresAt, maxForwards, quotaBytes, resetDays, adminNote, billingRate, speedLimitMBytes, onDone }) {
   const [form, setForm] = useState({
@@ -51,7 +52,7 @@ export default function UserConfigCard({ userId, expiresAt, maxForwards, quotaBy
       <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-3.5 items-center max-w-xl">
         <label className="fl">到期时间</label>
         <div>
-          <input className="input-field font-mono" type="date" value={form.expiresAt} onChange={set('expiresAt')} />
+          <DateInput value={form.expiresAt} onChange={v => setForm(f => ({ ...f, expiresAt: v }))} className="w-full" />
           <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             {[[1,'1天'],[7,'7天'],[30,'30天'],[365,'1年']].map(([d, l]) => (
               <button key={d} type="button" onClick={() => addDays(d)}

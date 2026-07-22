@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtTrafficGB, nullStr, nullInt } from '../../lib/fmt'
 import { Layout, useToast, useUser } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal, useConfirm, Select } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, useConfirm, Select, DateInput} from '../../components/ui'
 import { copyToClipboard } from '../../lib/clipboard'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import FolderBar, { MoveToFolderModal } from '../../components/FolderBar'
@@ -397,7 +397,7 @@ function CreateUserModal({ open, onClose, onDone }) {
               <input className="input-field font-mono" type="number" min="0" step="1" value={form.speed_limit_mbytes} onChange={e => set('speed_limit_mbytes', e.target.value)} style={{ maxWidth: 160 }} title="节点授权限速为 0 时作为默认值" />
               <label className="fl">到期时间</label>
               <div className="flex items-center gap-2 flex-wrap">
-                <input className="input-field font-mono" type="date" value={form.expires_at} onChange={e => set('expires_at', e.target.value)} style={{ maxWidth: 200 }} />
+                <DateInput value={form.expires_at} onChange={v => set('expires_at', v)} style={{ maxWidth: 200, width: 200 }} />
                 <button type="button" onClick={() => set('expires_at', todayStr())} title="重置为当天"
                   className="btn-secondary flex-none px-2" style={{ height: 38 }}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>

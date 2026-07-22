@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
-import { Loading, Empty, Badge, CopyText, Modal, useConfirm } from '../components/ui'
+import { Loading, Empty, Badge, CopyText, Modal, useConfirm, DateInput } from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
@@ -321,18 +321,11 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
             {/* Keep date near the bottom actions but with room so the native
                 calendar can open upward without sitting under the footer. */}
-            <input
-              type="date"
-              className="input-field font-mono"
+            <DateInput
               value={form.expires_at}
-              onChange={e => set('expires_at', e.target.value)}
-              onFocus={e => {
-                try { e.currentTarget.showPicker?.() } catch { /* ignore */ }
-                // Scroll the date field into view inside the scrollable overlay.
-                requestAnimationFrame(() => {
-                  e.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' })
-                })
-              }}
+              onChange={v => set('expires_at', v)}
+              className="w-full"
+              placeholder="留空永不过期"
             />
           </div>
           <div className="flex gap-2 pt-2">

@@ -6,7 +6,7 @@ import {
   ROLE_LANDING, ROLE_DIRECT,
 } from '../../lib/landing'
 import { useToast, useBlur } from '../../components/Layout'
-import { Badge, Modal, SensText } from '../../components/ui'
+import { Badge, Modal, SensText, DateInput } from '../../components/ui'
 import { TableBox } from '../../components/page'
 
 const ADMIN_ROLE_OPTS = [
@@ -399,13 +399,13 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
   const expired = exit && exit.expires_at > 0 && exit.expires_at <= Math.floor(Date.now() / 1000)
   return (
     <form onSubmit={submit} className="inline-flex items-center gap-1">
-      <input
-        className="input-field font-mono text-[12px]"
-        type="date"
+      <DateInput
         value={val}
-        onChange={e => setVal(e.target.value)}
-        onFocus={e => { try { e.currentTarget.showPicker?.() } catch {} }}
+        onChange={setVal}
+        className="text-[12px]"
         style={{ width: 148, minWidth: 148 }}
+        placeholder="到期"
+        allowClear={false}
       />
       <button type="submit" disabled={saving} className="btn-secondary text-[11px]">{saving ? '…' : '设'}</button>
       {expired && <Badge color="red">已过期</Badge>}

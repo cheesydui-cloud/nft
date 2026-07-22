@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, createContext, useContext } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { copyToClipboard } from '../lib/clipboard'
 
@@ -545,6 +545,204 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
         <svg className={`w-4 h-4 flex-none text-ink-mut transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
       {menu}
+    </div>
+  )
+}
+
+/* ---------- DateInput ---------- */
+// Custom date picker (yyyy-mm-dd). Calendar is portaled to document.body so
+// TableBox / detail-panel / overflow-hidden containers cannot clip it the way
+// a native <input type="date"> popup is clipped on Chromium.
+const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六']
+
+function parseYMD(s) {
+  if (!s || typeof s !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim())
+  if (!m) return null
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3])
+  const dt = new Date(y, mo - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null
+  return dt
+}
+
+function toYMD(dt) {
+  if (!dt) return ''
+  const y = dt.getFullYear()
+  const m = String(dt.getMonth() + 1).padStart(2, '0')
+  const d = String(dt.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function sameDay(a, b) {
+  return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+export function DateInput({
+  value = '',
+  onChange,
+  className = '',
+  style,
+  disabled = false,
+  placeholder = '选择日期',
+  allowClear = true,
+}) {
+  const triggerRef = useRef(null)
+  const panelRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [box, setBox] = useState(null) // { left, top, width, placeUp }
+  const selected = parseYMD(value)
+  const today = useMemo(() => {
+    const t = new Date()
+    return new Date(t.getFullYear(), t.getMonth(), t.getDate())
+  }, [])
+  const [view, setView] = useState(() => {
+    const base = selected || today
+    return { y: base.getFullYear(), m: base.getMonth() }
+  })
+
+  const place = useCallback(() => {
+    const el = triggerRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const panelH = 320
+    const panelW = Math.max(280, r.width)
+    const spaceBelow = window.innerHeight - r.bottom - 8
+    const placeUp = spaceBelow < panelH && r.top > spaceBelow
+    let left = r.left
+    if (left + panelW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - panelW - 8)
+    if (left < 8) left = 8
+    const top = placeUp ? Math.max(8, r.top - panelH - 6) : Math.min(window.innerHeight - panelH - 8, r.bottom + 6)
+    setBox({ left, top, width: panelW, placeUp })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const base = selected || today
+    setView({ y: base.getFullYear(), m: base.getMonth() })
+    place()
+    const onScroll = () => place()
+    const onResize = () => place()
+    const onDown = (e) => {
+      if (triggerRef.current?.contains(e.target)) return
+      if (panelRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, place, selected, today])
+
+  const days = useMemo(() => {
+    const first = new Date(view.y, view.m, 1)
+    const startPad = first.getDay() // 0 Sun
+    const dim = new Date(view.y, view.m + 1, 0).getDate()
+    const prevDim = new Date(view.y, view.m, 0).getDate()
+    const cells = []
+    for (let i = 0; i < startPad; i++) {
+      const d = prevDim - startPad + 1 + i
+      cells.push({ date: new Date(view.y, view.m - 1, d), outside: true })
+    }
+    for (let d = 1; d <= dim; d++) {
+      cells.push({ date: new Date(view.y, view.m, d), outside: false })
+    }
+    while (cells.length % 7 !== 0) {
+      const d = cells.length - (startPad + dim) + 1
+      cells.push({ date: new Date(view.y, view.m + 1, d), outside: true })
+    }
+    return cells
+  }, [view])
+
+  const pick = (dt) => {
+    onChange?.(toYMD(dt))
+    setOpen(false)
+  }
+
+  const shiftMonth = (delta) => {
+    setView(v => {
+      const d = new Date(v.y, v.m + delta, 1)
+      return { y: d.getFullYear(), m: d.getMonth() }
+    })
+  }
+
+  const label = selected
+    ? `${selected.getFullYear()}/${String(selected.getMonth() + 1).padStart(2, '0')}/${String(selected.getDate()).padStart(2, '0')}`
+    : ''
+
+  const panel = open && box ? createPortal(
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label="选择日期"
+      className="fixed z-[90] rounded-2xl border border-line bg-surface shadow-[0_20px_50px_-16px_rgba(0,0,0,0.55)] p-3 select-none"
+      style={{ left: box.left, top: box.top, width: box.width }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2 px-0.5">
+        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center" onClick={() => shiftMonth(-1)} aria-label="上个月">‹</button>
+        <div className="text-[13.5px] font-bold text-ink tabular-nums">
+          {view.y}年{view.m + 1}月
+        </div>
+        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center" onClick={() => shiftMonth(1)} aria-label="下个月">›</button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 mb-1">
+        {WEEKDAYS_ZH.map(w => (
+          <div key={w} className="text-center text-[11px] font-semibold text-ink-mut py-1">{w}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {days.map(({ date, outside }, i) => {
+          const isSel = sameDay(date, selected)
+          const isToday = sameDay(date, today)
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => pick(date)}
+              className={`h-8 rounded-lg text-[12.5px] font-semibold tabular-nums transition-colors
+                ${outside ? 'text-ink-mut/45' : 'text-ink'}
+                ${isSel ? 'bg-emerald-600 text-white hover:bg-emerald-600' : 'hover:bg-raised'}
+                ${!isSel && isToday ? 'ring-1 ring-emerald-500/50 text-emerald-700 dark:text-emerald-400' : ''}
+              `}
+            >
+              {date.getDate()}
+            </button>
+          )
+        })}
+      </div>
+      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line-soft">
+        <button type="button" className="text-[12px] font-semibold text-emerald-600 hover:underline" onClick={() => pick(today)}>今天</button>
+        {allowClear && (
+          <button type="button" className="text-[12px] font-semibold text-ink-mut hover:text-ink hover:underline" onClick={() => { onChange?.(''); setOpen(false) }}>清除</button>
+        )}
+      </div>
+    </div>,
+    document.body,
+  ) : null
+
+  return (
+    <div className={`relative inline-block ${className}`} style={style}>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(o => !o)}
+        className="input-field flex items-center justify-between gap-2 text-left font-mono disabled:opacity-60 disabled:cursor-not-allowed"
+        style={style}
+      >
+        <span className={`truncate ${label ? 'text-ink' : 'text-ink-mut'}`}>{label || placeholder}</span>
+        <svg className="w-4 h-4 flex-none text-ink-mut" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+      </button>
+      {panel}
     </div>
   )
 }
