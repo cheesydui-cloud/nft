@@ -73,7 +73,7 @@ export default function NodeRepo() {
     }
   }
 
-  const folderName = (id) => folders.find(f => f.id === id)?.name || 
+  const folderName = (id) => folders.find(f => f.id === id)?.name || ''
 
   const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选节点', 'error'); return }
