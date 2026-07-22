@@ -382,13 +382,15 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
   useEffect(() => { setVal(fmtDateInput(exit?.expires_at)) }, [exit?.expires_at])
   const [saving, setSaving] = useState(false)
   const toast = useToast()
-  const submit = async (e) => {
-    e.preventDefault()
+  const currentYmd = fmtDateInput(exit?.expires_at)
+  const save = async (nextVal) => {
+    // Skip no-op (same as server) to avoid double-save on blur after pick.
+    if ((nextVal || '') === (currentYmd || '')) return
     setSaving(true)
     try {
       let ts = 0
-      if (val) {
-        ts = Math.floor(new Date(val + 'T00:00:00').getTime() / 1000)
+      if (nextVal) {
+        ts = Math.floor(new Date(nextVal + 'T00:00:00').getTime() / 1000)
         if (isNaN(ts)) { toast('日期无效', 'error'); setSaving(false); return }
       }
       await api.post(`/users/${userId}/landing-exits/expires`, { host, port, expires_at: ts })
@@ -396,21 +398,27 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
       onDone()
     } catch (err) { toast(err.message, 'error') } finally { setSaving(false) }
   }
+  const onPick = (v) => {
+    setVal(v)
+    // Auto-save when a complete date is chosen/typed so admins don't need the
+    // extra 「设」 click for the common path. Empty is left for explicit 清除.
+    if (v) save(v)
+  }
   const expired = exit && exit.expires_at > 0 && exit.expires_at <= Math.floor(Date.now() / 1000)
   return (
-    <form onSubmit={submit} className="inline-flex items-center gap-1">
+    <form onSubmit={e => { e.preventDefault(); save(val) }} className="inline-flex items-center gap-1 flex-wrap">
       <DateInput
         value={val}
-        onChange={setVal}
+        onChange={onPick}
         className="text-[12px]"
         style={{ width: 148, minWidth: 148 }}
         placeholder="到期"
         allowClear={false}
       />
-      <button type="submit" disabled={saving} className="btn-secondary text-[11px]">{saving ? '…' : '设'}</button>
+      <button type="submit" disabled={saving} className="btn-secondary text-[11px]" title="保存当前输入">{saving ? '…' : '设'}</button>
       {expired && <Badge color="red">已过期</Badge>}
       {!expired && exit && exit.expires_at > 0 && (
-        <button type="button" onClick={() => { setVal(''); submit({ preventDefault: () => {} }) }} className="text-[11px] text-ink-mut hover:text-red-600">清除</button>
+        <button type="button" disabled={saving} onClick={() => { setVal(''); save('') }} className="text-[11px] text-ink-mut hover:text-red-600">清除</button>
       )}
     </form>
   )

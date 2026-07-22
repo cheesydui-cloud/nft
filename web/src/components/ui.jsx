@@ -553,13 +553,21 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
 // Custom date picker (yyyy-mm-dd). Calendar is portaled to document.body so
 // TableBox / detail-panel / overflow-hidden containers cannot clip it the way
 // a native <input type="date"> popup is clipped on Chromium.
+//
+// Free entry: the field is a real text input (yyyy-mm-dd / yyyy/mm/dd / yyyy.mm.dd).
+// The calendar is a helper, not the only path — year/month dropdowns jump far
+// without flipping month-by-month.
 const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六']
 
 function parseYMD(s) {
   if (!s || typeof s !== 'string') return null
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim())
+  const t = s.trim()
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t)
+  if (!m) m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(t)
+  if (!m) m = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(t)
   if (!m) return null
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3])
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null
   const dt = new Date(y, mo - 1, d)
   if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null
   return dt
@@ -577,6 +585,12 @@ function sameDay(a, b) {
   return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
 }
 
+function displayDate(s) {
+  const dt = parseYMD(s)
+  if (!dt) return s || ''
+  return `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`
+}
+
 export function DateInput({
   value = '',
   onChange,
@@ -586,10 +600,13 @@ export function DateInput({
   placeholder = '选择日期',
   allowClear = true,
 }) {
-  const triggerRef = useRef(null)
+  const wrapRef = useRef(null)
+  const inputRef = useRef(null)
   const panelRef = useRef(null)
   const [open, setOpen] = useState(false)
-  const [box, setBox] = useState(null) // { left, top, width, placeUp }
+  const [box, setBox] = useState(null) // { left, top, width }
+  // Draft text while typing; commit on blur/Enter when parseable.
+  const [draft, setDraft] = useState(() => displayDate(value))
   const selected = parseYMD(value)
   const today = useMemo(() => {
     const t = new Date()
@@ -600,19 +617,27 @@ export function DateInput({
     return { y: base.getFullYear(), m: base.getMonth() }
   })
 
+  // Keep draft in sync when parent value changes externally (load/clear/preset).
+  useEffect(() => {
+    if (document.activeElement === inputRef.current) return
+    setDraft(displayDate(value))
+  }, [value])
+
   const place = useCallback(() => {
-    const el = triggerRef.current
+    const el = wrapRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const panelH = 320
-    const panelW = Math.max(280, r.width)
+    const panelH = 360
+    const panelW = Math.max(292, Math.min(320, r.width < 200 ? 292 : r.width))
     const spaceBelow = window.innerHeight - r.bottom - 8
     const placeUp = spaceBelow < panelH && r.top > spaceBelow
     let left = r.left
     if (left + panelW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - panelW - 8)
     if (left < 8) left = 8
-    const top = placeUp ? Math.max(8, r.top - panelH - 6) : Math.min(window.innerHeight - panelH - 8, r.bottom + 6)
-    setBox({ left, top, width: panelW, placeUp })
+    const top = placeUp
+      ? Math.max(8, r.top - panelH - 6)
+      : Math.min(window.innerHeight - panelH - 8, r.bottom + 6)
+    setBox({ left, top, width: panelW })
   }, [])
 
   useEffect(() => {
@@ -623,7 +648,7 @@ export function DateInput({
     const onScroll = () => place()
     const onResize = () => place()
     const onDown = (e) => {
-      if (triggerRef.current?.contains(e.target)) return
+      if (wrapRef.current?.contains(e.target)) return
       if (panelRef.current?.contains(e.target)) return
       setOpen(false)
     }
@@ -642,7 +667,7 @@ export function DateInput({
 
   const days = useMemo(() => {
     const first = new Date(view.y, view.m, 1)
-    const startPad = first.getDay() // 0 Sun
+    const startPad = first.getDay()
     const dim = new Date(view.y, view.m + 1, 0).getDate()
     const prevDim = new Date(view.y, view.m, 0).getDate()
     const cells = []
@@ -657,11 +682,51 @@ export function DateInput({
       const d = cells.length - (startPad + dim) + 1
       cells.push({ date: new Date(view.y, view.m + 1, d), outside: true })
     }
+    // Prefer a full 6-week grid so height is stable while flipping months.
+    while (cells.length < 42) {
+      const last = cells[cells.length - 1].date
+      const next = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1)
+      cells.push({ date: next, outside: true })
+    }
     return cells
   }, [view])
 
+  const yearOptions = useMemo(() => {
+    const cy = today.getFullYear()
+    const base = selected ? selected.getFullYear() : cy
+    const lo = Math.min(cy - 5, base - 5, view.y - 5)
+    const hi = Math.max(cy + 15, base + 10, view.y + 5)
+    const ys = []
+    for (let y = lo; y <= hi; y++) ys.push(y)
+    return ys
+  }, [today, selected, view.y])
+
+  const commitText = (raw) => {
+    const t = (raw ?? draft).trim()
+    if (!t) {
+      if (allowClear) {
+        onChange?.('')
+        setDraft('')
+      } else {
+        setDraft(displayDate(value))
+      }
+      return
+    }
+    const dt = parseYMD(t)
+    if (!dt) {
+      setDraft(displayDate(value))
+      return
+    }
+    const ymd = toYMD(dt)
+    onChange?.(ymd)
+    setDraft(displayDate(ymd))
+    setView({ y: dt.getFullYear(), m: dt.getMonth() })
+  }
+
   const pick = (dt) => {
-    onChange?.(toYMD(dt))
+    const ymd = toYMD(dt)
+    onChange?.(ymd)
+    setDraft(displayDate(ymd))
     setOpen(false)
   }
 
@@ -672,10 +737,6 @@ export function DateInput({
     })
   }
 
-  const label = selected
-    ? `${selected.getFullYear()}/${String(selected.getMonth() + 1).padStart(2, '0')}/${String(selected.getDate()).padStart(2, '0')}`
-    : ''
-
   const panel = open && box ? createPortal(
     <div
       ref={panelRef}
@@ -684,12 +745,31 @@ export function DateInput({
       className="fixed z-[90] rounded-2xl border border-line bg-surface shadow-[0_20px_50px_-16px_rgba(0,0,0,0.55)] p-3 select-none"
       style={{ left: box.left, top: box.top, width: box.width }}
     >
-      <div className="flex items-center justify-between gap-2 mb-2 px-0.5">
-        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center" onClick={() => shiftMonth(-1)} aria-label="上个月">‹</button>
-        <div className="text-[13.5px] font-bold text-ink tabular-nums">
-          {view.y}年{view.m + 1}月
+      <div className="flex items-center justify-between gap-1.5 mb-2">
+        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0" onClick={() => shiftMonth(-1)} aria-label="上个月">‹</button>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <select
+            className="input-field text-[13px] font-bold py-1 px-1.5 h-8"
+            style={{ width: 88 }}
+            value={view.y}
+            onChange={e => setView(v => ({ ...v, y: Number(e.target.value) }))}
+            aria-label="年份"
+          >
+            {yearOptions.map(y => <option key={y} value={y}>{y}年</option>)}
+          </select>
+          <select
+            className="input-field text-[13px] font-bold py-1 px-1.5 h-8"
+            style={{ width: 72 }}
+            value={view.m}
+            onChange={e => setView(v => ({ ...v, m: Number(e.target.value) }))}
+            aria-label="月份"
+          >
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i} value={i}>{i + 1}月</option>
+            ))}
+          </select>
         </div>
-        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center" onClick={() => shiftMonth(1)} aria-label="下个月">›</button>
+        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0" onClick={() => shiftMonth(1)} aria-label="下个月">›</button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {WEEKDAYS_ZH.map(w => (
@@ -719,29 +799,61 @@ export function DateInput({
       <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line-soft">
         <button type="button" className="text-[12px] font-semibold text-emerald-600 hover:underline" onClick={() => pick(today)}>今天</button>
         {allowClear && (
-          <button type="button" className="text-[12px] font-semibold text-ink-mut hover:text-ink hover:underline" onClick={() => { onChange?.(''); setOpen(false) }}>清除</button>
+          <button type="button" className="text-[12px] font-semibold text-ink-mut hover:text-ink hover:underline" onClick={() => { onChange?.(''); setDraft(''); setOpen(false) }}>清除</button>
         )}
       </div>
+      <div className="mt-1.5 text-[11px] text-ink-mut text-center">可直接在输入框键入日期，如 2026-12-31</div>
     </div>,
     document.body,
   ) : null
 
   return (
-    <div className={`relative inline-block ${className}`} style={style}>
-      <button
-        ref={triggerRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen(o => !o)}
-        className="input-field flex items-center justify-between gap-2 text-left font-mono disabled:opacity-60 disabled:cursor-not-allowed"
-        style={style}
-      >
-        <span className={`truncate ${label ? 'text-ink' : 'text-ink-mut'}`}>{label || placeholder}</span>
-        <svg className="w-4 h-4 flex-none text-ink-mut" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <path d="M16 2v4M8 2v4M3 10h18" />
-        </svg>
-      </button>
+    <div ref={wrapRef} className={`relative inline-block ${className}`} style={style}>
+      <div className="input-field flex items-center gap-1.5 font-mono" style={style}>
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled}
+          value={draft}
+          placeholder={placeholder}
+          onChange={e => {
+            setDraft(e.target.value)
+            // Live-commit when the text already forms a valid full date so
+            // callers (and the calendar highlight) track free typing.
+            const dt = parseYMD(e.target.value)
+            if (dt) onChange?.(toYMD(dt))
+          }}
+          onFocus={() => { if (!disabled) setOpen(true) }}
+          onBlur={() => commitText(draft)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitText(draft)
+              setOpen(false)
+              inputRef.current?.blur()
+            }
+          }}
+          className="min-w-0 flex-1 bg-transparent outline-none border-0 p-0 text-inherit placeholder:text-ink-mut disabled:opacity-60"
+          style={{ height: 'auto' }}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          onMouseDown={e => e.preventDefault()}
+          onClick={() => { if (!disabled) setOpen(o => !o) }}
+          className="w-7 h-7 shrink-0 rounded-md text-ink-mut hover:bg-raised hover:text-ink grid place-items-center disabled:opacity-60"
+          aria-label="打开日历"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
+          </svg>
+        </button>
+      </div>
       {panel}
     </div>
   )
