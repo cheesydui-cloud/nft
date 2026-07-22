@@ -384,7 +384,6 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
   const toast = useToast()
   const currentYmd = fmtDateInput(exit?.expires_at)
   const save = async (nextVal) => {
-    // Skip no-op (same as server) to avoid double-save on blur after pick.
     if ((nextVal || '') === (currentYmd || '')) return
     setSaving(true)
     try {
@@ -398,10 +397,10 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
       onDone()
     } catch (err) { toast(err.message, 'error') } finally { setSaving(false) }
   }
-  const onPick = (v) => {
+  // DateInput only calls onChange with a committed value (pick / blur / Enter),
+  // so auto-saving here is safe and does not fire while flipping months.
+  const onCommit = (v) => {
     setVal(v)
-    // Auto-save when a complete date is chosen/typed so admins don't need the
-    // extra 「设」 click for the common path. Empty is left for explicit 清除.
     if (v) save(v)
   }
   const expired = exit && exit.expires_at > 0 && exit.expires_at <= Math.floor(Date.now() / 1000)
@@ -409,7 +408,7 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
     <form onSubmit={e => { e.preventDefault(); save(val) }} className="inline-flex items-center gap-1 flex-wrap">
       <DateInput
         value={val}
-        onChange={onPick}
+        onChange={onCommit}
         className="text-[12px]"
         style={{ width: 148, minWidth: 148 }}
         placeholder="到期"
@@ -417,7 +416,7 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
       />
       <button type="submit" disabled={saving} className="btn-secondary text-[11px]" title="保存当前输入">{saving ? '…' : '设'}</button>
       {expired && <Badge color="red">已过期</Badge>}
-      {!expired && exit && exit.expires_at > 0 && (
+      {(expired || (exit && exit.expires_at > 0)) && (
         <button type="button" disabled={saving} onClick={() => { setVal(''); save('') }} className="text-[11px] text-ink-mut hover:text-red-600">清除</button>
       )}
     </form>

@@ -551,12 +551,11 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
 
 /* ---------- DateInput ---------- */
 // Custom date picker (yyyy-mm-dd). Calendar is portaled to document.body so
-// TableBox / detail-panel / overflow-hidden containers cannot clip it the way
-// a native <input type="date"> popup is clipped on Chromium.
+// TableBox / detail-panel / overflow-hidden containers cannot clip it.
 //
-// Free entry: the field is a real text input (yyyy-mm-dd / yyyy/mm/dd / yyyy.mm.dd).
-// The calendar is a helper, not the only path — year/month dropdowns jump far
-// without flipping month-by-month.
+// Free entry via the text field; calendar is a helper with year/month jump and
+// prev/next month buttons. View month is only seeded when the panel opens —
+// never re-synced from `value` while open (that used to cancel arrow clicks).
 const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六']
 
 function parseYMD(s) {
@@ -582,13 +581,21 @@ function toYMD(dt) {
 }
 
 function sameDay(a, b) {
-  return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  return !!(a && b
+    && a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate())
 }
 
 function displayDate(s) {
   const dt = parseYMD(s)
   if (!dt) return s || ''
   return `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`
+}
+
+function startOfToday() {
+  const t = new Date()
+  return new Date(t.getFullYear(), t.getMonth(), t.getDate())
 }
 
 export function DateInput({
@@ -604,20 +611,18 @@ export function DateInput({
   const inputRef = useRef(null)
   const panelRef = useRef(null)
   const [open, setOpen] = useState(false)
-  const [box, setBox] = useState(null) // { left, top, width }
-  // Draft text while typing; commit on blur/Enter when parseable.
+  const [box, setBox] = useState(null)
   const [draft, setDraft] = useState(() => displayDate(value))
-  const selected = parseYMD(value)
-  const today = useMemo(() => {
-    const t = new Date()
-    return new Date(t.getFullYear(), t.getMonth(), t.getDate())
-  }, [])
+  // Calendar grid month. Seeded only when opening the panel.
   const [view, setView] = useState(() => {
-    const base = selected || today
+    const base = parseYMD(value) || startOfToday()
     return { y: base.getFullYear(), m: base.getMonth() }
   })
 
-  // Keep draft in sync when parent value changes externally (load/clear/preset).
+  const selected = useMemo(() => parseYMD(value), [value])
+  const today = useMemo(() => startOfToday(), [])
+
+  // Sync draft when parent value changes (load / external clear), not while typing.
   useEffect(() => {
     if (document.activeElement === inputRef.current) return
     setDraft(displayDate(value))
@@ -627,8 +632,8 @@ export function DateInput({
     const el = wrapRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const panelH = 360
-    const panelW = Math.max(292, Math.min(320, r.width < 200 ? 292 : r.width))
+    const panelH = 380
+    const panelW = Math.max(300, Math.min(320, r.width < 180 ? 300 : Math.max(r.width, 300)))
     const spaceBelow = window.innerHeight - r.bottom - 8
     const placeUp = spaceBelow < panelH && r.top > spaceBelow
     let left = r.left
@@ -636,13 +641,19 @@ export function DateInput({
     if (left < 8) left = 8
     const top = placeUp
       ? Math.max(8, r.top - panelH - 6)
-      : Math.min(window.innerHeight - panelH - 8, r.bottom + 6)
+      : Math.min(Math.max(8, window.innerHeight - panelH - 8), r.bottom + 6)
     setBox({ left, top, width: panelW })
   }, [])
 
+  // Seed calendar month once when the panel opens. Do NOT depend on `value` /
+  // `selected` here — a new Date() every render used to reset the month and
+  // made prev/next arrows appear dead.
   useEffect(() => {
-    if (!open) return
-    const base = selected || today
+    if (!open) {
+      setBox(null)
+      return
+    }
+    const base = parseYMD(value) || startOfToday()
     setView({ y: base.getFullYear(), m: base.getMonth() })
     place()
     const onScroll = () => place()
@@ -650,11 +661,15 @@ export function DateInput({
     const onDown = (e) => {
       if (wrapRef.current?.contains(e.target)) return
       if (panelRef.current?.contains(e.target)) return
+      // Native <select> popups can deliver mousedown outside the panel; ignore
+      // those so year/month dropdowns stay usable.
+      if (e.target && (e.target.tagName === 'OPTION' || e.target.tagName === 'SELECT')) return
       setOpen(false)
     }
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
+    // capture:false so select/option handlers run first
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -663,7 +678,9 @@ export function DateInput({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open, place, selected, today])
+    // intentionally only re-bind when open toggles / place identity changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, place])
 
   const days = useMemo(() => {
     const first = new Date(view.y, view.m, 1)
@@ -678,24 +695,19 @@ export function DateInput({
     for (let d = 1; d <= dim; d++) {
       cells.push({ date: new Date(view.y, view.m, d), outside: false })
     }
-    while (cells.length % 7 !== 0) {
-      const d = cells.length - (startPad + dim) + 1
-      cells.push({ date: new Date(view.y, view.m + 1, d), outside: true })
-    }
-    // Prefer a full 6-week grid so height is stable while flipping months.
     while (cells.length < 42) {
       const last = cells[cells.length - 1].date
       const next = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1)
       cells.push({ date: next, outside: true })
     }
     return cells
-  }, [view])
+  }, [view.y, view.m])
 
   const yearOptions = useMemo(() => {
     const cy = today.getFullYear()
-    const base = selected ? selected.getFullYear() : cy
-    const lo = Math.min(cy - 5, base - 5, view.y - 5)
-    const hi = Math.max(cy + 15, base + 10, view.y + 5)
+    const selY = selected ? selected.getFullYear() : cy
+    const lo = Math.min(cy - 10, selY - 10, view.y - 5)
+    const hi = Math.max(cy + 20, selY + 15, view.y + 10)
     const ys = []
     for (let y = lo; y <= hi; y++) ys.push(y)
     return ys
@@ -720,7 +732,6 @@ export function DateInput({
     const ymd = toYMD(dt)
     onChange?.(ymd)
     setDraft(displayDate(ymd))
-    setView({ y: dt.getFullYear(), m: dt.getMonth() })
   }
 
   const pick = (dt) => {
@@ -737,31 +748,54 @@ export function DateInput({
     })
   }
 
+  const openPanel = () => {
+    if (disabled) return
+    setOpen(true)
+  }
+
   const panel = open && box ? createPortal(
     <div
       ref={panelRef}
       role="dialog"
       aria-label="选择日期"
-      className="fixed z-[90] rounded-2xl border border-line bg-surface shadow-[0_20px_50px_-16px_rgba(0,0,0,0.55)] p-3 select-none"
+      className="fixed z-[200] rounded-2xl border border-line bg-surface shadow-[0_20px_50px_-16px_rgba(0,0,0,0.55)] p-3 select-none"
       style={{ left: box.left, top: box.top, width: box.width }}
+      onMouseDown={e => {
+        // Keep focus in the text field; prevent outside-click close races and
+        // accidental form blur while interacting with the calendar chrome.
+        if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'OPTION') {
+          e.preventDefault()
+        }
+      }}
     >
       <div className="flex items-center justify-between gap-1.5 mb-2">
-        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0" onClick={() => shiftMonth(-1)} aria-label="上个月">‹</button>
+        <button
+          type="button"
+          className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0 text-lg leading-none"
+          onClick={() => shiftMonth(-1)}
+          aria-label="上个月"
+        >‹</button>
         <div className="flex items-center gap-1.5 min-w-0">
           <select
             className="input-field text-[13px] font-bold py-1 px-1.5 h-8"
-            style={{ width: 88 }}
+            style={{ width: 92 }}
             value={view.y}
-            onChange={e => setView(v => ({ ...v, y: Number(e.target.value) }))}
+            onChange={e => {
+              const y = Number(e.target.value)
+              setView(v => ({ ...v, y }))
+            }}
             aria-label="年份"
           >
             {yearOptions.map(y => <option key={y} value={y}>{y}年</option>)}
           </select>
           <select
             className="input-field text-[13px] font-bold py-1 px-1.5 h-8"
-            style={{ width: 72 }}
+            style={{ width: 76 }}
             value={view.m}
-            onChange={e => setView(v => ({ ...v, m: Number(e.target.value) }))}
+            onChange={e => {
+              const m = Number(e.target.value)
+              setView(v => ({ ...v, m }))
+            }}
             aria-label="月份"
           >
             {Array.from({ length: 12 }, (_, i) => (
@@ -769,7 +803,12 @@ export function DateInput({
             ))}
           </select>
         </div>
-        <button type="button" className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0" onClick={() => shiftMonth(1)} aria-label="下个月">›</button>
+        <button
+          type="button"
+          className="w-8 h-8 rounded-lg text-ink-soft hover:bg-raised grid place-items-center shrink-0 text-lg leading-none"
+          onClick={() => shiftMonth(1)}
+          aria-label="下个月"
+        >›</button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {WEEKDAYS_ZH.map(w => (
@@ -782,7 +821,7 @@ export function DateInput({
           const isToday = sameDay(date, today)
           return (
             <button
-              key={i}
+              key={`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${i}`}
               type="button"
               onClick={() => pick(date)}
               className={`h-8 rounded-lg text-[12.5px] font-semibold tabular-nums transition-colors
@@ -798,11 +837,21 @@ export function DateInput({
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line-soft">
         <button type="button" className="text-[12px] font-semibold text-emerald-600 hover:underline" onClick={() => pick(today)}>今天</button>
-        {allowClear && (
-          <button type="button" className="text-[12px] font-semibold text-ink-mut hover:text-ink hover:underline" onClick={() => { onChange?.(''); setDraft(''); setOpen(false) }}>清除</button>
-        )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="text-[12px] font-semibold text-ink-soft hover:text-ink hover:underline"
+            onClick={() => {
+              const t = startOfToday()
+              setView({ y: t.getFullYear(), m: t.getMonth() })
+            }}
+          >本月</button>
+          {allowClear && (
+            <button type="button" className="text-[12px] font-semibold text-ink-mut hover:text-ink hover:underline" onClick={() => { onChange?.(''); setDraft(''); setOpen(false) }}>清除</button>
+          )}
+        </div>
       </div>
-      <div className="mt-1.5 text-[11px] text-ink-mut text-center">可直接在输入框键入日期，如 2026-12-31</div>
+      <div className="mt-1.5 text-[11px] text-ink-mut text-center">可输入日期，如 2026-12-31</div>
     </div>,
     document.body,
   ) : null
@@ -819,14 +868,8 @@ export function DateInput({
           disabled={disabled}
           value={draft}
           placeholder={placeholder}
-          onChange={e => {
-            setDraft(e.target.value)
-            // Live-commit when the text already forms a valid full date so
-            // callers (and the calendar highlight) track free typing.
-            const dt = parseYMD(e.target.value)
-            if (dt) onChange?.(toYMD(dt))
-          }}
-          onFocus={() => { if (!disabled) setOpen(true) }}
+          onChange={e => setDraft(e.target.value)}
+          onFocus={openPanel}
           onBlur={() => commitText(draft)}
           onKeyDown={e => {
             if (e.key === 'Enter') {
@@ -834,6 +877,9 @@ export function DateInput({
               commitText(draft)
               setOpen(false)
               inputRef.current?.blur()
+            } else if (e.key === 'ArrowDown' && !open) {
+              e.preventDefault()
+              openPanel()
             }
           }}
           className="min-w-0 flex-1 bg-transparent outline-none border-0 p-0 text-inherit placeholder:text-ink-mut disabled:opacity-60"
