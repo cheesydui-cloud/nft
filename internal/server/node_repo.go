@@ -10,6 +10,8 @@ import (
 )
 
 // apiListNodeRepo returns all nodes in the repository (admin only).
+// Each entry includes user_count: how many users currently hold that host:port
+// as a present source=repo landing exit.
 func (s *Server) apiListNodeRepo(w http.ResponseWriter, r *http.Request) {
 	list, err := db.ListNodeRepo(s.DB)
 	if err != nil {
@@ -19,7 +21,37 @@ func (s *Server) apiListNodeRepo(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []db.NodeRepoEntry{}
 	}
+	if counts, err := db.CountRepoExitUsers(s.DB); err == nil && len(counts) > 0 {
+		for i := range list {
+			key := list[i].Host + ":" + strconv.Itoa(list[i].Port)
+			list[i].UserCount = counts[key]
+		}
+	}
 	jsonOK(w, map[string]any{"nodes": list})
+}
+
+// apiListNodeRepoUsers returns users who currently use a repo node endpoint
+// (present source=repo landing exit at the same host:port).
+func (s *Server) apiListNodeRepoUsers(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	entry, err := db.GetNodeRepoEntry(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	users, err := db.ListRepoExitUsers(s.DB, entry.Host, entry.Port)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{
+		"node":  entry,
+		"users": users,
+	})
 }
 
 // apiCreateNodeRepoEntry creates a new node in the repository.

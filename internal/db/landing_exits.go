@@ -668,3 +668,72 @@ func PropagateRepoExitChange(d *sql.DB, oldHost, newHost string, oldPort, newPor
 	}
 	return out, nil
 }
+
+
+// RepoExitUser is one user who has a present, repo-sourced landing exit at host:port.
+type RepoExitUser struct {
+	UserID       int64  `json:"user_id"`
+	Username     string `json:"username"`
+	NameOverride string `json:"name_override"`
+	Name         string `json:"name"`
+	QuotaBytes   int64  `json:"quota_bytes"`
+	UsedBytes    int64  `json:"used_bytes"`
+	ExpiresAt    int64  `json:"expires_at"`
+	// RuleCount is how many of this user's rules exit to the same host:port.
+	RuleCount int `json:"rule_count"`
+}
+
+// CountRepoExitUsers returns the number of distinct users with a present
+// source=repo landing exit for each host:port key ("host:port" → count).
+// Used to annotate the node-repo list without N+1 queries.
+func CountRepoExitUsers(d *sql.DB) (map[string]int, error) {
+	rows, err := d.Query(`SELECT host, port, COUNT(*) FROM user_landing_exits
+		WHERE source='repo' AND present=1 GROUP BY host, port`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var host string
+		var port, n int
+		if err := rows.Scan(&host, &port, &n); err != nil {
+			return nil, err
+		}
+		out[host+":"+itoa(int64(port))] = n
+	}
+	return out, rows.Err()
+}
+
+// ListRepoExitUsers returns users who currently hold a present, repo-sourced
+// landing exit at host:port, ordered by username. RuleCount is filled from
+// rules owned by those users that still dial the same exit.
+func ListRepoExitUsers(d *sql.DB, host string, port int) ([]RepoExitUser, error) {
+	rows, err := d.Query(`
+		SELECT e.user_id, u.username, e.name, e.name_override, e.quota_bytes, e.used_bytes, e.expires_at,
+			(SELECT COUNT(*) FROM rules r WHERE r.owner_id=e.user_id AND r.exit_host=e.host AND r.exit_port=e.port)
+		FROM user_landing_exits e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.host=? AND e.port=? AND e.source='repo' AND e.present=1
+		ORDER BY u.username COLLATE NOCASE`, host, port)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RepoExitUser
+	for rows.Next() {
+		var u RepoExitUser
+		var exp sql.NullInt64
+		if err := rows.Scan(&u.UserID, &u.Username, &u.Name, &u.NameOverride, &u.QuotaBytes, &u.UsedBytes, &exp, &u.RuleCount); err != nil {
+			return nil, err
+		}
+		if exp.Valid {
+			u.ExpiresAt = exp.Int64
+		}
+		out = append(out, u)
+	}
+	if out == nil {
+		out = []RepoExitUser{}
+	}
+	return out, rows.Err()
+}

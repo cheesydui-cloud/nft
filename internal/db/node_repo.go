@@ -20,6 +20,9 @@ type NodeRepoEntry struct {
 	// denormalized label kept in sync for display and legacy clients.
 	GroupID   int64  `json:"group_id"`
 	GroupName string `json:"group_name"`
+	// UserCount is how many users currently hold this endpoint via source=repo
+	// present landing exits. Filled by list API; not a DB column.
+	UserCount int `json:"user_count"`
 }
 
 const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id`

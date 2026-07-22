@@ -444,3 +444,89 @@ func TestPropagateRepoExitChangeMergeConflict(t *testing.T) {
 func sqlNull(v int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: v, Valid: true}
 }
+
+
+func TestCountAndListRepoExitUsers(t *testing.T) {
+	d := openTestDB(t)
+	u1 := createTestUser(t, d)
+	u2 := createTestUser(t, d)
+	u3 := createTestUser(t, d)
+
+	// u1,u2 hold host a:443 from repo; u3 holds different endpoint.
+	if _, err := AppendUserLandingExits(d, u1, []LandingExitInput{
+		{Host: "a.exit", Port: 443, Name: "A", Protocol: "ss", URI: "ss://x@a.exit:443"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendUserLandingExits(d, u2, []LandingExitInput{
+		{Host: "a.exit", Port: 443, Name: "A2", Protocol: "ss", URI: "ss://x@a.exit:443"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendUserLandingExits(d, u3, []LandingExitInput{
+		{Host: "b.exit", Port: 443, Name: "B", Protocol: "ss", URI: "ss://x@b.exit:443"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// present=0 should not count
+	d.Exec(`UPDATE user_landing_exits SET present=0 WHERE user_id=? AND host='a.exit'`, u2)
+	// auto source should not count
+	if _, _, err := SyncUserLandingExits(d, u3, []LandingExitInput{
+		{Host: "a.exit", Port: 443, Name: "auto-a", Protocol: "vless", URI: "vless://x@a.exit:443"},
+	}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := CountRepoExitUsers(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["a.exit:443"] != 1 {
+		t.Fatalf("a.exit count want 1 (only u1 present+repo), got %v", counts)
+	}
+	if counts["b.exit:443"] != 1 {
+		t.Fatalf("b.exit count want 1, got %v", counts)
+	}
+
+	// Restore u2 present and set name override; attach a rule for u1.
+	d.Exec(`UPDATE user_landing_exits SET present=1 WHERE user_id=? AND host='a.exit'`, u2)
+	SetUserLandingExitName(d, u2, "a.exit", 443, "改名落地")
+
+	n, _ := CreateNode(d, "entry", "", "")
+	_ = UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
+	r := &Rule{NodeID: n.ID, OwnerID: sqlNull(u1), Name: "r1", Proto: "tcp", ExitHost: "a.exit", ExitPort: 443}
+	tx, _ := d.Begin()
+	id, err := CreateRule(tx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = id
+	if _, _, _, err := RegenerateRule(tx, r, []HopInput{{NodeID: n.ID, Mode: "userspace", ViaNodeID: n.ID}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Commit()
+
+	users, err := ListRepoExitUsers(d, "a.exit", 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("want 2 users, got %+v", users)
+	}
+	// ordered by username
+	byID := map[int64]RepoExitUser{}
+	for _, u := range users {
+		byID[u.UserID] = u
+	}
+	if byID[u1].RuleCount != 1 {
+		t.Fatalf("u1 rule_count want 1, got %+v", byID[u1])
+	}
+	if byID[u2].NameOverride != "改名落地" || byID[u2].RuleCount != 0 {
+		t.Fatalf("u2 wrong: %+v", byID[u2])
+	}
+
+	counts, _ = CountRepoExitUsers(d)
+	if counts["a.exit:443"] != 2 {
+		t.Fatalf("after restore want 2, got %v", counts)
+	}
+}

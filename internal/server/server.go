@@ -754,6 +754,7 @@ func (s *Server) Router() http.Handler {
 			// Node repository
 			r.Get("/node-repo", s.apiListNodeRepo)
 			r.Post("/node-repo", s.apiCreateNodeRepoEntry)
+			r.Get("/node-repo/{id}/users", s.apiListNodeRepoUsers)
 			r.Patch("/node-repo/{id}", s.apiUpdateNodeRepoEntry)
 			r.Post("/node-repo/batch-group", s.apiBatchSetNodeRepoGroup)
 			r.Delete("/node-repo/{id}", s.apiDeleteNodeRepoEntry)

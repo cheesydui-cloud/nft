@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, Badge, CopyText, Modal, useConfirm, DateInput } from '../components/ui'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
-import { fmtDate, expiryBadge } from '../lib/fmt'
+import { fmtDate, expiryBadge, fmtTrafficGB } from '../lib/fmt'
 import { useIsMobile } from '../lib/useIsMobile'
 
 export default function NodeRepo() {
@@ -20,6 +21,9 @@ export default function NodeRepo() {
   const [search, setSearch] = useState('')
   const [folderFilter, setFolderFilter] = useState('') // '' all | '0' ungrouped | folder id
   const [sel, setSel] = useState(new Set())
+  const [usersFor, setUsersFor] = useState(null) // node entry when modal open
+  const [usersList, setUsersList] = useState(null)
+  const [usersLoading, setUsersLoading] = useState(false)
   const toast = useToast()
   const confirm = useConfirm()
   const isMobile = useIsMobile()
@@ -54,7 +58,22 @@ export default function NodeRepo() {
     } catch (err) { toast(err.message, 'error') }
   }
 
-  const folderName = (id) => folders.find(f => f.id === id)?.name || ''
+  const openUsers = async (n) => {
+    setUsersFor(n)
+    setUsersList(null)
+    setUsersLoading(true)
+    try {
+      const d = await api.get(`/node-repo/${n.id}/users`)
+      setUsersList(d?.users || [])
+    } catch (err) {
+      toast(err.message, 'error')
+      setUsersFor(null)
+    } finally {
+      setUsersLoading(false)
+    }
+  }
+
+  const folderName = (id) => folders.find(f => f.id === id)?.name || 
 
   const moveToFolder = async (folderId) => {
     if (sel.size === 0) { toast('请先勾选节点', 'error'); return }
@@ -125,7 +144,7 @@ export default function NodeRepo() {
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
+              <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>使用</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
             <tbody>
               {filtered.map(n => (
                 <tr key={n.id}>
@@ -134,6 +153,17 @@ export default function NodeRepo() {
                   <td className="text-xs">{n.group_name ? <Badge color="blue">{n.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                   <td className="font-mono text-xs text-ink-soft">{n.protocol || '—'}</td>
                   <td className="font-mono text-xs">{n.host}:{n.port}</td>
+                  <td className="text-xs">
+                    {(n.user_count || 0) > 0 ? (
+                      <button type="button" onClick={() => openUsers(n)}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11.5px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700 transition-colors"
+                        title="查看使用此落地的用户">
+                        {n.user_count} 人
+                      </button>
+                    ) : (
+                      <span className="text-ink-mut">—</span>
+                    )}
+                  </td>
                   <td className="text-xs">
                     {n.expires_at > 0 ? (
                       <span className="inline-flex items-center gap-1.5">{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
@@ -171,6 +201,14 @@ export default function NodeRepo() {
                   <span className="font-mono">{n.protocol || '—'}</span>
                   <span className="text-ink-mut">·</span>
                   <span className="font-mono">{n.host}:{n.port}</span>
+                  {(n.user_count || 0) > 0 ? (
+                    <button type="button" onClick={() => openUsers(n)}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
+                      {n.user_count} 人
+                    </button>
+                  ) : (
+                    <span className="text-ink-mut">未使用</span>
+                  )}
                   {n.expires_at > 0 && <>
                     <span className="text-ink-mut">·</span>
                     <span>{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
@@ -196,6 +234,59 @@ export default function NodeRepo() {
           onDone={() => { setShowForm(false); load() }}
         />
       )}
+
+      {usersFor && (
+        <Modal open onClose={() => setUsersFor(null)} title={`${usersFor.name} · ${usersFor.host}:${usersFor.port}`} wide>
+          <div className="space-y-3">
+            <p className="text-[13px] text-ink-soft">
+              {usersLoading ? '加载中…' : `${(usersList || []).length} 个用户正在使用此落地`}
+            </p>
+            {usersLoading ? (
+              <div className="py-8 text-center text-ink-mut text-sm">加载中…</div>
+            ) : !usersList?.length ? (
+              <div className="py-8 text-center text-ink-mut text-sm">暂无用户使用</div>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto border border-line rounded-xl">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>用户</th>
+                      <th>落地显示名</th>
+                      <th>流量</th>
+                      <th>规则</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usersList.map(u => (
+                      <tr key={u.user_id}>
+                        <td className="font-semibold">
+                          <Link to={`/users/${u.user_id}`} className="text-emerald-600 hover:underline" onClick={() => setUsersFor(null)}>
+                            {u.username}
+                          </Link>
+                        </td>
+                        <td className="text-xs text-ink-soft">{u.name_override || u.name || '—'}</td>
+                        <td className="text-xs font-mono text-ink-soft">
+                          {(u.quota_bytes > 0 || u.used_bytes > 0)
+                            ? fmtTrafficGB(u.used_bytes, u.quota_bytes)
+                            : '—'}
+                        </td>
+                        <td className="text-xs">{u.rule_count > 0 ? `${u.rule_count} 条` : <span className="text-ink-mut">0</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="flex justify-end pt-1">
+              <button type="button" onClick={() => setUsersFor(null)}
+                className="px-4 py-2 text-[13px] font-semibold rounded-xl border border-line bg-surface hover:bg-raised">
+                关闭
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {showBulk && (
         <BulkImportForm
           folders={folders}
