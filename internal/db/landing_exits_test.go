@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"database/sql"
+	"testing"
+)
 
 func inputs(hosts ...string) []LandingExitInput {
 	out := make([]LandingExitInput, 0, len(hosts))
@@ -266,4 +269,178 @@ func TestLandingExitNameOverride(t *testing.T) {
 	if exits[0].NameOverride != "" {
 		t.Fatalf("override not cleared: %+v", exits[0])
 	}
+}
+
+func TestPropagateRepoExitChangeEndpointAndMetadata(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	a, _ := CreateNode(d, "entry", "", "")
+	b, _ := CreateNode(d, "mid", "", "")
+	_ = UpdateNodeRelayHost(d, a.ID, "1.1.1.1")
+	_ = UpdateNodeRelayHost(d, b.ID, "2.2.2.2")
+
+	// Repo-imported landing exit (source=repo) at old endpoint.
+	if _, err := AppendUserLandingExits(d, uid, []LandingExitInput{{
+		Host: "old.exit", Port: 443, Name: "old-name", Protocol: "vless", URI: "vless://x@old.exit:443",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// Admin display rename must survive cascade.
+	if _, err := SetUserLandingExitName(d, uid, "old.exit", 443, "我的落地"); err != nil {
+		t.Fatal(err)
+	}
+	d.Exec(`UPDATE user_landing_exits SET used_bytes=100, quota_bytes=1000 WHERE user_id=? AND host='old.exit'`, uid)
+
+	// Auto-synced exit at same host:port must NOT be rewritten (source!=repo).
+	if _, _, err := SyncUserLandingExits(d, uid, []LandingExitInput{{
+		Host: "other.exit", Port: 443, Name: "sub", Protocol: "ss", URI: "ss://x@other.exit:443",
+	}}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Rule{NodeID: a.ID, OwnerID: sqlNull(uid), Name: "r1", Proto: "tcp", ExitHost: "old.exit", ExitPort: 443}
+	tx, _ := d.Begin()
+	id, err := CreateRule(tx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = id
+	if _, _, _, err := RegenerateRule(tx, r, []HopInput{
+		{NodeID: a.ID, Mode: "userspace", ViaNodeID: a.ID},
+		{NodeID: b.ID, Mode: "kernel", ViaNodeID: b.ID},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	hops, _ := ListRuleHops(d, id)
+	if len(hops) != 2 || hops[1].TargetHost != "old.exit" || hops[1].TargetPort != 443 {
+		t.Fatalf("precondition last hop: %+v", hops)
+	}
+	// Intermediate hop targets mid relay, not the exit — must stay put.
+	midHost, midPort := hops[0].TargetHost, hops[0].TargetPort
+
+	prop, err := PropagateRepoExitChange(d, "old.exit", "new.exit", 443, 8443,
+		"new-name", "ss", "ss://y@new.exit:8443", 1_700_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prop.EndpointChanged || prop.ExitsUpdated != 1 || prop.RulesUpdated != 1 {
+		t.Fatalf("prop summary: %+v", prop)
+	}
+	if len(prop.NodeIDs) != 2 {
+		t.Fatalf("want 2 nodes for redispatch, got %v", prop.NodeIDs)
+	}
+
+	exits, _ := ListUserLandingExits(d, uid)
+	var moved, other *LandingExit
+	for _, e := range exits {
+		switch e.Host {
+		case "new.exit":
+			moved = e
+		case "other.exit":
+			other = e
+		case "old.exit":
+			t.Fatalf("old repo exit should be gone: %+v", e)
+		}
+	}
+	if moved == nil || moved.Port != 8443 || moved.Name != "new-name" || moved.Protocol != "ss" ||
+		moved.URI != "ss://y@new.exit:8443" || moved.ExpiresAt != 1_700_000_000 ||
+		moved.NameOverride != "我的落地" || moved.UsedBytes != 100 || moved.QuotaBytes != 1000 ||
+		moved.Source != "repo" {
+		t.Fatalf("moved exit wrong: %+v", moved)
+	}
+	if other == nil || other.Port != 443 {
+		t.Fatalf("non-repo exit must remain: %+v", other)
+	}
+	if other.Source != "auto" {
+		t.Fatalf("non-repo exit source want auto, got %q", other.Source)
+	}
+
+	got, _ := GetRule(d, id)
+	if got.ExitHost != "new.exit" || got.ExitPort != 8443 {
+		t.Fatalf("rule exit not updated: %+v", got)
+	}
+	hops, _ = ListRuleHops(d, id)
+	if hops[0].TargetHost != midHost || hops[0].TargetPort != midPort {
+		t.Fatalf("intermediate hop rewritten: %+v", hops[0])
+	}
+	if hops[1].TargetHost != "new.exit" || hops[1].TargetPort != 8443 {
+		t.Fatalf("last hop not updated: %+v", hops[1])
+	}
+
+	// Metadata-only: same host:port refreshes name/uri/expires, no redispatch set.
+	prop2, err := PropagateRepoExitChange(d, "new.exit", "new.exit", 8443, 8443,
+		"meta-name", "ss", "ss://z@new.exit:8443", 1_800_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prop2.EndpointChanged || prop2.ExitsUpdated != 1 || len(prop2.NodeIDs) != 0 {
+		t.Fatalf("metadata prop: %+v", prop2)
+	}
+	exits, _ = ListUserLandingExits(d, uid)
+	for _, e := range exits {
+		if e.Host == "new.exit" {
+			if e.Name != "meta-name" || e.URI != "ss://z@new.exit:8443" || e.ExpiresAt != 1_800_000_000 || e.NameOverride != "我的落地" {
+				t.Fatalf("metadata refresh failed: %+v", e)
+			}
+		}
+	}
+}
+
+func TestPropagateRepoExitChangeMergeConflict(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+
+	if _, err := AppendUserLandingExits(d, uid, []LandingExitInput{
+		{Host: "old.exit", Port: 443, Name: "from-repo", Protocol: "vless", URI: "vless://a@old.exit:443"},
+		{Host: "new.exit", Port: 443, Name: "already", Protocol: "ss", URI: "ss://b@new.exit:443"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d.Exec(`UPDATE user_landing_exits SET used_bytes=10, quota_bytes=100 WHERE user_id=? AND host='old.exit'`, uid)
+	d.Exec(`UPDATE user_landing_exits SET used_bytes=20, quota_bytes=50 WHERE user_id=? AND host='new.exit'`, uid)
+
+	// Manual rule pointing at old endpoint (not tied to landing source).
+	a, _ := CreateNode(d, "entry", "", "")
+	_ = UpdateNodeRelayHost(d, a.ID, "1.1.1.1")
+	r := &Rule{NodeID: a.ID, OwnerID: sqlNull(uid), Name: "r", Proto: "tcp", ExitHost: "old.exit", ExitPort: 443}
+	tx, _ := d.Begin()
+	id, err := CreateRule(tx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = id
+	if _, _, _, err := RegenerateRule(tx, r, []HopInput{{NodeID: a.ID, Mode: "userspace", ViaNodeID: a.ID}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Commit()
+
+	prop, err := PropagateRepoExitChange(d, "old.exit", "new.exit", 443, 443,
+		"merged-name", "vless", "vless://c@new.exit:443", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prop.ExitsUpdated != 1 || prop.RulesUpdated != 1 {
+		t.Fatalf("prop: %+v", prop)
+	}
+
+	exits, _ := ListUserLandingExits(d, uid)
+	if len(exits) != 1 {
+		t.Fatalf("want 1 exit after merge, got %+v", exits)
+	}
+	e := exits[0]
+	if e.Host != "new.exit" || e.UsedBytes != 30 || e.QuotaBytes != 100 || e.Name != "merged-name" || e.Source != "repo" {
+		t.Fatalf("merge wrong: %+v", e)
+	}
+	got, _ := GetRule(d, id)
+	if got.ExitHost != "new.exit" || got.ExitPort != 443 {
+		t.Fatalf("rule: %+v", got)
+	}
+}
+
+// sqlNull wraps an int64 for Rule.OwnerID in tests.
+func sqlNull(v int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: v, Valid: true}
 }

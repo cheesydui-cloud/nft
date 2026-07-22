@@ -447,3 +447,224 @@ func SetUserLandingExitExpires(d *sql.DB, userID int64, host string, port int, e
 	n, _ := r.RowsAffected()
 	return n > 0, nil
 }
+
+// RepoExitPropagateResult summarizes cascading updates when a node-repo entry's
+// address (or metadata) changes. EndpointChanged is true when host/port moved.
+type RepoExitPropagateResult struct {
+	EndpointChanged bool
+	ExitsUpdated    int
+	RulesUpdated    int
+	// NodeIDs that carry affected rules — caller should redispatch them.
+	NodeIDs []int64
+	// Users whose landing exit endpoint moved (for per-exit redispatch helpers).
+	MovedUsers []int64
+	OldHost    string
+	OldPort    int
+	NewHost    string
+	NewPort    int
+}
+
+// PropagateRepoExitChange rewrites every user_landing_exits row and every rule
+// that still points at oldHost:oldPort so they follow a node-repo address change.
+//
+// Matching strategy (no foreign key from exits → repo):
+//   - Landing exits: source='repo' AND host/port match the previous repo endpoint.
+//   - Rules: exit_host/exit_port match that endpoint (any owner). Last-hop
+//     rule_hops target is updated in lockstep so the data plane dials the new
+//     address without a full RegenerateRule (listen ports stay put).
+//
+// When the new endpoint already exists for a user (PRIMARY KEY conflict), the
+// old row is dropped after merging quota/used (sum) so history is not lost.
+// Metadata-only edits (same host:port) still refresh name/protocol/uri/expires.
+func PropagateRepoExitChange(d *sql.DB, oldHost, newHost string, oldPort, newPort int, name, protocol, uri string, expiresAt int64) (RepoExitPropagateResult, error) {
+	out := RepoExitPropagateResult{
+		OldHost: oldHost, OldPort: oldPort,
+		NewHost: newHost, NewPort: newPort,
+	}
+	if oldHost == "" || oldPort == 0 || newHost == "" || newPort == 0 {
+		return out, nil
+	}
+	out.EndpointChanged = oldHost != newHost || oldPort != newPort
+
+	tx, err := d.Begin()
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback()
+
+	nowTs := now()
+
+	// --- user_landing_exits (repo-sourced only) ---
+	type exitRow struct {
+		userID       int64
+		name         string
+		nameOverride string
+		protocol     string
+		uri          string
+		present      int
+		quota        int64
+		used         int64
+		expires      sql.NullInt64
+		source       string
+	}
+	rows, err := tx.Query(`SELECT user_id, name, name_override, protocol, uri, present, quota_bytes, used_bytes, expires_at, source
+		FROM user_landing_exits WHERE host=? AND port=? AND source='repo'`, oldHost, oldPort)
+	if err != nil {
+		return out, err
+	}
+	var olds []exitRow
+	for rows.Next() {
+		var e exitRow
+		if err := rows.Scan(&e.userID, &e.name, &e.nameOverride, &e.protocol, &e.uri, &e.present, &e.quota, &e.used, &e.expires, &e.source); err != nil {
+			rows.Close()
+			return out, err
+		}
+		olds = append(olds, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	movedUsers := map[int64]bool{}
+	for _, e := range olds {
+		// Prefer admin rename: keep name_override; update source name from repo.
+		srcName := name
+		if srcName == "" {
+			srcName = e.name
+		}
+		proto := protocol
+		if proto == "" {
+			proto = e.protocol
+		}
+		u := uri
+		if u == "" {
+			u = e.uri
+		}
+		exp := expiresAt
+		if exp < 0 {
+			if e.expires.Valid {
+				exp = e.expires.Int64
+			} else {
+				exp = 0
+			}
+		}
+
+		if !out.EndpointChanged {
+			if _, err := tx.Exec(`UPDATE user_landing_exits SET name=?, protocol=?, uri=?, expires_at=?, updated_at=?
+				WHERE user_id=? AND host=? AND port=? AND source='repo'`,
+				srcName, proto, u, exp, nowTs, e.userID, oldHost, oldPort); err != nil {
+				return out, err
+			}
+			out.ExitsUpdated++
+			continue
+		}
+
+		// Endpoint moved. Merge into existing new key if present.
+		var existQuota, existUsed int64
+		var existPresent int
+		var existNameOverride string
+		err := tx.QueryRow(`SELECT quota_bytes, used_bytes, present, name_override FROM user_landing_exits
+			WHERE user_id=? AND host=? AND port=?`, e.userID, newHost, newPort).
+			Scan(&existQuota, &existUsed, &existPresent, &existNameOverride)
+		if err == sql.ErrNoRows {
+			if _, err := tx.Exec(`UPDATE user_landing_exits SET host=?, port=?, name=?, protocol=?, uri=?, expires_at=?, updated_at=?, source='repo'
+				WHERE user_id=? AND host=? AND port=? AND source='repo'`,
+				newHost, newPort, srcName, proto, u, exp, nowTs, e.userID, oldHost, oldPort); err != nil {
+				return out, err
+			}
+			out.ExitsUpdated++
+			movedUsers[e.userID] = true
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
+		// Conflict: keep higher quota, sum used, prefer existing name_override then old.
+		quota := existQuota
+		if e.quota > quota {
+			quota = e.quota
+		}
+		used := existUsed + e.used
+		override := existNameOverride
+		if override == "" {
+			override = e.nameOverride
+		}
+		present := existPresent
+		if e.present == 1 {
+			present = 1
+		}
+		if _, err := tx.Exec(`UPDATE user_landing_exits SET name=?, name_override=?, protocol=?, uri=?, present=?,
+			quota_bytes=?, used_bytes=?, expires_at=?, updated_at=?, source='repo'
+			WHERE user_id=? AND host=? AND port=?`,
+			srcName, override, proto, u, present, quota, used, exp, nowTs, e.userID, newHost, newPort); err != nil {
+			return out, err
+		}
+		if _, err := tx.Exec(`DELETE FROM user_landing_exits WHERE user_id=? AND host=? AND port=?`,
+			e.userID, oldHost, oldPort); err != nil {
+			return out, err
+		}
+		out.ExitsUpdated++
+		movedUsers[e.userID] = true
+	}
+
+	// --- rules + last-hop rule_hops ---
+	// Always rewrite rules that still dial the old endpoint (covers repo-imported
+	// exits used as rule targets). Metadata-only: no rule change needed when host:port
+	// unchanged — hops already point correctly.
+	if out.EndpointChanged {
+		res, err := tx.Exec(`UPDATE rules SET exit_host=?, exit_port=? WHERE exit_host=? AND exit_port=?`,
+			newHost, newPort, oldHost, oldPort)
+		if err != nil {
+			return out, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			out.RulesUpdated = int(n)
+		}
+		// Last hop only: intermediate hops target the next relay, not the exit.
+		if _, err := tx.Exec(`UPDATE rule_hops SET target_host=?, target_port=?
+			WHERE target_host=? AND target_port=?
+			  AND position = (SELECT MAX(h2.position) FROM rule_hops h2 WHERE h2.rule_id = rule_hops.rule_id)`,
+			newHost, newPort, oldHost, oldPort); err != nil {
+			return out, err
+		}
+	}
+
+	// Data-plane targets only change when host/port moved; metadata-only
+	// edits (name/uri/expires) stay panel-side and need no agent push.
+	if out.EndpointChanged {
+		nodeRows, err := tx.Query(`
+			SELECT DISTINCT rh.node_id
+			FROM rule_hops rh
+			JOIN rules r ON r.id = rh.rule_id
+			WHERE r.exit_host=? AND r.exit_port=?`, newHost, newPort)
+		if err != nil {
+			return out, err
+		}
+		seenN := map[int64]bool{}
+		for nodeRows.Next() {
+			var nid int64
+			if err := nodeRows.Scan(&nid); err != nil {
+				nodeRows.Close()
+				return out, err
+			}
+			if !seenN[nid] {
+				seenN[nid] = true
+				out.NodeIDs = append(out.NodeIDs, nid)
+			}
+		}
+		nodeRows.Close()
+		if err := nodeRows.Err(); err != nil {
+			return out, err
+		}
+	}
+
+	for uid := range movedUsers {
+		out.MovedUsers = append(out.MovedUsers, uid)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return out, err
+	}
+	return out, nil
+}

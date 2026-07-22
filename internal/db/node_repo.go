@@ -70,6 +70,17 @@ func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, 
 	return n, nil
 }
 
+// GetNodeRepoEntry returns one repository node by id.
+func GetNodeRepoEntry(d *sql.DB, id int64) (NodeRepoEntry, error) {
+	row := d.QueryRow(`SELECT `+nodeRepoCols+` FROM node_repo WHERE id=?`, id)
+	var n NodeRepoEntry
+	err := row.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID)
+	if err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 // UpdateNodeRepoEntry updates an existing node in the repository.
 func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) error {
 	var groupID int64

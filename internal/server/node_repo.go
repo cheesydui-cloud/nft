@@ -59,6 +59,9 @@ func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 }
 
 // apiUpdateNodeRepoEntry updates an existing node in the repository.
+// When host/port (or URI metadata) changes, every user landing exit that was
+// imported from the repo at the previous endpoint — and every rule still dialing
+// that endpoint — is rewritten so admin + user UIs and the data plane follow.
 func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -85,6 +88,11 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
+	prev, err := db.GetNodeRepoEntry(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
 	groupName := strings.TrimSpace(body.GroupName)
 	if body.GroupID > 0 {
 		if f, err := db.GetNodeRepoFolder(s.DB, body.GroupID); err == nil {
@@ -98,7 +106,28 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonOK(w, map[string]any{"ok": true})
+
+	// Cascade: repo template → user landing exits (source=repo) + rules/hops.
+	// Always run so name/uri/expires refresh even when host:port is unchanged.
+	prop, err := db.PropagateRepoExitChange(s.DB,
+		prev.Host, body.Host, prev.Port, body.Port,
+		body.Name, body.Protocol, body.URI, body.ExpiresAt,
+	)
+	if err != nil {
+		// Repo row already saved; surface cascade failure so the admin can retry.
+		jsonErr(w, http.StatusInternalServerError, "仓库已保存，但同步用户/规则失败: "+err.Error())
+		return
+	}
+	if len(prop.NodeIDs) > 0 {
+		s.redispatchNodes(prop.NodeIDs)
+	}
+
+	jsonOK(w, map[string]any{
+		"ok":               true,
+		"endpoint_changed": prop.EndpointChanged,
+		"exits_updated":    prop.ExitsUpdated,
+		"rules_updated":    prop.RulesUpdated,
+	})
 }
 
 // apiBatchSetNodeRepoGroup moves many repo entries into a folder.
