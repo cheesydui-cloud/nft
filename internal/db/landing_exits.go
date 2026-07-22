@@ -434,18 +434,35 @@ func SetUserLandingExitName(d *sql.DB, userID int64, host string, port int, name
 
 // SetUserLandingExitExpires sets (or clears, with expiresAt==0) the expiry
 // timestamp for one landing exit. 0 = never expire.
-func SetUserLandingExitExpires(d *sql.DB, userID int64, host string, port int, expiresAt int64) (updated bool, err error) {
+//
+// When the new clock is already past, present is flipped to 0 so the periodic
+// enforcer is idempotent and the exit drops out of "present" classification.
+// Extending into the future (or clearing) restores present=1 so a previously
+// expired repo/auto exit becomes usable again without a re-import.
+// redisp is true when the data plane may need a re-push (any change that can
+// affect ActiveRuleHopsForPush for rules targeting this exit).
+func SetUserLandingExitExpires(d *sql.DB, userID int64, host string, port int, expiresAt int64) (updated, redisp bool, err error) {
 	found, _, err := exitRowPresent(d, userID, host, port)
 	if err != nil || !found {
-		return false, err
+		return false, false, err
 	}
-	r, err := d.Exec(`UPDATE user_landing_exits SET expires_at=?, updated_at=? WHERE user_id=? AND host=? AND port=?`,
-		expiresAt, now(), userID, host, port)
+	nowTs := now()
+	present := 1
+	if expiresAt > 0 && expiresAt <= nowTs {
+		present = 0
+	}
+	r, err := d.Exec(`UPDATE user_landing_exits SET expires_at=?, present=?, updated_at=? WHERE user_id=? AND host=? AND port=?`,
+		expiresAt, present, nowTs, userID, host, port)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	n, _ := r.RowsAffected()
-	return n > 0, nil
+	if n == 0 {
+		return false, false, nil
+	}
+	// Always redispatch: expiry gates rule push, so any change (set / extend /
+	// clear / set-to-past) can add or remove hops on the agents.
+	return true, true, nil
 }
 
 // RepoExitPropagateResult summarizes cascading updates when a node-repo entry's

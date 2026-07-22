@@ -460,7 +460,7 @@ func (s *Server) apiSetLandingExitExpires(w http.ResponseWriter, r *http.Request
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	updated, err := db.SetUserLandingExitExpires(s.DB, id, body.Host, body.Port, body.ExpiresAt)
+	updated, redisp, err := db.SetUserLandingExitExpires(s.DB, id, body.Host, body.Port, body.ExpiresAt)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -471,6 +471,11 @@ func (s *Server) apiSetLandingExitExpires(w http.ResponseWriter, r *http.Request
 	}
 	db.WriteAudit(s.DB, u.ID, "user.set_exit_expires", strconv.FormatInt(id, 10),
 		fmt.Sprintf("%s:%d expires=%d", body.Host, body.Port, body.ExpiresAt))
+	// Expiry gates ActiveRuleHopsForPush — re-push immediately so agents drop
+	// (or restore) rules without waiting for the 60s enforcer tick.
+	if redisp {
+		s.goAsync(func() { s.redispatchUserExit(id, body.Host, body.Port) })
+	}
 	jsonOK(w, map[string]any{"ok": true})
 }
 

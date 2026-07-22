@@ -320,7 +320,7 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 	// Carry over expires_at from repo entries to user landing exits.
 	for _, e := range entries {
 		if e.ExpiresAt > 0 {
-			db.SetUserLandingExitExpires(s.DB, uid, e.Host, e.Port, e.ExpiresAt)
+			_, _, _ = db.SetUserLandingExitExpires(s.DB, uid, e.Host, e.Port, e.ExpiresAt)
 		}
 	}
 	// Return updated exits so frontend can refresh.

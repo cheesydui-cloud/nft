@@ -868,6 +868,17 @@ func ActiveRuleHopsForPush(d *sql.DB, nodeID int64) ([]*RuleHop, error) {
 		    AND ule.quota_bytes > 0
 		    AND ule.used_bytes >= ule.quota_bytes
 		)
+		AND NOT EXISTS (
+		  -- Landing-exit expiry: drop rules whose exit clock has passed.
+		  -- Independent of present so even a missed enforcer tick (or a
+		  -- present=0 residual) cannot leave expired exits live on agents.
+		  SELECT 1 FROM rules r5
+		  JOIN user_landing_exits ule2 ON ule2.user_id = r5.owner_id
+		    AND ule2.host = r5.exit_host AND ule2.port = r5.exit_port
+		  WHERE r5.id = rh.rule_id
+		    AND ule2.expires_at > 0
+		    AND ule2.expires_at <= strftime('%s','now')
+		)
 		ORDER BY rh.listen_port`
 	return queryAll(d, q, scanRuleHop, nodeID)
 }
