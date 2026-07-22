@@ -399,7 +399,14 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
   const expired = exit && exit.expires_at > 0 && exit.expires_at <= Math.floor(Date.now() / 1000)
   return (
     <form onSubmit={submit} className="inline-flex items-center gap-1">
-      <input className="input-field font-mono text-[12px]" type="date" value={val} onChange={e => setVal(e.target.value)} style={{ width: 140 }} />
+      <input
+        className="input-field font-mono text-[12px]"
+        type="date"
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        onFocus={e => { try { e.currentTarget.showPicker?.() } catch {} }}
+        style={{ width: 148, minWidth: 148 }}
+      />
       <button type="submit" disabled={saving} className="btn-secondary text-[11px]">{saving ? '…' : '设'}</button>
       {expired && <Badge color="red">已过期</Badge>}
       {!expired && exit && exit.expires_at > 0 && (

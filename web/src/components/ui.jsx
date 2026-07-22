@@ -3,18 +3,28 @@ import { createPortal } from 'react-dom'
 import { copyToClipboard } from '../lib/clipboard'
 
 /* ---------- Modal ---------- */
+// Portal to document.body so nested page overflow/transform can't clip the sheet.
+// Animation is opacity-only: any transform/filter on the panel creates a containing
+// block that crops native <input type="date"> calendars and Select portals.
 export function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[4px] px-4 overflow-y-auto" onClick={onClose}>
-      <div className={`bg-surface/95 border border-line rounded-[20px] shadow-[0_28px_80px_-24px_rgba(15,23,42,0.55)] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} animate-in backdrop-blur-xl`} onClick={e => e.stopPropagation()}>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center bg-black/50 backdrop-blur-[4px] px-4 py-6 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className={`relative z-[81] bg-surface border border-line rounded-[20px] shadow-[0_28px_80px_-24px_rgba(15,23,42,0.55)] w-full my-auto ${wide ? 'max-w-3xl' : 'max-w-xl'} animate-modal-in`}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-line-soft">
           <h3 className="text-[16px] font-bold tracking-tight text-ink">{title}</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-mut hover:text-ink hover:bg-raised transition-colors grid place-items-center text-lg leading-none" aria-label="关闭弹窗">&times;</button>
+          <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg text-ink-mut hover:text-ink hover:bg-raised transition-colors grid place-items-center text-lg leading-none" aria-label="关闭弹窗">&times;</button>
         </div>
         <div className="px-6 py-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

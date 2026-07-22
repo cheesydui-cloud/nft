@@ -314,12 +314,26 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
             </div>
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
-            <input type="date" className="input-field" value={form.expires_at} onChange={e => set('expires_at', e.target.value)} />
-          </div>
-          <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
             <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
+          </div>
+          <div>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
+            {/* Keep date near the bottom actions but with room so the native
+                calendar can open upward without sitting under the footer. */}
+            <input
+              type="date"
+              className="input-field font-mono"
+              value={form.expires_at}
+              onChange={e => set('expires_at', e.target.value)}
+              onFocus={e => {
+                try { e.currentTarget.showPicker?.() } catch { /* ignore */ }
+                // Scroll the date field into view inside the scrollable overlay.
+                requestAnimationFrame(() => {
+                  e.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                })
+              }}
+            />
           </div>
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={submitting} className="btn-primary flex-1">{submitting ? '保存中…' : '保存'}</button>
