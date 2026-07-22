@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '../../lib/api'
-import { fmtTrafficGB } from '../../lib/fmt'
+import { fmtTrafficGB, fmtDate, expiryBadge } from '../../lib/fmt'
 import {
   fetchNodeRoles, nodeRoleKey, applyNodeRole, applyNodeRoleBatch, saveNodeRoles,
   ROLE_LANDING, ROLE_DIRECT,
@@ -241,7 +241,12 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
         </form>
 
         {showRepoPicker && (
-          <RepoPicker userId={userId} onClose={() => setShowRepoPicker(false)} onDone={() => { setShowRepoPicker(false); reloadLanding() }} />
+          <RepoPicker
+            userId={userId}
+            existingExits={exits}
+            onClose={() => setShowRepoPicker(false)}
+            onDone={() => { setShowRepoPicker(false); reloadLanding() }}
+          />
         )}
 
         {(preview.length > 0 || residualExits.length > 0) && (
@@ -404,22 +409,73 @@ function ExitExpiresForm({ userId, host, port, exit, onDone }) {
   )
 }
 
-function RepoPicker({ userId, onClose, onDone }) {
+function RepoPicker({ userId, existingExits = [], onClose, onDone }) {
   const [repoNodes, setRepoNodes] = useState([])
+  const [folders, setFolders] = useState([])
   const [selected, setSelected] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [assigning, setAssigning] = useState(false)
+  const [search, setSearch] = useState('')
+  const [folderFilter, setFolderFilter] = useState('') // '' all | '0' ungrouped | folder id
   const toast = useToast()
 
   useEffect(() => {
-    api.get('/node-repo').then(d => setRepoNodes(d?.nodes || [])).catch(console.error).finally(() => setLoading(false))
+    setLoading(true)
+    Promise.all([
+      api.get('/node-repo').then(d => setRepoNodes(d?.nodes || [])),
+      api.get('/node-repo-folders').then(d => setFolders(d?.folders || [])).catch(() => setFolders([])),
+    ]).catch(console.error).finally(() => setLoading(false))
   }, [])
+
+  // host:port already on this user (any source) — still selectable for re-import/refresh.
+  const existingAddr = useMemo(() => {
+    const s = new Set()
+    for (const e of existingExits) {
+      if (e?.host && e?.port) s.add(`${e.host}:${e.port}`)
+    }
+    return s
+  }, [existingExits])
+
+  const ungroupedCount = useMemo(
+    () => repoNodes.filter(n => !(n.group_id > 0)).length,
+    [repoNodes],
+  )
+
+  const filtered = useMemo(() => {
+    let list = repoNodes
+    if (folderFilter === '0') list = list.filter(n => !(n.group_id > 0))
+    else if (folderFilter) list = list.filter(n => String(n.group_id) === String(folderFilter))
+    const q = search.trim().toLowerCase()
+    if (q) {
+      list = list.filter(n =>
+        [n.name, n.protocol, `${n.host}:${n.port}`, n.remark, n.group_name]
+          .some(v => (v || '').toLowerCase().includes(q)))
+    }
+    return list
+  }, [repoNodes, folderFilter, search])
 
   const toggle = (id) => setSelected(s => {
     const next = new Set(s)
     if (next.has(id)) next.delete(id); else next.add(id)
     return next
   })
+
+  const toggleAllFiltered = () => {
+    const ids = filtered.map(n => n.id)
+    setSelected(s => {
+      const allOn = ids.length > 0 && ids.every(id => s.has(id))
+      if (allOn) {
+        const next = new Set(s)
+        ids.forEach(id => next.delete(id))
+        return next
+      }
+      const next = new Set(s)
+      ids.forEach(id => next.add(id))
+      return next
+    })
+  }
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(n => selected.has(n.id))
 
   const assign = async () => {
     if (selected.size === 0) { toast('请至少选择一个节点', 'error'); return }
@@ -432,30 +488,116 @@ function RepoPicker({ userId, onClose, onDone }) {
     } catch (err) { toast(err.message, 'error') } finally { setAssigning(false) }
   }
 
+  const chip = (key, label, count) => {
+    const active = folderFilter === key
+    return (
+      <button
+        key={key || 'all'}
+        type="button"
+        onClick={() => setFolderFilter(key)}
+        className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors whitespace-nowrap ${
+          active
+            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+            : 'bg-surface text-ink-soft border-line hover:bg-raised hover:text-ink'
+        }`}
+      >
+        <span>{label}</span>
+        <span className={`font-mono tabular-nums ${active ? 'text-white/80' : 'text-ink-mut'}`}>{count}</span>
+      </button>
+    )
+  }
+
   return (
-    <Modal open onClose={onClose} title="从落地仓库导入">
-      {selected.size > 0 && <div className="text-xs text-emerald-600 font-semibold mb-3">已选 {selected.size} 个</div>}
-      {loading ? (
-            <div className="text-sm text-ink-mut text-center py-8">加载中…</div>
-          ) : repoNodes.length === 0 ? (
-            <div className="text-sm text-ink-mut text-center py-8">落地仓库为空，请先在「落地仓库」页面添加节点。</div>
-          ) : (
-            <div className="space-y-1.5">
-              {repoNodes.map(n => (
-                <label key={n.id} className="flex items-center gap-3 text-sm cursor-pointer py-2 px-3 rounded-lg hover:bg-raised transition-colors border border-transparent hover:border-line">
-                  <input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggle(n.id)} />
+    <Modal open onClose={onClose} title="从落地仓库导入" wide>
+      <div className="flex flex-col gap-3 min-h-0">
+        {!loading && repoNodes.length > 0 && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              {chip('', '全部', repoNodes.length)}
+              {chip('0', '未分组', ungroupedCount)}
+              {folders.map(f => chip(String(f.id), f.name, f.count ?? repoNodes.filter(n => String(n.group_id) === String(f.id)).length))}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                className="input-field flex-1 min-w-[160px] text-sm"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="搜索名称、协议、地址、备注…"
+              />
+              <button
+                type="button"
+                onClick={toggleAllFiltered}
+                disabled={filtered.length === 0}
+                className="btn-secondary text-xs flex-none"
+              >
+                {allFilteredSelected ? '取消当前筛选' : `全选当前筛选 (${filtered.length})`}
+              </button>
+            </div>
+            <div className="flex items-center justify-between text-xs text-ink-mut">
+              <span>
+                显示 {filtered.length} / {repoNodes.length}
+                {selected.size > 0 && (
+                  <span className="text-emerald-600 font-semibold ml-2">已选 {selected.size}</span>
+                )}
+              </span>
+              {search || folderFilter ? (
+                <button type="button" className="text-emerald-600 font-semibold hover:underline" onClick={() => { setSearch(''); setFolderFilter('') }}>
+                  清除筛选
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+
+        {loading ? (
+          <div className="text-sm text-ink-mut text-center py-10">加载中…</div>
+        ) : repoNodes.length === 0 ? (
+          <div className="text-sm text-ink-mut text-center py-10">落地仓库为空，请先在「落地仓库」页面添加节点。</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-sm text-ink-mut text-center py-10">无匹配节点，试试别的关键词或分组。</div>
+        ) : (
+          <div
+            className="space-y-1 overflow-y-auto overscroll-contain border border-line-soft rounded-xl p-1.5"
+            style={{ maxHeight: 'min(52vh, 440px)' }}
+          >
+            {filtered.map(n => {
+              const addr = `${n.host}:${n.port}`
+              const already = existingAddr.has(addr)
+              const exp = n.expires_at > 0 ? expiryBadge(n.expires_at) : null
+              return (
+                <label
+                  key={n.id}
+                  className={`flex items-center gap-3 text-sm cursor-pointer py-2 px-3 rounded-lg hover:bg-raised transition-colors border ${
+                    selected.has(n.id) ? 'border-emerald-500/40 bg-emerald-500/[.06]' : 'border-transparent hover:border-line'
+                  }`}
+                >
+                  <input type="checkbox" className="accent-emerald-600 flex-none" checked={selected.has(n.id)} onChange={() => toggle(n.id)} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold truncate">{n.name}</div>
-                    <div className="text-xs text-ink-mut font-mono">{n.protocol || '—'} · {n.host}:{n.port}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-semibold truncate">{n.name}</span>
+                      {n.group_name ? <Badge color="blue" className="flex-none">{n.group_name}</Badge> : null}
+                      {already ? <Badge color="gray" className="flex-none">已有</Badge> : null}
+                      {exp ? <Badge color={exp.color} className="flex-none">{exp.label}</Badge> : null}
+                    </div>
+                    <div className="text-xs text-ink-mut font-mono truncate">
+                      {n.protocol || '—'} · {addr}
+                      {n.expires_at > 0 ? ` · 到期 ${fmtDate(n.expires_at)}` : ''}
+                      {n.remark ? ` · ${n.remark}` : ''}
+                    </div>
                   </div>
                 </label>
-              ))}
-            </div>
-          )}
-          <div className="flex gap-2 pt-4 mt-4 border-t border-line-soft">
-            <button onClick={assign} disabled={assigning || selected.size === 0} className="btn-primary flex-1">{assigning ? '分配中…' : '分配选中节点'}</button>
-            <button onClick={onClose} className="btn-secondary flex-1">取消</button>
+              )
+            })}
           </div>
+        )}
+
+        <div className="flex gap-2 pt-1 border-t border-line-soft">
+          <button type="button" onClick={assign} disabled={assigning || selected.size === 0} className="btn-primary flex-1">
+            {assigning ? '分配中…' : selected.size > 0 ? `分配选中 (${selected.size})` : '分配选中节点'}
+          </button>
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
+        </div>
+      </div>
     </Modal>
   )
 }
