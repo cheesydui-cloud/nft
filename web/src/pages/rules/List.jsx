@@ -8,7 +8,7 @@ import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, mergeLanding, landingIndex, rewriteEndpoint, splitEndpoint, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
 import { copyToClipboard } from '../../lib/clipboard'
-import { uriToClashYaml } from '../../lib/yaml-convert'
+import { formatRuleCopyText } from '../../lib/relayCopy'
 
 export default function RulesList() {
   const [data, setData] = useState(null)
@@ -112,21 +112,12 @@ export default function RulesList() {
   }
   const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
   // Menu "复制" must put the rule's client-facing link on the clipboard.
-  // Prefer the rewritten proxy URI (respecting the topbar URI/YAML toggle);
-  // otherwise fall back to the listen entry address(es).
+  // Prefer renamed relay URI (`用户名-到期` / `用户名-规则名`); fall back to entry.
   const copyRule = async (rule) => {
-    const parts = []
-    if (rule.relay_uri) {
-      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri) : rule.relay_uri)
-    }
-    if (rule.relay_uri_v6) {
-      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri_v6) : rule.relay_uri_v6)
-    }
-    if (!parts.length) {
-      if (rule.entry) parts.push(rule.entry)
-      if (rule.entry_v6) parts.push(rule.entry_v6)
-    }
-    const text = parts.filter(Boolean).join('\n').trim()
+    const text = formatRuleCopyText(rule, {
+      username: rule.owner_name || '',
+      asYaml: copyFmt === 'yaml',
+    })
     if (!text) {
       toast('该规则没有可复制的链接', 'error')
       return

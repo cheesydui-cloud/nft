@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { Badge, ProtoBadge, SensText, CopyText, Tooltip, ExitKindBadge, Spinner, NodeTypeIcon } from './ui'
 import { useCopyFmt } from './Layout'
 import { fmtBytes, fmtDate, isExpired, expiryBadge } from '../lib/fmt'
-import { uriToClashYaml } from '../lib/yaml-convert'
+import { buildRelayDisplayName } from '../lib/landing'
+import { formatRelayCopyText, relayExpiryFromMap } from '../lib/relayCopy'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useRuleSpeed, fmtSpeed } from '../lib/useSpeed'
@@ -30,7 +31,7 @@ function SortArrow({ dir }) {
   )
 }
 
-export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, onEdit, onCopy, onRowClick, probeAllTrigger, displayRate = 1, landingExpiry }) {
+export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, onEdit, onCopy, onRowClick, probeAllTrigger, displayRate = 1, landingExpiry, copyUsername = '' }) {
   const isAdmin = variant === 'admin'
   const isMobile = useIsMobile()
   const [sort, setSort] = useState({ col: null, dir: null })
@@ -38,6 +39,8 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
   // Live rates are admin-only: the user list hides the speed column entirely.
   // Per-rule only (never node totals) so rules sharing a relay show independent ↑/↓.
   const ruleSpeeds = useRuleSpeed({ enabled: isAdmin })
+
+  const ownerForCopy = (r) => r.owner_name || copyUsername || ''
 
   const renderLandingExpiry = (r) => {
     if (!landingExpiry) return null
@@ -139,12 +142,26 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                       ? <span className="font-sans">{r.landing_name}{renderLandingExpiry(r)}</span>
                       : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>
                     const proxyRow = (uri, tag) => {
-                      const yaml = copyFmt === 'yaml' ? uriToClashYaml(uri) : null
+                      // List label stays landing name; clipboard uses 用户名-到期/规则名.
+                      const expiresAt = relayExpiryFromMap(landingExpiry, r.exit_host, r.exit_port)
+                      const baseName = buildRelayDisplayName({
+                        username: ownerForCopy(r),
+                        ruleName: r.name || '',
+                        expiresAt,
+                      })
+                      const displayName = tag === 'v6' && baseName ? `${baseName}-v6` : (baseName || undefined)
+                      const text = formatRelayCopyText(uri, {
+                        username: ownerForCopy(r),
+                        ruleName: r.name || '',
+                        expiresAt,
+                        asYaml: copyFmt === 'yaml',
+                        displayName,
+                      })
                       return (
                         <div className="flex items-center gap-1.5 flex-wrap text-ink-soft">
                           <ExitKindBadge kind={r.exit_kind} protocol={r.landing_protocol} />
                           {tag && <span className="text-[10px] font-semibold text-ink-mut">{tag}</span>}
-                          <CopyText text={yaml || uri}>{exitLabel}</CopyText>
+                          <CopyText text={text || uri}>{exitLabel}</CopyText>
                         </div>
                       )
                     }

@@ -6,6 +6,7 @@ import { Layout, useToast, useBlur } from '../../components/Layout'
 import { Loading, Empty, ProtoBadge, ModeBadge, SensText, useConfirm, ExitKindBadge } from '../../components/ui'
 import { TableBox } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
+import { formatRelayCopyText } from '../../lib/relayCopy'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 
 export default function RulesDetail() {
@@ -81,7 +82,13 @@ export default function RulesDetail() {
                 <div className="flex items-center gap-2.5 bg-[#0e1117] rounded-lg px-4 py-3">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">PROXY</span>
                   <span className="text-[#e8edf4] font-mono text-sm font-semibold flex-1 truncate"><SensText blurred={blurred}>{rule.relay_uri}</SensText></span>
-                  <button onClick={() => copyToClipboard(rule.relay_uri).then(() => toast('代理 URI 已复制')).catch(() => toast('复制失败', 'error'))}
+                  <button onClick={() => {
+                    const text = formatRelayCopyText(rule.relay_uri, {
+                      username: rule.owner_name || '',
+                      ruleName: rule.name || '',
+                    }) || rule.relay_uri
+                    copyToClipboard(text).then(() => toast('代理 URI 已复制')).catch(() => toast('复制失败', 'error'))
+                  }}
                     className="ml-auto bg-[#1c242f] border border-[#2a3340] text-[#aeb9c7] h-7 px-2.5 rounded text-xs flex items-center gap-1.5 hover:bg-[#26323f] hover:text-[#e8edf4]">
                     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
                     复制

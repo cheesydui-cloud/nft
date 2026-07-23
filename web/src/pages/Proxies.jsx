@@ -8,6 +8,7 @@ import {
   parseURIs, loadLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, ROLE_DIRECT,
   landingIndex, splitEndpoint, rewriteEndpoint, mergeLanding,
 } from '../lib/landing'
+import { formatRelayBatch, formatRelayCopyText, relayExpiryFromMap } from '../lib/relayCopy'
 import { uriToClashYaml } from '../lib/yaml-convert'
 import { fmtDate, expiryBadge } from '../lib/fmt'
 
@@ -85,14 +86,51 @@ export default function Proxies() {
   const filtered = !q ? tabbed : tabbed.filter(n =>
     [n.name, n.protocol, `${n.host}:${n.port}`, n.ruleName].some(v => (v || '').toLowerCase().includes(q)))
 
-  const copyText = (n) => {
-    const uri = n.kind === 'relay' ? n.relay : n.uri
+  // List still shows landing node name; only clipboard renames relay URIs to
+  // `{username}-8月5日` / `{username}-{ruleName}`. Direct proxies keep original names.
+  const copyText = (n, displayName) => {
+    if (n.kind === 'relay') {
+      if (!n.relay) return null
+      const expiresAt = relayExpiryFromMap(expiryMap, n.host, n.port)
+      return formatRelayCopyText(n.relay, {
+        username: user?.username,
+        ruleName: n.ruleName,
+        expiresAt,
+        displayName,
+        asYaml: copyFmt === 'yaml',
+      })
+    }
+    const uri = n.uri
     if (!uri) return null
     if (copyFmt === 'yaml') {
       const yaml = uriToClashYaml(uri)
       if (yaml) return yaml
     }
     return uri
+  }
+
+  const copyAllText = () => {
+    const relayItems = []
+    const other = []
+    filtered.forEach((n, i) => {
+      if (n.kind === 'relay' && n.relay) {
+        relayItems.push({
+          key: i,
+          uri: n.relay,
+          username: user?.username,
+          ruleName: n.ruleName,
+          expiresAt: relayExpiryFromMap(expiryMap, n.host, n.port),
+        })
+      } else {
+        other.push({ i, text: copyText(n) })
+      }
+    })
+    const renamed = formatRelayBatch(relayItems, { asYaml: copyFmt === 'yaml' })
+    const byKey = new Map(relayItems.map((it, idx) => [it.key, renamed[idx]]))
+    return filtered.map((n, i) => {
+      if (n.kind === 'relay') return byKey.get(i) || null
+      return copyText(n)
+    }).filter(Boolean).join('\n')
   }
 
   return (
@@ -112,7 +150,8 @@ export default function Proxies() {
           ))}
           {filtered.length > 0 && (
             <button onClick={() => {
-              const all = filtered.map(n => copyText(n)).filter(Boolean).join('\n')
+              const all = copyAllText()
+              if (!all) { toast('没有可复制的内容', 'error'); return }
               copyToClipboard(all).then(() => toast(`已复制 ${filtered.length} 条`)).catch(() => toast('复制失败', 'error'))
             }} className="ml-auto px-3 py-0.5 rounded text-xs border border-line bg-surface text-ink-soft hover:border-ink-mut transition-colors">
               复制全部

@@ -7,8 +7,8 @@ import { Loading, Empty, Badge, Modal, useConfirm, ProbeChainButton } from '../.
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
-import { uriToClashYaml } from '../../lib/yaml-convert'
 import { fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
+import { formatRuleCopyText } from '../../lib/relayCopy'
 import { createLimiter } from '../../lib/limiter'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import UserConfigCard from './UserConfigCard'
@@ -504,14 +504,15 @@ export default function UserDetail() {
                     // make every row show the same rate when one of them is busy.
                     const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
                     const copyRuleLink = async () => {
-                      const parts = []
-                      if (r.relay_uri) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri) : r.relay_uri)
-                      if (r.relay_uri_v6) parts.push(copyFmt === 'yaml' ? uriToClashYaml(r.relay_uri_v6) : r.relay_uri_v6)
-                      if (!parts.length) {
-                        if (r.entry) parts.push(r.entry)
-                        if (r.entry_v6) parts.push(r.entry_v6)
+                      const expiryMap = new Map()
+                      for (const n of landing_nodes) {
+                        if (n.expires_at > 0) expiryMap.set(`${n.host}:${n.port}`, n.expires_at)
                       }
-                      const text = parts.filter(Boolean).join('\n').trim()
+                      const text = formatRuleCopyText(r, {
+                        username: user.username,
+                        expiryMap,
+                        asYaml: copyFmt === 'yaml',
+                      })
                       if (!text) { toast('该规则没有可复制的链接', 'error'); return }
                       try {
                         await copyToClipboard(text)

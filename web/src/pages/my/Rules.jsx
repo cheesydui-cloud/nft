@@ -8,7 +8,7 @@ import { RulesTable } from '../../components/RulesTable'
 import { RuleFormModal, ruleFormToPayload } from '../../components/RuleFormModal'
 import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
 import { copyToClipboard } from '../../lib/clipboard'
-import { uriToClashYaml } from '../../lib/yaml-convert'
+import { formatRuleCopyText } from '../../lib/relayCopy'
 
 export default function MyRules() {
   const [data, setData] = useState(null)
@@ -87,18 +87,11 @@ export default function MyRules() {
   }
   const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
   const copyRule = async (rule) => {
-    const parts = []
-    if (rule.relay_uri) {
-      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri) : rule.relay_uri)
-    }
-    if (rule.relay_uri_v6) {
-      parts.push(copyFmt === 'yaml' ? uriToClashYaml(rule.relay_uri_v6) : rule.relay_uri_v6)
-    }
-    if (!parts.length) {
-      if (rule.entry) parts.push(rule.entry)
-      if (rule.entry_v6) parts.push(rule.entry_v6)
-    }
-    const text = parts.filter(Boolean).join('\n').trim()
+    const text = formatRuleCopyText(rule, {
+      username: user?.username,
+      expiryMap: landingExpiry,
+      asYaml: copyFmt === 'yaml',
+    })
     if (!text) {
       toast('该规则没有可复制的链接', 'error')
       return
@@ -141,7 +134,8 @@ export default function MyRules() {
           <TableScroll>
             <RulesTable variant="my" rules={filtered} nodeMap={node_by_id} blurred={blurred}
               onDelete={deleteRule} onCopy={copyRule} onRowClick={r => navigate(`/my/rules/${r.id}`)}
-              probeAllTrigger={probeAllTrigger} displayRate={user?.billing_rate ?? 1} landingExpiry={landingExpiry} />
+              probeAllTrigger={probeAllTrigger} displayRate={user?.billing_rate ?? 1} landingExpiry={landingExpiry}
+              copyUsername={user?.username || ''} />
           </TableScroll>
         )}
       </Panel>

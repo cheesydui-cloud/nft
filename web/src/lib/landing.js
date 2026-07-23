@@ -267,6 +267,71 @@ export function tryParseURI(uri) {
   return parseOne((uri || '').trim())
 }
 
+/* Display name for a copied relay URI:
+   - with landing expiry → `{username}-8月5日`
+   - without expiry     → `{username}-{ruleName}`
+   List UI keeps the landing node name; only copy/export uses this. */
+export function fmtProxyExpiryLabel(unix) {
+  if (!unix || unix <= 0) return ''
+  const d = new Date(unix * 1000)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+export function buildRelayDisplayName({ username, ruleName, expiresAt } = {}) {
+  const user = String(username || '').trim()
+  const rule = String(ruleName || '').trim()
+  const day = fmtProxyExpiryLabel(expiresAt)
+  if (user && day) return `${user}-${day}`
+  if (user && rule) return `${user}-${rule}`
+  if (user) return user
+  if (day) return day
+  if (rule) return rule
+  return ''
+}
+
+/* Replace only the human-visible name of a proxy URI (fragment / vmess.ps /
+   snell left-hand name). Connection params stay untouched. */
+export function setURIName(uri, name) {
+  if (!uri || !name) return uri
+  const n = String(name).trim()
+  if (!n) return uri
+  const i = uri.indexOf('://')
+  if (i <= 0) return setSnellName(uri, n)
+  const scheme = uri.slice(0, i).toLowerCase()
+  if (scheme === 'vmess') return setVMessName(uri, n)
+  const hash = uri.indexOf('#')
+  const base = hash >= 0 ? uri.slice(0, hash) : uri
+  return `${base}#${encodeURIComponent(n)}`
+}
+
+/* Rename a rewritten relay URI for clipboard export. Returns original uri
+   when name cannot be built. */
+export function renameRelayURI(uri, opts = {}) {
+  if (!uri) return uri
+  const name = buildRelayDisplayName(opts)
+  if (!name) return uri
+  return setURIName(uri, name) || uri
+}
+
+/* Allocate unique display names across a batch (Clash keys by name).
+   Returns a Map from item key → final name. items: [{ key, username, ruleName, expiresAt }] */
+export function allocateRelayDisplayNames(items) {
+  const used = new Map()
+  const out = new Map()
+  for (const it of items || []) {
+    const base = buildRelayDisplayName(it) || 'proxy'
+    let name = base
+    let n = 2
+    while (used.has(name)) {
+      name = `${base}-${n++}`
+    }
+    used.set(name, true)
+    out.set(it.key, name)
+  }
+  return out
+}
+
 /* ---------- internals ---------- */
 
 function parseOne(uri) {
@@ -413,6 +478,21 @@ function rewriteSnell(line, newHost, newPort) {
   parts[1] = ' ' + newHost
   parts[2] = ' ' + String(newPort)
   return line.slice(0, eq + 1) + ' ' + parts.join(',')
+}
+
+function setVMessName(uri, name) {
+  const dec = b64decode(uri.slice('vmess://'.length))
+  if (!dec) return uri
+  let m
+  try { m = JSON.parse(dec) } catch { return uri }
+  m.ps = name
+  return 'vmess://' + b64encode(JSON.stringify(m))
+}
+
+function setSnellName(line, name) {
+  const eq = line.indexOf('=')
+  if (eq < 0) return line
+  return `${name} =${line.slice(eq + 1)}`
 }
 
 function splitHostPort(authority) {
