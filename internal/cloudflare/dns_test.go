@@ -154,3 +154,36 @@ func writeCF(w http.ResponseWriter, ok bool, result any) {
 	}
 	_ = json.NewEncoder(w).Encode(payload)
 }
+
+func TestUpsertIdenticalRecordIsSuccess(t *testing.T) {
+	// First list empty → POST fails with identical → re-list finds same IP → ok
+	lists := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			lists++
+			if lists == 1 {
+				writeCF(w, true, []DNSRecord{})
+			} else {
+				writeCF(w, true, []DNSRecord{{
+					ID: "exist", Type: "A", Name: "a.example.com", Content: "1.2.3.4", TTL: 1, Proxied: false,
+				}})
+			}
+		case r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":81058,"message":"An identical record already exists."}],"result":null}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Token: "tok", BaseURL: srv.URL, HTTPClient: srv.Client()}
+	rec, err := c.UpsertARecord(context.Background(), "zone1", "a.example.com", "1.2.3.4", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Content != "1.2.3.4" {
+		t.Fatalf("got %+v", rec)
+	}
+}

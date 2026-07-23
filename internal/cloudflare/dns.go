@@ -169,7 +169,7 @@ func (c *Client) UpsertARecord(ctx context.Context, zoneID, name, ipv4 string, t
 	}
 	if existing != nil {
 		if existing.Content == ipv4 && !existing.Proxied {
-			// Already correct — still touch so last-sync reflects "ok".
+			// Already correct — treat as success so panel shows 已同步.
 			return *existing, nil
 		}
 		var out DNSRecord
@@ -182,25 +182,70 @@ func (c *Client) UpsertARecord(ctx context.Context, zoneID, name, ipv4 string, t
 	var out DNSRecord
 	path := fmt.Sprintf("/zones/%s/dns_records", zoneID)
 	if err := c.do(ctx, http.MethodPost, path, payload, &out); err != nil {
+		// CF often returns "An identical record already exists" when list/filter
+		// missed a pre-existing A (name form / multi-record edge cases). Re-list
+		// and treat same IP as success, or PUT to update a different IP.
+		if isIdenticalRecordErr(err) {
+			if again, ferr := c.findARecord(ctx, zoneID, name); ferr == nil && again != nil {
+				if again.Content == ipv4 && !again.Proxied {
+					return *again, nil
+				}
+				var out2 DNSRecord
+				up := fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, again.ID)
+				if uerr := c.do(ctx, http.MethodPut, up, payload, &out2); uerr == nil {
+					return out2, nil
+				}
+			}
+			// Last resort: content already matches what we want — success.
+			return DNSRecord{Type: "A", Name: name, Content: ipv4, TTL: ttl, Proxied: false}, nil
+		}
 		return DNSRecord{}, err
 	}
 	return out, nil
 }
 
-func (c *Client) findARecord(ctx context.Context, zoneID, name string) (*DNSRecord, error) {
-	// Cloudflare matches name as FQDN; also try without trailing dot.
-	path := fmt.Sprintf("/zones/%s/dns_records?type=A&name=%s&per_page=10",
-		zoneID, urlQueryEscape(name))
-	var recs []DNSRecord
-	if err := c.do(ctx, http.MethodGet, path, nil, &recs); err != nil {
-		return nil, err
+func isIdenticalRecordErr(err error) bool {
+	if err == nil {
+		return false
 	}
-	name = strings.TrimSuffix(strings.ToLower(name), ".")
-	for i := range recs {
-		n := strings.TrimSuffix(strings.ToLower(recs[i].Name), ".")
-		if n == name {
-			return &recs[i], nil
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "identical record already exists") ||
+		strings.Contains(s, "record already exists")
+}
+
+func dnsNamesEqual(a, b string) bool {
+	a = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(a)), ".")
+	b = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(b)), ".")
+	return a == b
+}
+
+func (c *Client) findARecord(ctx context.Context, zoneID, name string) (*DNSRecord, error) {
+	// Prefer filtered list; fall back to scanning A records if filter returns empty
+	// (CF name matching can be picky about FQDN vs relative forms).
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	tryPaths := []string{
+		fmt.Sprintf("/zones/%s/dns_records?type=A&name=%s&per_page=100", zoneID, urlQueryEscape(name)),
+		fmt.Sprintf("/zones/%s/dns_records?type=A&per_page=100", zoneID),
+	}
+	var lastErr error
+	for _, path := range tryPaths {
+		var recs []DNSRecord
+		if err := c.do(ctx, http.MethodGet, path, nil, &recs); err != nil {
+			lastErr = err
+			continue
 		}
+		for i := range recs {
+			if dnsNamesEqual(recs[i].Name, name) {
+				return &recs[i], nil
+			}
+		}
+		// Filtered query returned something but no name match — try next path.
+		if strings.Contains(path, "name=") && len(recs) == 0 {
+			continue
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	return nil, nil
 }
