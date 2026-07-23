@@ -502,3 +502,141 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 	exits, _ := db.ListUserLandingExits(s.DB, uid)
 	jsonOK(w, map[string]any{"ok": true, "assigned": len(inputs), "exits": exits})
 }
+
+
+// apiSetNodeRepoBackendIP updates only the current IPv4 (and optionally forces
+// CF sync). Domain host/port stay unchanged so rules are not cascaded.
+func (s *Server) apiSetNodeRepoBackendIP(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		BackendIP string `json:"backend_ip"`
+		CFSync    *bool  `json:"cf_sync"` // nil = leave; true/false = set
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	ip := strings.TrimSpace(body.BackendIP)
+	if !cloudflare.IsIPv4(ip) {
+		jsonErr(w, http.StatusBadRequest, "当前 IP 必须是 IPv4 地址")
+		return
+	}
+	n, err := db.GetNodeRepoEntry(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	cfSync := n.CFSync
+	if body.CFSync != nil {
+		cfSync = *body.CFSync
+	}
+	// Changing IP alone never changes host:port — no cascade.
+	if net.ParseIP(n.Host) != nil && cfSync {
+		jsonErr(w, http.StatusBadRequest, "目标地址是 IP 时不能开启 CF 同步；请先把目标改为域名")
+		return
+	}
+	cf := db.NodeRepoCFFields{
+		BackendIP: ip, CFSync: cfSync,
+		CFZoneID: n.CFZoneID, CFRecordName: n.CFRecordName,
+	}
+	if err := validateNodeRepoCF(n.Host, cf); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := db.UpdateNodeRepoEntry(s.DB, id, n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.GroupName, cf); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ = db.GetNodeRepoEntry(s.DB, id)
+	cfResult := s.maybeSyncNodeRepoCF(r.Context(), u.ID, &n)
+	jsonOK(w, map[string]any{"ok": true, "node": n, "cf_sync": cfResult})
+}
+
+// apiResyncNodeRepoCF re-pushes the A record without changing other fields.
+func (s *Server) apiResyncNodeRepoCF(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	n, err := db.GetNodeRepoEntry(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if !n.CFSync {
+		jsonErr(w, http.StatusBadRequest, "未开启 CF 同步")
+		return
+	}
+	if !cloudflare.IsIPv4(n.BackendIP) {
+		jsonErr(w, http.StatusBadRequest, "当前 IP 无效，请先设置 IPv4")
+		return
+	}
+	cfResult := s.maybeSyncNodeRepoCF(r.Context(), u.ID, &n)
+	n, _ = db.GetNodeRepoEntry(s.DB, id)
+	jsonOK(w, map[string]any{"ok": true, "node": n, "cf_sync": cfResult})
+}
+
+// apiProbeNodeRepoDNS resolves the entry host and compares to backend_ip.
+func (s *Server) apiProbeNodeRepoDNS(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	n, err := db.GetNodeRepoEntry(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	host := strings.TrimSpace(n.Host)
+	out := map[string]any{
+		"host":       host,
+		"backend_ip": n.BackendIP,
+		"is_domain":  net.ParseIP(host) == nil && resolver.PlausibleHostname(host),
+	}
+	if net.ParseIP(host) != nil {
+		out["status"] = "literal_ip"
+		out["message"] = "目标地址是 IP，无需 DNS 解析"
+		out["resolved"] = []string{}
+		out["match"] = host == n.BackendIP || n.BackendIP == ""
+		jsonOK(w, out)
+		return
+	}
+	if !resolver.PlausibleHostname(host) {
+		jsonErr(w, http.StatusBadRequest, "目标地址不是合法域名")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	res := resolver.New()
+	ip, err := res.LookupIPv4(ctx, host)
+	if err != nil {
+		out["status"] = "fail"
+		out["message"] = "解析失败: " + err.Error()
+		out["resolved"] = []string{}
+		out["match"] = false
+		jsonOK(w, out)
+		return
+	}
+	out["resolved"] = []string{ip}
+	match := n.BackendIP != "" && ip == n.BackendIP
+	out["match"] = match
+	if n.BackendIP == "" {
+		out["status"] = "ok"
+		out["message"] = "解析到 " + ip + "（未设置当前 IP，无法对比）"
+	} else if match {
+		out["status"] = "match"
+		out["message"] = "解析与当前 IP 一致"
+	} else {
+		out["status"] = "mismatch"
+		out["message"] = "解析到 " + ip + "，与当前 IP " + n.BackendIP + " 不一致（DNS 可能未生效）"
+	}
+	jsonOK(w, out)
+}

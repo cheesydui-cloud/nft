@@ -336,3 +336,94 @@ func TestNodeRepoCFSyncSuccessWithMockAPI(t *testing.T) {
 		t.Fatalf("backend_ip=%q", up.Node.BackendIP)
 	}
 }
+
+func TestNodeRepoChangeIPAndProbe(t *testing.T) {
+	d := openDB(t)
+	s := newServer(t, d)
+	admin := loginAsAdmin(t, d)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/dns_records") {
+			_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"r1","type":"A","name":"p1.example.com","content":"1.1.1.1","ttl":1,"proxied":false}]}`))
+			return
+		}
+		if r.Method == "PUT" || r.Method == "POST" {
+			_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"id":"r1","type":"A","name":"p1.example.com","content":"2.2.2.2","ttl":1,"proxied":false}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	_ = db.SetSetting(d, "cf_api_token", "tok")
+	_ = db.SetSetting(d, "cf_api_base", srv.URL)
+
+	// create domain entry
+	body := map[string]any{
+		"name": "p1", "protocol": "ss", "host": "p1.example.com", "port": 443,
+		"cf_sync": true, "backend_ip": "1.1.1.1", "cf_zone_id": "z1",
+	}
+	buf, _ := json.Marshal(body)
+	req := newTestRequest("POST", "/api/node-repo", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(admin)
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Node db.NodeRepoEntry `json:"node"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	id := created.Node.ID
+
+	// change IP only
+	buf, _ = json.Marshal(map[string]any{"backend_ip": "2.2.2.2"})
+	req = newTestRequest("POST", "/api/node-repo/"+itoa(id)+"/backend-ip", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(admin)
+	rec = httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("backend-ip %d %s", rec.Code, rec.Body.String())
+	}
+	var ch struct {
+		Node   db.NodeRepoEntry `json:"node"`
+		CFSync cfSyncResult     `json:"cf_sync"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &ch)
+	if ch.Node.BackendIP != "2.2.2.2" || ch.Node.Host != "p1.example.com" {
+		t.Fatalf("node=%+v", ch.Node)
+	}
+	if !ch.CFSync.OK {
+		t.Fatalf("cf=%+v", ch.CFSync)
+	}
+
+	// resync
+	req = newTestRequest("POST", "/api/node-repo/"+itoa(id)+"/cf-resync", nil)
+	req.AddCookie(admin)
+	rec = httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("resync %d %s", rec.Code, rec.Body.String())
+	}
+
+	// probe literal path for pure IP entry
+	n2, err := db.CreateNodeRepoEntry(d, "iponly", "ss", "9.9.9.9", 80, "", "", 0, "", db.NodeRepoCFFields{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = newTestRequest("GET", "/api/node-repo/"+itoa(n2.ID)+"/probe-dns", nil)
+	req.AddCookie(admin)
+	rec = httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("probe %d %s", rec.Code, rec.Body.String())
+	}
+	var probe map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &probe)
+	if probe["status"] != "literal_ip" {
+		t.Fatalf("probe=%v", probe)
+	}
+}

@@ -6,7 +6,7 @@ import { Loading, Empty, Badge, CopyText, Modal, useConfirm, DateInput } from '.
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
-import { fmtDate, expiryBadge, fmtTrafficGB } from '../lib/fmt'
+import { fmtDate, fmtTime, expiryBadge, fmtTrafficGB } from '../lib/fmt'
 import { useIsMobile } from '../lib/useIsMobile'
 
 export default function NodeRepo() {
@@ -24,6 +24,8 @@ export default function NodeRepo() {
   const [usersFor, setUsersFor] = useState(null) // node entry when modal open
   const [usersList, setUsersList] = useState(null)
   const [usersLoading, setUsersLoading] = useState(false)
+  const [changeIPFor, setChangeIPFor] = useState(null)
+  const [busyId, setBusyId] = useState(null) // probe/resync in flight
   const toast = useToast()
   const confirm = useConfirm()
   const isMobile = useIsMobile()
@@ -71,6 +73,34 @@ export default function NodeRepo() {
     } finally {
       setUsersLoading(false)
     }
+  }
+
+  const notifyCF = (cf) => {
+    if (!cf?.attempted) return
+    if (cf.ok) toast(`CF：${cf.message || '已同步'}${cf.ip ? ' · ' + cf.ip : ''}`)
+    else toast(`CF 同步失败：${cf.message || '未知错误'}`, 'error')
+  }
+
+  const probeDNS = async (n) => {
+    setBusyId(n.id)
+    try {
+      const d = await api.get(`/node-repo/${n.id}/probe-dns`)
+      if (d.status === 'match') toast(d.message || '解析一致')
+      else if (d.status === 'mismatch') toast(d.message || '解析不一致', 'error')
+      else if (d.status === 'fail') toast(d.message || '解析失败', 'error')
+      else toast(d.message || '已检查')
+    } catch (err) { toast(err.message, 'error') }
+    finally { setBusyId(null) }
+  }
+
+  const resyncCF = async (n) => {
+    setBusyId(n.id)
+    try {
+      const d = await api.post(`/node-repo/${n.id}/cf-resync`)
+      notifyCF(d?.cf_sync)
+      load()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setBusyId(null) }
   }
 
   const folderName = (id) => folders.find(f => f.id === id)?.name || ''
@@ -152,21 +182,7 @@ export default function NodeRepo() {
                   <td className="font-semibold">{n.name}</td>
                   <td className="text-xs">{n.group_name ? <Badge color="blue">{n.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                   <td className="font-mono text-xs text-ink-soft">{n.protocol || '—'}</td>
-                  <td className="text-xs">
-                    <div className="font-mono">{n.host}:{n.port}</div>
-                    {(n.backend_ip || n.cf_sync) && (
-                      <div className="text-[11px] text-ink-mut mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        {n.backend_ip && <span className="font-mono">{n.backend_ip}</span>}
-                        {n.cf_sync && (
-                          n.cf_last_error
-                            ? <Badge color="red">CF 失败</Badge>
-                            : n.cf_last_sync_at > 0
-                              ? <Badge color="green">CF 已同步</Badge>
-                              : <Badge color="amber">CF 待同步</Badge>
-                        )}
-                      </div>
-                    )}
-                  </td>
+                  <td className="text-xs"><AddrCell n={n} onRetry={() => resyncCF(n)} busy={busyId === n.id} /></td>
                   <td className="text-xs">
                     {(n.user_count || 0) > 0 ? (
                       <button type="button" onClick={() => openUsers(n)}
@@ -186,7 +202,15 @@ export default function NodeRepo() {
                   <td className="text-xs text-ink-soft">{n.remark || '—'}</td>
                   <td className="text-xs text-ink-mut">{new Date(n.created_at * 1000).toLocaleDateString('zh-CN')}</td>
                   <td className="text-right">
-                    <div className="inline-flex items-center gap-3">
+                    <div className="inline-flex items-center gap-2.5 flex-wrap justify-end">
+                      {looksDomain(n.host) && (
+                        <button type="button" disabled={busyId === n.id} onClick={() => probeDNS(n)}
+                          className="text-ink-soft text-xs font-semibold hover:text-emerald-600 hover:underline disabled:opacity-50" title="解析域名并对比当前 IP">检测</button>
+                      )}
+                      {(looksDomain(n.host) || n.cf_sync) && (
+                        <button type="button" onClick={() => setChangeIPFor(n)}
+                          className="text-emerald-600 text-xs font-semibold hover:underline" title="只改当前 IP 并同步 CF">改 IP</button>
+                      )}
                       {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold hover:underline cursor-pointer">复制</span></CopyText>}
                       <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
                       <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
@@ -204,7 +228,9 @@ export default function NodeRepo() {
                     <input type="checkbox" className="accent-emerald-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} />
                     {n.name}
                   </label>
-                  <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex items-center gap-2 flex-wrap justify-end">
+                    {looksDomain(n.host) && <button type="button" disabled={busyId === n.id} onClick={() => probeDNS(n)} className="text-ink-soft text-xs font-semibold">检测</button>}
+                    {(looksDomain(n.host) || n.cf_sync) && <button type="button" onClick={() => setChangeIPFor(n)} className="text-emerald-600 text-xs font-semibold">改 IP</button>}
                     {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold">复制</span></CopyText>}
                     <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold">编辑</button>
                     <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold">删除</button>
@@ -215,12 +241,8 @@ export default function NodeRepo() {
                   <span className="font-mono">{n.protocol || '—'}</span>
                   <span className="text-ink-mut">·</span>
                   <span className="font-mono">{n.host}:{n.port}</span>
-                  {n.backend_ip && <span className="font-mono text-ink-mut">→ {n.backend_ip}</span>}
-                  {n.cf_sync && (
-                    n.cf_last_error ? <Badge color="red">CF 失败</Badge>
-                      : n.cf_last_sync_at > 0 ? <Badge color="green">CF</Badge>
-                      : <Badge color="amber">CF</Badge>
-                  )}
+                  {n.backend_ip && <span className="font-mono text-ink-mut">· {n.backend_ip}</span>}
+                  <CFStatus n={n} onRetry={() => resyncCF(n)} busy={busyId === n.id} compact />
                   {(n.user_count || 0) > 0 ? (
                     <button type="button" onClick={() => openUsers(n)}
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
@@ -322,7 +344,100 @@ export default function NodeRepo() {
           onMove={moveToFolder}
         />
       )}
+      {changeIPFor && (
+        <ChangeIPModal
+          node={changeIPFor}
+          onClose={() => setChangeIPFor(null)}
+          onDone={() => { setChangeIPFor(null); load() }}
+          notifyCF={notifyCF}
+        />
+      )}
     </Layout>
+  )
+}
+
+
+function looksDomain(host) {
+  if (!host) return false
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false
+  if (host.includes(':')) return false // v6 literal rough
+  return /[a-zA-Z]/.test(host)
+}
+
+function CFStatus({ n, onRetry, busy, compact }) {
+  if (!n?.cf_sync) return null
+  if (n.cf_last_error) {
+    return (
+      <button type="button" disabled={busy} onClick={onRetry}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold border border-rose-300/60 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+        title={n.cf_last_error}>
+        {compact ? 'CF 失败·重试' : 'CF 失败 · 重试'}
+      </button>
+    )
+  }
+  if (n.cf_last_sync_at > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] text-ink-mut" title={`上次同步 ${new Date(n.cf_last_sync_at * 1000).toLocaleString('zh-CN')}`}>
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+        {compact ? 'CF' : `CF · ${fmtTime(n.cf_last_sync_at)}`}
+      </span>
+    )
+  }
+  return <span className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold">CF 待同步</span>
+}
+
+function AddrCell({ n, onRetry, busy }) {
+  return (
+    <div className="min-w-[10rem]">
+      <div className="font-mono text-[12.5px] text-ink leading-snug">{n.host}:{n.port}</div>
+      {(n.backend_ip || n.cf_sync) && (
+        <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11px] text-ink-mut">
+          {n.backend_ip && <span className="font-mono">{n.backend_ip}</span>}
+          <CFStatus n={n} onRetry={onRetry} busy={busy} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChangeIPModal({ node, onClose, onDone, notifyCF }) {
+  const [ip, setIP] = useState(node?.backend_ip || '')
+  const [saving, setSaving] = useState(false)
+  const toast = useToast()
+  const submit = async (e) => {
+    e.preventDefault()
+    const v = ip.trim()
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) { toast('请填写合法 IPv4', 'error'); return }
+    setSaving(true)
+    try {
+      const body = { backend_ip: v }
+      // Auto-enable CF when target is a domain so one-click works after first bind.
+      if (looksDomain(node.host) && !node.cf_sync) body.cf_sync = true
+      const res = await api.post(`/node-repo/${node.id}/backend-ip`, body)
+      toast('IP 已更新')
+      notifyCF?.(res?.cf_sync)
+      onDone()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setSaving(false) }
+  }
+  return (
+    <Modal open onClose={onClose} title={`改 IP · ${node.name}`}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="text-[13px] text-ink-soft">
+          目标 <span className="font-mono font-semibold text-ink">{node.host}:{node.port}</span>
+          <div className="text-[12px] text-ink-mut mt-1">只改当前落地 IP 并推送到 CF；域名与用户规则不变。</div>
+        </div>
+        <div>
+          <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">当前 IPv4</label>
+          <input className="input-field font-mono" value={ip} onChange={e => setIP(e.target.value)}
+            placeholder="例如 68.252.208.113" autoFocus />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? '保存中…' : '保存并同步 CF'}</button>
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -434,6 +549,9 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">协议</label>
             <input className="input-field" value={form.protocol} onChange={e => set('protocol', e.target.value)} placeholder="如 ss, vmess, trojan" />
           </div>
+          <div className="pt-1 border-t border-line-soft">
+            <div className="text-[12px] font-bold text-ink-soft tracking-wide mb-2">转发目标</div>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">目标地址</label>
@@ -445,6 +563,11 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
               <input className="input-field font-mono" type="number" min="1" max="65535" value={form.port} onChange={e => set('port', e.target.value)} placeholder="端口" />
             </div>
           </div>
+          {form.uri && form.host && form.uri.includes(form.host) === false && /@\d+\.\d+\.\d+\.\d+/.test(form.uri) && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300 m-0 -mt-1">
+              URI 里仍是 IP，规则已走上方域名；URI 仅作展示/复制，不影响用户入口链接。
+            </p>
+          )}
 
           <div className="rounded-xl border border-line-soft bg-raised/40 p-3 space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -480,6 +603,9 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
             )}
           </div>
 
+          <div className="pt-1 border-t border-line-soft">
+            <div className="text-[12px] font-bold text-ink-soft tracking-wide mb-2">管理</div>
+          </div>
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
             <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
