@@ -15,7 +15,11 @@ export default function Login() {
   const { applySession, refreshUser } = useUser()
 
   useEffect(() => {
-    api.get('/branding').then(d => setPanelName(d?.panel_name || '')).catch(() => {})
+    api.get('/branding').then(d => {
+      const name = (d?.panel_name || '').trim()
+      setPanelName(name)
+      if (name) document.title = name
+    }).catch(() => {})
   }, [])
 
   const submit = async (e) => {
@@ -35,7 +39,13 @@ export default function Login() {
       try { await refreshUser() } catch { /* session already applied */ }
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err.message || '登录失败')
+      const msg = err?.message || '登录失败'
+      // Never show session-expired copy on the login form itself.
+      if (/登录已过期|请重新登录/.test(msg)) {
+        setError('用户名或密码错误，请重新输入')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -49,10 +59,7 @@ export default function Login() {
             style={{ background: 'linear-gradient(145deg, #10b981 0%, #14b8a6 52%, #0d9488 100%)' }}>
             <BrandMark className="w-[28px] h-[28px]" />
           </div>
-          <div>
-            <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
-            <div className="text-[12.5px] text-ink-mut mt-0.5">登录以继续管理转发</div>
-          </div>
+          <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
         </div>
 
         {error && (

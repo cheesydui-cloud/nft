@@ -27,20 +27,24 @@ async function request(method, path, body) {
   } catch {
     throw new Error('网络错误，请检查网络连接后重试')
   }
-  if (res.status === 401) {
-    // Broadcast an event so the UserProvider can soft-navigate to /login via
-    // React Router instead of doing a full page reload and losing form state.
-    window.dispatchEvent(new CustomEvent('nf-unauthorized'))
-    throw new Error('登录已过期，请重新登录')
-  }
-  if (res.status === 204) return null
-
   // Only parse JSON when the server actually sent JSON; gateway errors are HTML.
   const ct = res.headers.get('content-type') || ''
   let data = null
   if (ct.includes('application/json')) {
     try { data = await res.json() } catch { data = null }
   }
+
+  if (res.status === 401) {
+    // Login failures are also 401 — surface the server message (用户名或密码错误)
+    // and do NOT broadcast session-expired, or the form shows the wrong copy.
+    const isLogin = path === '/login' || path.startsWith('/login?')
+    if (!isLogin) {
+      // Soft-navigate to /login via React Router instead of a full reload.
+      window.dispatchEvent(new CustomEvent('nf-unauthorized'))
+    }
+    throw new Error((data && data.error) || (isLogin ? '用户名或密码错误' : '登录已过期，请重新登录'))
+  }
+  if (res.status === 204) return null
   if (!res.ok) throw new Error((data && data.error) || httpErrorMessage(res.status))
   return data
 }

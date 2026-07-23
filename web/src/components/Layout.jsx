@@ -39,6 +39,19 @@ export function UserProvider({ children }) {
     }
   }, [])
 
+  // Public branding so login + tab title match 系统设置里的面板名称 even before auth.
+  useEffect(() => {
+    api.get('/branding').then(d => {
+      const name = (d?.panel_name || '').trim()
+      if (name) setPanelName(name)
+    }).catch(() => {})
+  }, [])
+
+  // Keep browser tab title in sync with panel_name globally (login + after login).
+  useEffect(() => {
+    if (panelName) document.title = panelName
+  }, [panelName])
+
   useEffect(() => { refreshUser() }, [refreshUser])
 
   useEffect(() => {
@@ -103,10 +116,6 @@ export function Layout({ children }) {
   const { copyFmt, toggleCopyFmt } = useContext(CopyFmtCtx)
   const [theme, setThemeState] = useState(getStoredTheme())
   const isDark = resolvedDark(theme)
-
-  useEffect(() => {
-    if (panelName) document.title = panelName
-  }, [panelName])
 
   // The landing-nodes entry shows when the user has an admin-assigned source or
   // their own browser-local URIs. Local URIs change in the same tab, which the
