@@ -228,7 +228,7 @@ export default function NodeDetail() {
         {/* back link */}
         <Link to="/nodes" className="inline-flex items-center gap-1.5 w-fit text-[13.5px] text-ink-mut hover:text-ink transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-          返回节点列表
+          返回线路监控
         </Link>
 
         {/* ===== HEADER ===== */}

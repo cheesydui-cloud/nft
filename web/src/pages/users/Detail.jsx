@@ -147,7 +147,7 @@ export default function UserDetail() {
   if (isRegularUser) {
     tabs.push(
       { id: 'config', label: '配置' },
-      { id: 'grants', label: '授权节点', count: nodes.length },
+      { id: 'grants', label: '授权线路', count: nodes.length },
       { id: 'landing', label: '落地节点', count: landing_nodes.length },
     )
   }
@@ -327,9 +327,9 @@ export default function UserDetail() {
                   tone="violet"
                 />
                 <StatTile
-                  label="授权节点"
+                  label="授权线路"
                   value={String(nodes.length)}
-                  hint="已授权转发节点"
+                  hint="已授权转发线路"
                   tone="teal"
                 />
                 <StatTile

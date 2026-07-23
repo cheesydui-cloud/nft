@@ -277,8 +277,8 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
     <div className={shellClass}>
       <div className={embedded ? 'detail-panel-header' : 'card-header'}>
         <div className="min-w-0">
-          <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>已授权节点</h3>
-          {embedded && <div className="detail-panel-sub">{nodes.length} 个节点 · 单点/组合配额与限速</div>}
+          <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>已授权线路</h3>
+          {embedded && <div className="detail-panel-sub">{nodes.length} 条线路 · 单点/组合配额与限速</div>}
         </div>
         <div className="flex items-center gap-1.5 ml-auto">
           {nodes.length > 0 && <button onClick={copyGrants} className="btn-secondary text-xs">复制授权</button>}
@@ -348,9 +348,9 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         </table>
         </TableBox>
       ) : nodes.length > 0 ? (
-        <Empty title={tab === 'composite' ? '暂无已授权的组合节点' : '暂无已授权的单点节点'} />
+        <Empty title={tab === 'composite' ? '暂无已授权的组合线路' : '暂无已授权的单点线路'} />
       ) : (
-        <Empty title="尚未授权任何节点" />
+        <Empty title="尚未授权任何线路" />
       )}
       <div className="p-5 border-t border-line-soft">
         <GrantNodeForm userId={userId} allNodes={allNodes} grantedNodes={nodes} onDone={onDone} />

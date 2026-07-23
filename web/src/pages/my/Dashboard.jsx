@@ -12,8 +12,8 @@ export default function MyDashboard() {
   const [tab, setTab] = useState('single')
   const isMobile = useIsMobile()
 
-  // 授权节点的展示顺序是个人偏好，只存本浏览器不上服务器；键按用户 id 区分，
-  // 同一浏览器切换账号互不串扰。不在名单里的节点（新授权）按服务器顺序垫底。
+  // 已授权线路的展示顺序是个人偏好，只存本浏览器不上服务器；键按用户 id 区分，
+  // 同一浏览器切换账号互不串扰。不在名单里的线路（新授权）按服务器顺序垫底。
   const [nodeOrder, setNodeOrder] = useState([])
   const [dragIdx, setDragIdx] = useState(null)
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function MyDashboard() {
       {/* Granted nodes */}
       <div className="card">
         <div className="card-header">
-          <h3 className="text-[15px] font-bold">已授权节点</h3>
+          <h3 className="text-[15px] font-bold">已授权线路</h3>
         </div>
         {nodes.length > 0 && (
           <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
@@ -196,8 +196,8 @@ export default function MyDashboard() {
             })}
           </div>}
         </>) : nodes.length > 0 ? (
-          <Empty title={tab === 'composite' ? '暂无已授权的组合节点' : '暂无已授权的单点节点'} />
-        ) : <Empty title="管理员尚未为您授权任何节点" desc="请联系管理员。" />}
+          <Empty title={tab === 'composite' ? '暂无已授权的组合线路' : '暂无已授权的单点线路'} />
+        ) : <Empty title="管理员尚未为您授权任何线路" desc="请联系管理员。" />}
       </div>
     </Layout>
   )
