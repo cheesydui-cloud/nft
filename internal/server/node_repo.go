@@ -1,12 +1,17 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"nft/internal/cloudflare"
 	"nft/internal/db"
+	"nft/internal/resolver"
 )
 
 // apiListNodeRepo returns all nodes in the repository (admin only).
@@ -54,70 +59,151 @@ func (s *Server) apiListNodeRepoUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type nodeRepoBody struct {
+	Name         string `json:"name"`
+	Protocol     string `json:"protocol"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	URI          string `json:"uri"`
+	Remark       string `json:"remark"`
+	ExpiresAt    int64  `json:"expires_at"`
+	GroupName    string `json:"group_name"`
+	GroupID      int64  `json:"group_id"`
+	BackendIP    string `json:"backend_ip"`
+	CFSync       bool   `json:"cf_sync"`
+	CFZoneID     string `json:"cf_zone_id"`
+	CFRecordName string `json:"cf_record_name"`
+}
+
+func (b nodeRepoBody) cfFields() db.NodeRepoCFFields {
+	return db.NodeRepoCFFields{
+		BackendIP:    strings.TrimSpace(b.BackendIP),
+		CFSync:       b.CFSync,
+		CFZoneID:     strings.TrimSpace(b.CFZoneID),
+		CFRecordName: strings.TrimSpace(b.CFRecordName),
+	}
+}
+
+func validateNodeRepoHost(host string) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return errBad("host is required")
+	}
+	if net.ParseIP(host) != nil {
+		return nil
+	}
+	if !resolver.PlausibleHostname(host) {
+		return errBad("地址非法：不是合法 IP 或域名")
+	}
+	return nil
+}
+
+type badReq string
+
+func (e badReq) Error() string { return string(e) }
+
+func errBad(msg string) error { return badReq(msg) }
+
+func validateNodeRepoCF(host string, cf db.NodeRepoCFFields) error {
+	if !cf.CFSync {
+		// backend_ip optional when not syncing; if set must be IPv4
+		if cf.BackendIP != "" && !cloudflare.IsIPv4(cf.BackendIP) {
+			return errBad("当前 IP 必须是 IPv4 地址")
+		}
+		return nil
+	}
+	// Sync on: host must be a domain (not a bare IP), backend_ip required IPv4.
+	if net.ParseIP(host) != nil {
+		return errBad("开启 CF 同步时，目标地址须为域名（不能是 IP）")
+	}
+	if !resolver.PlausibleHostname(host) {
+		return errBad("开启 CF 同步时，目标地址须为合法域名")
+	}
+	if !cloudflare.IsIPv4(cf.BackendIP) {
+		return errBad("开启 CF 同步时，须填写当前 IPv4")
+	}
+	return nil
+}
+
 // apiCreateNodeRepoEntry creates a new node in the repository.
 func (s *Server) apiCreateNodeRepoEntry(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name      string `json:"name"`
-		Protocol  string `json:"protocol"`
-		Host      string `json:"host"`
-		Port      int    `json:"port"`
-		URI       string `json:"uri"`
-		Remark    string `json:"remark"`
-		ExpiresAt int64  `json:"expires_at"`
-		GroupName string `json:"group_name"`
-		GroupID   int64  `json:"group_id"`
-	}
+	u := userFromCtx(r.Context())
+	var body nodeRepoBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.Host = strings.TrimSpace(body.Host)
 	if body.Name == "" || body.Host == "" || body.Port == 0 {
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
 		return
 	}
-	// group_id wins when provided; otherwise resolve from group_name.
+	if body.Port < 1 || body.Port > 65535 {
+		jsonErr(w, http.StatusBadRequest, "端口非法")
+		return
+	}
+	if err := validateNodeRepoHost(body.Host); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cf := body.cfFields()
+	if err := validateNodeRepoCF(body.Host, cf); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	groupName := strings.TrimSpace(body.GroupName)
 	if body.GroupID > 0 {
 		if f, err := db.GetNodeRepoFolder(s.DB, body.GroupID); err == nil {
 			groupName = f.Name
 		}
 	}
-	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName)
+	n, err := db.CreateNodeRepoEntry(s.DB, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName, cf)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonOK(w, n)
+	cfResult := s.maybeSyncNodeRepoCF(r.Context(), u.ID, &n)
+	jsonOK(w, map[string]any{"node": n, "cf_sync": cfResult})
 }
 
 // apiUpdateNodeRepoEntry updates an existing node in the repository.
 // When host/port (or URI metadata) changes, every user landing exit that was
 // imported from the repo at the previous endpoint — and every rule still dialing
 // that endpoint — is rewritten so admin + user UIs and the data plane follow.
+//
+// CF IP-only changes (domain host unchanged) do NOT cascade rules: agent DNS
+// refresh picks up the new A record without rewriting exit_host.
 func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var body struct {
-		Name      string `json:"name"`
-		Protocol  string `json:"protocol"`
-		Host      string `json:"host"`
-		Port      int    `json:"port"`
-		URI       string `json:"uri"`
-		Remark    string `json:"remark"`
-		ExpiresAt int64  `json:"expires_at"`
-		GroupName string `json:"group_name"`
-		GroupID   int64  `json:"group_id"`
-	}
+	var body nodeRepoBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.Host = strings.TrimSpace(body.Host)
 	if body.Name == "" || body.Host == "" || body.Port == 0 {
 		jsonErr(w, http.StatusBadRequest, "name, host and port are required")
+		return
+	}
+	if body.Port < 1 || body.Port > 65535 {
+		jsonErr(w, http.StatusBadRequest, "端口非法")
+		return
+	}
+	if err := validateNodeRepoHost(body.Host); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cf := body.cfFields()
+	if err := validateNodeRepoCF(body.Host, cf); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	prev, err := db.GetNodeRepoEntry(s.DB, id)
@@ -131,10 +217,9 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 			groupName = f.Name
 		}
 	} else if body.GroupID == 0 && body.GroupName == "" {
-		// Explicit ungroup when client sends group_id:0 with empty name.
 		groupName = ""
 	}
-	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName); err != nil {
+	if err := db.UpdateNodeRepoEntry(s.DB, id, body.Name, body.Protocol, body.Host, body.Port, body.URI, body.Remark, body.ExpiresAt, groupName, cf); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -146,7 +231,6 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		body.Name, body.Protocol, body.URI, body.ExpiresAt,
 	)
 	if err != nil {
-		// Repo row already saved; surface cascade failure so the admin can retry.
 		jsonErr(w, http.StatusInternalServerError, "仓库已保存，但同步用户/规则失败: "+err.Error())
 		return
 	}
@@ -154,12 +238,106 @@ func (s *Server) apiUpdateNodeRepoEntry(w http.ResponseWriter, r *http.Request) 
 		s.redispatchNodes(prop.NodeIDs)
 	}
 
+	n, _ := db.GetNodeRepoEntry(s.DB, id)
+	cfResult := s.maybeSyncNodeRepoCF(r.Context(), u.ID, &n)
+
 	jsonOK(w, map[string]any{
 		"ok":               true,
 		"endpoint_changed": prop.EndpointChanged,
 		"exits_updated":    prop.ExitsUpdated,
 		"rules_updated":    prop.RulesUpdated,
+		"node":             n,
+		"cf_sync":          cfResult,
 	})
+}
+
+// cfSyncResult is returned to the UI after create/update.
+type cfSyncResult struct {
+	Attempted bool   `json:"attempted"`
+	OK        bool   `json:"ok"`
+	Skipped   bool   `json:"skipped,omitempty"`
+	Message   string `json:"message,omitempty"`
+	IP        string `json:"ip,omitempty"`
+	Record    string `json:"record,omitempty"`
+}
+
+// maybeSyncNodeRepoCF pushes an A record when the entry has cf_sync enabled.
+// Failures are recorded on the row and returned; the repo save itself already
+// succeeded so the admin can fix token/IP and retry.
+func (s *Server) maybeSyncNodeRepoCF(ctx context.Context, adminID int64, n *db.NodeRepoEntry) cfSyncResult {
+	if n == nil || !n.CFSync {
+		return cfSyncResult{Attempted: false, Skipped: true, Message: "未开启 CF 同步"}
+	}
+	token, _ := db.GetSetting(s.DB, "cf_api_token")
+	if strings.TrimSpace(token) == "" {
+		msg := "未配置 Cloudflare API Token（请到系统设置填写）"
+		_ = db.SetNodeRepoCFSyncResult(s.DB, n.ID, false, "", msg)
+		n.CFLastError = msg
+		return cfSyncResult{Attempted: true, OK: false, Message: msg}
+	}
+	zoneID := strings.TrimSpace(n.CFZoneID)
+	if zoneID == "" {
+		zoneName, _ := db.GetSetting(s.DB, "cf_zone_name")
+		zoneName = strings.TrimSpace(zoneName)
+		if zoneName == "" {
+			msg := "未指定 Zone（条目 cf_zone_id 为空且系统未设默认 Zone）"
+			_ = db.SetNodeRepoCFSyncResult(s.DB, n.ID, false, "", msg)
+			n.CFLastError = msg
+			return cfSyncResult{Attempted: true, OK: false, Message: msg}
+		}
+		cli := &cloudflare.Client{Token: token}
+		if base, _ := db.GetSetting(s.DB, "cf_api_base"); strings.TrimSpace(base) != "" {
+			cli.BaseURL = strings.TrimSpace(base)
+		}
+		id, err := cli.ResolveZoneID(ctx, zoneName)
+		if err != nil {
+			msg := err.Error()
+			_ = db.SetNodeRepoCFSyncResult(s.DB, n.ID, false, "", msg)
+			n.CFLastError = msg
+			db.WriteAudit(s.DB, adminID, "cf.dns.fail", n.Host, msg)
+			return cfSyncResult{Attempted: true, OK: false, Message: msg}
+		}
+		zoneID = id
+		// Persist resolved zone id so subsequent syncs skip the lookup.
+		_ = db.UpdateNodeRepoEntry(s.DB, n.ID, n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.GroupName, db.NodeRepoCFFields{
+			BackendIP: n.BackendIP, CFSync: n.CFSync, CFZoneID: zoneID, CFRecordName: n.CFRecordName,
+		})
+		n.CFZoneID = zoneID
+	}
+
+	recordName := cloudflare.RecordNameForHost(n.Host, n.CFRecordName)
+	ttlStr, _ := db.GetSetting(s.DB, "cf_ttl")
+	ttl := 1
+	if t, err := strconv.Atoi(strings.TrimSpace(ttlStr)); err == nil && t > 0 {
+		ttl = t
+	}
+
+	cli := &cloudflare.Client{Token: token}
+	if base, _ := db.GetSetting(s.DB, "cf_api_base"); strings.TrimSpace(base) != "" {
+		cli.BaseURL = strings.TrimSpace(base)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	rec, err := cli.UpsertARecord(ctx, zoneID, recordName, n.BackendIP, ttl)
+	if err != nil {
+		msg := err.Error()
+		_ = db.SetNodeRepoCFSyncResult(s.DB, n.ID, false, "", msg)
+		n.CFLastError = msg
+		db.WriteAudit(s.DB, adminID, "cf.dns.fail", recordName, msg)
+		return cfSyncResult{Attempted: true, OK: false, Message: msg, Record: recordName, IP: n.BackendIP}
+	}
+	_ = db.SetNodeRepoCFSyncResult(s.DB, n.ID, true, n.BackendIP, "")
+	n.CFLastError = ""
+	n.CFLastIP = n.BackendIP
+	n.CFLastSyncAt = time.Now().Unix()
+	db.WriteAudit(s.DB, adminID, "cf.dns.update", recordName, n.BackendIP)
+	return cfSyncResult{
+		Attempted: true,
+		OK:        true,
+		Message:   "已同步 A 记录",
+		IP:        rec.Content,
+		Record:    recordName,
+	}
 }
 
 // apiBatchSetNodeRepoGroup moves many repo entries into a folder.
@@ -313,17 +491,14 @@ func (s *Server) apiAssignRepoToUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Re-dispatch rules pointed at flipped exits (present changed → push-exclusion may change)
 	for _, k := range flipped {
 		s.goAsync(func() { s.redispatchUserExit(uid, k.Host, k.Port) })
 	}
-	// Carry over expires_at from repo entries to user landing exits.
 	for _, e := range entries {
 		if e.ExpiresAt > 0 {
 			_, _, _ = db.SetUserLandingExitExpires(s.DB, uid, e.Host, e.Port, e.ExpiresAt)
 		}
 	}
-	// Return updated exits so frontend can refresh.
 	exits, _ := db.ListUserLandingExits(s.DB, uid)
 	jsonOK(w, map[string]any{"ok": true, "assigned": len(inputs), "exits": exits})
 }

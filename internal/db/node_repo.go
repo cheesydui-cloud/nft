@@ -23,13 +23,48 @@ type NodeRepoEntry struct {
 	// UserCount is how many users currently hold this endpoint via source=repo
 	// present landing exits. Filled by list API; not a DB column.
 	UserCount int `json:"user_count"`
+
+	// Optional Cloudflare DNS sync: host is the stable rule target (domain);
+	// BackendIP is the A-record content pushed when CFSync is on.
+	BackendIP    string `json:"backend_ip"`
+	CFSync       bool   `json:"cf_sync"`
+	CFZoneID     string `json:"cf_zone_id"`
+	CFRecordName string `json:"cf_record_name"`
+	CFLastSyncAt int64  `json:"cf_last_sync_at"`
+	CFLastError  string `json:"cf_last_error"`
+	CFLastIP     string `json:"cf_last_ip"`
 }
 
-const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id`
+// NodeRepoCFFields are the optional DNS-sync columns written on create/update.
+type NodeRepoCFFields struct {
+	BackendIP    string
+	CFSync       bool
+	CFZoneID     string
+	CFRecordName string
+}
+
+const nodeRepoCols = `id, name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id,
+	backend_ip, cf_sync, cf_zone_id, cf_record_name, cf_last_sync_at, cf_last_error, cf_last_ip`
 
 func scanNodeRepo(rows *sql.Rows) (NodeRepoEntry, error) {
 	var n NodeRepoEntry
-	err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID)
+	var cfSync int
+	err := rows.Scan(
+		&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID,
+		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName, &n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+	)
+	n.CFSync = cfSync != 0
+	return n, err
+}
+
+func scanNodeRepoRow(row *sql.Row) (NodeRepoEntry, error) {
+	var n NodeRepoEntry
+	var cfSync int
+	err := row.Scan(
+		&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID,
+		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName, &n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+	)
+	n.CFSync = cfSync != 0
 	return n, err
 }
 
@@ -53,7 +88,7 @@ func ListNodeRepo(d *sql.DB) ([]NodeRepoEntry, error) {
 
 // CreateNodeRepoEntry inserts a new node into the repository.
 // groupName, when non-empty, creates/ensures a folder and assigns group_id.
-func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) (NodeRepoEntry, error) {
+func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string, cf NodeRepoCFFields) (NodeRepoEntry, error) {
 	var groupID int64
 	groupName = strings.TrimSpace(groupName)
 	if groupName != "" {
@@ -63,9 +98,22 @@ func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, 
 		}
 		groupID = f.ID
 	}
-	n := NodeRepoEntry{Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark, ExpiresAt: expiresAt, CreatedAt: now(), GroupName: groupName, GroupID: groupID}
-	res, err := d.Exec(`INSERT INTO node_repo (name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt, n.GroupName, n.GroupID)
+	cfSync := 0
+	if cf.CFSync {
+		cfSync = 1
+	}
+	n := NodeRepoEntry{
+		Name: name, Protocol: protocol, Host: host, Port: port, URI: uri, Remark: remark,
+		ExpiresAt: expiresAt, CreatedAt: now(), GroupName: groupName, GroupID: groupID,
+		BackendIP: strings.TrimSpace(cf.BackendIP), CFSync: cf.CFSync,
+		CFZoneID: strings.TrimSpace(cf.CFZoneID), CFRecordName: strings.TrimSpace(cf.CFRecordName),
+	}
+	res, err := d.Exec(`INSERT INTO node_repo (
+		name, protocol, host, port, uri, remark, expires_at, created_at, group_name, group_id,
+		backend_ip, cf_sync, cf_zone_id, cf_record_name
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Name, n.Protocol, n.Host, n.Port, n.URI, n.Remark, n.ExpiresAt, n.CreatedAt, n.GroupName, n.GroupID,
+		n.BackendIP, cfSync, n.CFZoneID, n.CFRecordName)
 	if err != nil {
 		return n, err
 	}
@@ -76,16 +124,11 @@ func CreateNodeRepoEntry(d *sql.DB, name, protocol, host string, port int, uri, 
 // GetNodeRepoEntry returns one repository node by id.
 func GetNodeRepoEntry(d *sql.DB, id int64) (NodeRepoEntry, error) {
 	row := d.QueryRow(`SELECT `+nodeRepoCols+` FROM node_repo WHERE id=?`, id)
-	var n NodeRepoEntry
-	err := row.Scan(&n.ID, &n.Name, &n.Protocol, &n.Host, &n.Port, &n.URI, &n.Remark, &n.ExpiresAt, &n.CreatedAt, &n.GroupName, &n.GroupID)
-	if err != nil {
-		return n, err
-	}
-	return n, nil
+	return scanNodeRepoRow(row)
 }
 
-// UpdateNodeRepoEntry updates an existing node in the repository.
-func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string) error {
+// UpdateNodeRepoEntry updates an existing node in the repository (including CF fields).
+func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port int, uri, remark string, expiresAt int64, groupName string, cf NodeRepoCFFields) error {
 	var groupID int64
 	groupName = strings.TrimSpace(groupName)
 	if groupName != "" {
@@ -95,8 +138,28 @@ func UpdateNodeRepoEntry(d *sql.DB, id int64, name, protocol, host string, port 
 		}
 		groupID = f.ID
 	}
-	_, err := d.Exec(`UPDATE node_repo SET name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=?, group_name=?, group_id=? WHERE id=?`,
-		name, protocol, host, port, uri, remark, expiresAt, groupName, groupID, id)
+	cfSync := 0
+	if cf.CFSync {
+		cfSync = 1
+	}
+	_, err := d.Exec(`UPDATE node_repo SET
+		name=?, protocol=?, host=?, port=?, uri=?, remark=?, expires_at=?, group_name=?, group_id=?,
+		backend_ip=?, cf_sync=?, cf_zone_id=?, cf_record_name=?
+		WHERE id=?`,
+		name, protocol, host, port, uri, remark, expiresAt, groupName, groupID,
+		strings.TrimSpace(cf.BackendIP), cfSync, strings.TrimSpace(cf.CFZoneID), strings.TrimSpace(cf.CFRecordName),
+		id)
+	return err
+}
+
+// SetNodeRepoCFSyncResult records the outcome of a Cloudflare DNS push.
+func SetNodeRepoCFSyncResult(d *sql.DB, id int64, ok bool, ip, errMsg string) error {
+	if ok {
+		_, err := d.Exec(`UPDATE node_repo SET cf_last_sync_at=?, cf_last_error='', cf_last_ip=? WHERE id=?`,
+			now(), strings.TrimSpace(ip), id)
+		return err
+	}
+	_, err := d.Exec(`UPDATE node_repo SET cf_last_error=? WHERE id=?`, strings.TrimSpace(errMsg), id)
 	return err
 }
 

@@ -1457,7 +1457,32 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(poolSizeStr); err == nil && n >= 0 {
 		poolSize = n
 	}
-	jsonOK(w, map[string]any{"panel_url": panelURL, "panel_name": panelName, "show_rate_to_user": showRate == "1", "pool_size": poolSize})
+	cfToken, _ := db.GetSetting(s.DB, "cf_api_token")
+	cfZone, _ := db.GetSetting(s.DB, "cf_zone_name")
+	cfTTLStr, _ := db.GetSetting(s.DB, "cf_ttl")
+	cfTTL := 1
+	if n, err := strconv.Atoi(strings.TrimSpace(cfTTLStr)); err == nil && n > 0 {
+		cfTTL = n
+	}
+	// Never echo the full token; only whether it is set + a short prefix for UI.
+	cfConfigured := strings.TrimSpace(cfToken) != ""
+	cfPrefix := ""
+	if cfConfigured {
+		t := strings.TrimSpace(cfToken)
+		if len(t) > 8 {
+			cfPrefix = t[:4] + "…" + t[len(t)-4:]
+		} else {
+			cfPrefix = "****"
+		}
+	}
+	jsonOK(w, map[string]any{
+		"panel_url": panelURL, "panel_name": panelName,
+		"show_rate_to_user": showRate == "1", "pool_size": poolSize,
+		"cf_token_configured": cfConfigured,
+		"cf_token_prefix":     cfPrefix,
+		"cf_zone_name":        cfZone,
+		"cf_ttl":              cfTTL,
+	})
 }
 
 func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
@@ -1467,6 +1492,11 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		PanelName      *string `json:"panel_name"`
 		ShowRateToUser *bool   `json:"show_rate_to_user"`
 		PoolSize       *int    `json:"pool_size"`
+		// Cloudflare: empty token string means "leave unchanged"; explicit clear via cf_clear_token.
+		CFAPIToken  *string `json:"cf_api_token"`
+		CFClearToken bool   `json:"cf_clear_token"`
+		CFZoneName  *string `json:"cf_zone_name"`
+		CFTTL       *int    `json:"cf_ttl"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -1509,6 +1539,42 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.Hub.BroadcastConfigUpdate(ps)
+	}
+	if body.CFClearToken {
+		if err := db.SetSetting(s.DB, "cf_api_token", ""); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "settings.cf_token", "cleared", "")
+	} else if body.CFAPIToken != nil {
+		tok := strings.TrimSpace(*body.CFAPIToken)
+		// Empty means leave unchanged (UI password-style field).
+		if tok != "" {
+			if err := db.SetSetting(s.DB, "cf_api_token", tok); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "settings.cf_token", "updated", "")
+		}
+	}
+	if body.CFZoneName != nil {
+		z := strings.TrimSpace(strings.ToLower(*body.CFZoneName))
+		if err := db.SetSetting(s.DB, "cf_zone_name", z); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "settings.cf_zone", z, "")
+	}
+	if body.CFTTL != nil {
+		ttl := *body.CFTTL
+		if ttl < 1 {
+			jsonErr(w, http.StatusBadRequest, "cf_ttl 至少为 1（1=Auto）")
+			return
+		}
+		if err := db.SetSetting(s.DB, "cf_ttl", strconv.Itoa(ttl)); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	jsonOK(w, map[string]any{"ok": true})
 }

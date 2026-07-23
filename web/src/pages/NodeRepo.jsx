@@ -98,7 +98,7 @@ export default function NodeRepo() {
   if (folderFilter === '0') filtered = filtered.filter(n => !(n.group_id > 0))
   else if (folderFilter) filtered = filtered.filter(n => String(n.group_id) === String(folderFilter))
   if (q) filtered = filtered.filter(n =>
-    [n.name, n.protocol, `${n.host}:${n.port}`, n.remark, n.group_name].some(v => (v || '').toLowerCase().includes(q)))
+    [n.name, n.protocol, `${n.host}:${n.port}`, n.backend_ip, n.remark, n.group_name].some(v => (v || '').toLowerCase().includes(q)))
 
   const toggleSelAll = () => setSel(s =>
     s.size === filtered.length && filtered.length > 0 ? new Set() : new Set(filtered.map(n => n.id)))
@@ -152,7 +152,21 @@ export default function NodeRepo() {
                   <td className="font-semibold">{n.name}</td>
                   <td className="text-xs">{n.group_name ? <Badge color="blue">{n.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
                   <td className="font-mono text-xs text-ink-soft">{n.protocol || '—'}</td>
-                  <td className="font-mono text-xs">{n.host}:{n.port}</td>
+                  <td className="text-xs">
+                    <div className="font-mono">{n.host}:{n.port}</div>
+                    {(n.backend_ip || n.cf_sync) && (
+                      <div className="text-[11px] text-ink-mut mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        {n.backend_ip && <span className="font-mono">{n.backend_ip}</span>}
+                        {n.cf_sync && (
+                          n.cf_last_error
+                            ? <Badge color="red">CF 失败</Badge>
+                            : n.cf_last_sync_at > 0
+                              ? <Badge color="green">CF 已同步</Badge>
+                              : <Badge color="amber">CF 待同步</Badge>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td className="text-xs">
                     {(n.user_count || 0) > 0 ? (
                       <button type="button" onClick={() => openUsers(n)}
@@ -201,6 +215,12 @@ export default function NodeRepo() {
                   <span className="font-mono">{n.protocol || '—'}</span>
                   <span className="text-ink-mut">·</span>
                   <span className="font-mono">{n.host}:{n.port}</span>
+                  {n.backend_ip && <span className="font-mono text-ink-mut">→ {n.backend_ip}</span>}
+                  {n.cf_sync && (
+                    n.cf_last_error ? <Badge color="red">CF 失败</Badge>
+                      : n.cf_last_sync_at > 0 ? <Badge color="green">CF</Badge>
+                      : <Badge color="amber">CF</Badge>
+                  )}
                   {(n.user_count || 0) > 0 ? (
                     <button type="button" onClick={() => openUsers(n)}
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
@@ -317,6 +337,10 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
     remark: node?.remark || '',
     group_id: node?.group_id > 0 ? String(node.group_id) : '0',
     expires_at: node?.expires_at > 0 ? new Date(node.expires_at * 1000).toISOString().slice(0, 10) : '',
+    backend_ip: node?.backend_ip || '',
+    cf_sync: !!node?.cf_sync,
+    cf_zone_id: node?.cf_zone_id || '',
+    cf_record_name: node?.cf_record_name || '',
   })
   const [submitting, setSubmitting] = useState(false)
   const toast = useToast()
@@ -335,6 +359,10 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
       protocol: parsed.protocol || f.protocol,
       host: parsed.host || f.host,
       port: parsed.port || f.port,
+      // If URI host is an IP and target is empty domain path, seed backend_ip.
+      backend_ip: (!f.backend_ip && parsed.host && /^\d+\.\d+\.\d+\.\d+$/.test(parsed.host))
+        ? parsed.host
+        : f.backend_ip,
       name: !f.name.trim() && parsed.name ? parsed.name : f.name,
     }))
     toast(`已识别 ${parsed.protocol} 节点：${parsed.host}:${parsed.port}`)
@@ -343,6 +371,7 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
   const submit = async (e) => {
     e.preventDefault()
     if (!form.name.trim() || !form.host.trim() || !form.port) { toast('名称、地址、端口不能为空', 'error'); return }
+    if (form.cf_sync && !form.backend_ip.trim()) { toast('开启 CF 同步时须填写当前 IPv4', 'error'); return }
     setSubmitting(true)
     try {
       const gid = Number(form.group_id) || 0
@@ -356,13 +385,24 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
         group_id: gid,
         group_name: '',
         expires_at: form.expires_at ? Math.floor(new Date(form.expires_at).getTime() / 1000) : 0,
+        backend_ip: form.backend_ip.trim(),
+        cf_sync: !!form.cf_sync,
+        cf_zone_id: form.cf_zone_id.trim(),
+        cf_record_name: form.cf_record_name.trim(),
       }
+      let cf
       if (isEdit) {
-        await api.patch(`/node-repo/${node.id}`, body)
+        const res = await api.patch(`/node-repo/${node.id}`, body)
+        cf = res?.cf_sync
         toast('已更新')
       } else {
-        await api.post('/node-repo', body)
+        const res = await api.post('/node-repo', body)
+        cf = res?.cf_sync
         toast('已添加')
+      }
+      if (cf?.attempted) {
+        if (cf.ok) toast(`CF：${cf.message || '已同步'} ${cf.record || ''} → ${cf.ip || ''}`.trim())
+        else toast(`CF 同步失败：${cf.message || '未知错误'}`, 'error')
       }
       onDone()
     } catch (err) {
@@ -373,7 +413,7 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
   }
 
   return (
-    <Modal open onClose={onClose} title={isEdit ? '编辑节点' : '添加节点'}>
+    <Modal open onClose={onClose} title={isEdit ? '编辑节点' : '添加节点'} wide>
       <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">URI <span className="text-ink-mut font-normal text-xs">(粘贴后自动识别)</span></label>
@@ -396,22 +436,56 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">地址</label>
-              <input className="input-field font-mono" value={form.host} onChange={e => set('host', e.target.value)} placeholder="IP 或域名" />
+              <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">目标地址</label>
+              <input className="input-field font-mono" value={form.host} onChange={e => set('host', e.target.value)} placeholder="域名（推荐）或 IP" />
+              <p className="text-[11px] text-ink-mut mt-1 m-0">规则认这个地址；填域名后换 IP 用户不用改链接</p>
             </div>
             <div>
               <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">端口</label>
               <input className="input-field font-mono" type="number" min="1" max="65535" value={form.port} onChange={e => set('port', e.target.value)} placeholder="端口" />
             </div>
           </div>
+
+          <div className="rounded-xl border border-line-soft bg-raised/40 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[13px] font-bold text-ink">Cloudflare DNS</div>
+                <div className="text-[11px] text-ink-mut">可选。保存时把当前 IP 写入 CF A 记录（灰云）</div>
+              </div>
+              <button type="button" role="switch" aria-checked={form.cf_sync}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${form.cf_sync ? 'bg-emerald-600' : 'bg-gray-500'}`}
+                onClick={() => set('cf_sync', !form.cf_sync)}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.cf_sync ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-[12px] font-semibold text-ink-soft mb-1">当前 IP {form.cf_sync && <span className="text-red-500">*</span>}</label>
+                <input className="input-field font-mono text-sm" value={form.backend_ip} onChange={e => set('backend_ip', e.target.value)} placeholder="要写入 A 记录的 IPv4" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名 <span className="text-ink-mut font-normal">(可选)</span></label>
+                <input className="input-field font-mono text-sm" value={form.cf_record_name} onChange={e => set('cf_record_name', e.target.value)} placeholder="默认用目标地址" disabled={!form.cf_sync && !form.cf_record_name} />
+              </div>
+            </div>
+            {isEdit && node?.cf_last_sync_at > 0 && (
+              <div className="text-[11px] text-ink-mut">
+                上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
+                {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
+                {node.cf_last_error ? ` · 错误：${node.cf_last_error}` : ' · 成功'}
+              </div>
+            )}
+            {isEdit && node?.cf_last_error && !node?.cf_last_sync_at && (
+              <div className="text-[11px] text-red-600">上次失败：{node.cf_last_error}</div>
+            )}
+          </div>
+
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
             <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
           </div>
           <div>
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
-            {/* Keep date near the bottom actions but with room so the native
-                calendar can open upward without sitting under the footer. */}
             <DateInput
               value={form.expires_at}
               onChange={v => set('expires_at', v)}
