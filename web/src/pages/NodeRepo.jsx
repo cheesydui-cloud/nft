@@ -6,7 +6,7 @@ import { Loading, Empty, Badge, CopyText, Modal, useConfirm, DateInput } from '.
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
-import { fmtDate, fmtTime, expiryBadge, fmtTrafficGB } from '../lib/fmt'
+import { fmtDate, expiryBadge, fmtTrafficGB } from '../lib/fmt'
 import { useIsMobile } from '../lib/useIsMobile'
 
 export default function NodeRepo() {
@@ -202,19 +202,14 @@ export default function NodeRepo() {
                   <td className="text-xs text-ink-soft">{n.remark || '—'}</td>
                   <td className="text-xs text-ink-mut">{new Date(n.created_at * 1000).toLocaleDateString('zh-CN')}</td>
                   <td className="text-right">
-                    <div className="inline-flex items-center gap-2.5 flex-wrap justify-end">
-                      {looksDomain(n.host) && (
-                        <button type="button" disabled={busyId === n.id} onClick={() => probeDNS(n)}
-                          className="text-ink-soft text-xs font-semibold hover:text-emerald-600 hover:underline disabled:opacity-50" title="解析域名并对比当前 IP">检测</button>
-                      )}
-                      {(looksDomain(n.host) || n.cf_sync) && (
-                        <button type="button" onClick={() => setChangeIPFor(n)}
-                          className="text-emerald-600 text-xs font-semibold hover:underline" title="只改当前 IP 并同步 CF">改 IP</button>
-                      )}
-                      {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold hover:underline cursor-pointer">复制</span></CopyText>}
-                      <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
-                      <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
-                    </div>
+                    <RowActions
+                      n={n}
+                      busy={busyId === n.id}
+                      onProbe={() => probeDNS(n)}
+                      onChangeIP={() => setChangeIPFor(n)}
+                      onEdit={() => { setEditing(n); setShowForm(true) }}
+                      onDelete={() => deleteNode(n)}
+                    />
                   </td>
                 </tr>
               ))}
@@ -228,37 +223,43 @@ export default function NodeRepo() {
                     <input type="checkbox" className="accent-emerald-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} />
                     {n.name}
                   </label>
-                  <span className="inline-flex items-center gap-2 flex-wrap justify-end">
-                    {looksDomain(n.host) && <button type="button" disabled={busyId === n.id} onClick={() => probeDNS(n)} className="text-ink-soft text-xs font-semibold">检测</button>}
-                    {(looksDomain(n.host) || n.cf_sync) && <button type="button" onClick={() => setChangeIPFor(n)} className="text-emerald-600 text-xs font-semibold">改 IP</button>}
-                    {n.uri && <CopyText text={n.uri}><span className="text-emerald-600 text-xs font-semibold">复制</span></CopyText>}
-                    <button onClick={() => { setEditing(n); setShowForm(true) }} className="text-emerald-600 text-xs font-semibold">编辑</button>
-                    <button onClick={() => deleteNode(n)} className="text-red-600 text-xs font-semibold">删除</button>
-                  </span>
+                  <RowActions
+                    n={n}
+                    busy={busyId === n.id}
+                    onProbe={() => probeDNS(n)}
+                    onChangeIP={() => setChangeIPFor(n)}
+                    onEdit={() => { setEditing(n); setShowForm(true) }}
+                    onDelete={() => deleteNode(n)}
+                    compact
+                  />
                 </div>
-                <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
-                  {n.group_name && <Badge color="blue">{n.group_name}</Badge>}
-                  <span className="font-mono">{n.protocol || '—'}</span>
-                  <span className="text-ink-mut">·</span>
-                  <span className="font-mono">{n.host}:{n.port}</span>
-                  {n.backend_ip && <span className="font-mono text-ink-mut">· {n.backend_ip}</span>}
-                  <CFStatus n={n} onRetry={() => resyncCF(n)} busy={busyId === n.id} compact />
-                  {(n.user_count || 0) > 0 ? (
-                    <button type="button" onClick={() => openUsers(n)}
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
-                      {n.user_count} 人
-                    </button>
-                  ) : (
-                    <span className="text-ink-mut">未使用</span>
+                <div className="mt-1.5 space-y-1">
+                  <div className="font-mono text-[12.5px] text-ink">{n.host}:{n.port}</div>
+                  {(n.backend_ip || n.cf_sync) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {n.backend_ip && <span className="font-mono text-[12px] text-ink-mut">{n.backend_ip}</span>}
+                      <CFStatus n={n} onRetry={() => resyncCF(n)} busy={busyId === n.id} />
+                    </div>
                   )}
-                  {n.expires_at > 0 && <>
-                    <span className="text-ink-mut">·</span>
-                    <span>{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
-                  </>}
-                  {n.remark && <>
-                    <span className="text-ink-mut">·</span>
-                    <span>{n.remark}</span>
-                  </>}
+                  <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
+                    {n.group_name && <Badge color="blue">{n.group_name}</Badge>}
+                    <span className="font-mono">{n.protocol || '—'}</span>
+                    {(n.user_count || 0) > 0 ? (
+                      <button type="button" onClick={() => openUsers(n)}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
+                        {n.user_count} 人
+                      </button>
+                    ) : (
+                      <span className="text-ink-mut">未使用</span>
+                    )}
+                    {n.expires_at > 0 && (
+                      <span className="inline-flex items-center gap-1">
+                        {fmtDate(n.expires_at)}
+                        {(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}
+                      </span>
+                    )}
+                    {n.remark && <span className="text-ink-mut">{n.remark}</span>}
+                  </div>
                 </div>
               </div>
             ))}
@@ -364,38 +365,79 @@ function looksDomain(host) {
   return /[a-zA-Z]/.test(host)
 }
 
-function CFStatus({ n, onRetry, busy, compact }) {
+const rowBtn = 'inline-flex items-center justify-center h-7 px-2.5 rounded-lg text-[12px] font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap'
+const rowBtnNeutral = `${rowBtn} border-line bg-surface text-ink-soft hover:bg-raised hover:text-ink`
+const rowBtnPrimary = `${rowBtn} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/25 dark:text-emerald-300 dark:hover:bg-emerald-900/40`
+const rowBtnDanger = `${rowBtn} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/35`
+
+function CFStatus({ n, onRetry, busy }) {
   if (!n?.cf_sync) return null
   if (n.cf_last_error) {
     return (
       <button type="button" disabled={busy} onClick={onRetry}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold border border-rose-300/60 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
-        title={n.cf_last_error}>
-        {compact ? 'CF 失败·重试' : 'CF 失败 · 重试'}
+        title={n.cf_last_error}
+        className="inline-flex items-center">
+        <Badge color="red" className={busy ? 'opacity-50' : 'cursor-pointer hover:brightness-95'}>
+          CF 失败{busy ? '…' : ' · 重试'}
+        </Badge>
       </button>
     )
   }
   if (n.cf_last_sync_at > 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] text-ink-mut" title={`上次同步 ${new Date(n.cf_last_sync_at * 1000).toLocaleString('zh-CN')}`}>
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-        {compact ? 'CF' : `CF · ${fmtTime(n.cf_last_sync_at)}`}
-      </span>
+      <Badge
+        color="green"
+        title={`上次同步 ${new Date(n.cf_last_sync_at * 1000).toLocaleString('zh-CN')}${n.cf_last_ip ? ` · ${n.cf_last_ip}` : ''}`}
+      >
+        CF 已同步
+      </Badge>
     )
   }
-  return <span className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold">CF 待同步</span>
+  return <Badge color="amber">CF 待同步</Badge>
 }
 
 function AddrCell({ n, onRetry, busy }) {
   return (
-    <div className="min-w-[10rem]">
+    <div className="min-w-[11rem] py-0.5">
       <div className="font-mono text-[12.5px] text-ink leading-snug">{n.host}:{n.port}</div>
       {(n.backend_ip || n.cf_sync) && (
-        <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11px] text-ink-mut">
-          {n.backend_ip && <span className="font-mono">{n.backend_ip}</span>}
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
+          {n.backend_ip && <span className="font-mono text-[12px] text-ink-mut leading-none">{n.backend_ip}</span>}
           <CFStatus n={n} onRetry={onRetry} busy={busy} />
         </div>
       )}
+    </div>
+  )
+}
+
+function RowActions({ n, busy, onProbe, onChangeIP, onEdit, onDelete, compact }) {
+  const showDNS = looksDomain(n.host)
+  const showChangeIP = showDNS || n.cf_sync
+  return (
+    <div className={`inline-flex items-center flex-wrap justify-end ${compact ? 'gap-1.5' : 'gap-1.5'}`}>
+      {(showDNS || showChangeIP) && (
+        <div className="inline-flex items-center gap-1.5">
+          {showDNS && (
+            <button type="button" disabled={busy} onClick={onProbe} className={rowBtnNeutral} title="解析域名并对比当前 IP">
+              检测
+            </button>
+          )}
+          {showChangeIP && (
+            <button type="button" onClick={onChangeIP} className={rowBtnPrimary} title="只改当前 IP 并同步 CF">
+              改 IP
+            </button>
+          )}
+        </div>
+      )}
+      <div className="inline-flex items-center gap-1.5">
+        {n.uri && (
+          <CopyText text={n.uri}>
+            <span className={`${rowBtnPrimary} cursor-pointer`}>复制</span>
+          </CopyText>
+        )}
+        <button type="button" onClick={onEdit} className={rowBtnPrimary}>编辑</button>
+        <button type="button" onClick={onDelete} className={rowBtnDanger}>删除</button>
+      </div>
     </div>
   )
 }
