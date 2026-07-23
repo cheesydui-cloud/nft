@@ -86,6 +86,8 @@ export default function RulesDetail() {
                     const text = formatRelayCopyText(rule.relay_uri, {
                       username: rule.owner_name || '',
                       ruleName: rule.name || '',
+                      // 用户下发落地到期，不是落地仓库到期
+                      expiresAt: rule.landing_expires_at || 0,
                     }) || rule.relay_uri
                     copyToClipboard(text).then(() => toast('代理 URI 已复制')).catch(() => toast('复制失败', 'error'))
                   }}

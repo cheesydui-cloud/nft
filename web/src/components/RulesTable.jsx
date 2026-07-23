@@ -43,8 +43,10 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
   const ownerForCopy = (r) => r.owner_name || copyUsername || ''
 
   const renderLandingExpiry = (r) => {
-    if (!landingExpiry) return null
-    const ts = landingExpiry.get(exitOf(r))
+    // Prefer server field (user_landing_exits); map is fallback for older payloads.
+    const ts = (r.landing_expires_at > 0)
+      ? r.landing_expires_at
+      : (landingExpiry ? landingExpiry.get(exitOf(r)) : 0)
     if (!ts || ts <= 0) return null
     const badge = expiryBadge(ts)
     if (!badge) return null
@@ -143,7 +145,10 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                       : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>
                     const proxyRow = (uri, tag) => {
                       // List label stays landing name; clipboard uses 用户名-到期/规则名.
-                      const expiresAt = relayExpiryFromMap(landingExpiry, r.exit_host, r.exit_port)
+                      // Expiry = 用户下发落地到期 (landing_expires_at / user_landing_exits).
+                      const expiresAt = (r.landing_expires_at > 0)
+                        ? r.landing_expires_at
+                        : relayExpiryFromMap(landingExpiry, r.exit_host, r.exit_port)
                       const baseName = buildRelayDisplayName({
                         username: ownerForCopy(r),
                         ruleName: r.name || '',

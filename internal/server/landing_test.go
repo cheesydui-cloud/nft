@@ -14,9 +14,13 @@ func TestClassifyExit(t *testing.T) {
 	}
 
 	t.Run("landing match yields relay uri with entry endpoint", func(t *testing.T) {
+		idxWithExp := map[string]landing.Node{
+			"1.2.3.4:443": {Name: "HK-01", Protocol: "vless", Host: "1.2.3.4", Port: 443,
+				URI: "vless://uuid@1.2.3.4:443?security=reality&sni=a.com#HK-01", ExpiresAt: 1_787_000_000},
+		}
 		it := ruleListItem{Rule: &db.Rule{ExitHost: "1.2.3.4", ExitPort: 443},
 			Entry: "relay.example:10001", Exit: "1.2.3.4:443"}
-		it.classifyExit(idx, true)
+		it.classifyExit(idxWithExp, true)
 		if it.ExitKind != "landing" {
 			t.Fatalf("kind = %q, want landing", it.ExitKind)
 		}
@@ -25,6 +29,9 @@ func TestClassifyExit(t *testing.T) {
 		}
 		if it.LandingProtocol != "vless" {
 			t.Errorf("landing_protocol = %q, want vless", it.LandingProtocol)
+		}
+		if it.LandingExpiresAt != 1_787_000_000 {
+			t.Errorf("landing_expires_at = %d, want user-exit expiry", it.LandingExpiresAt)
 		}
 		want := "vless://uuid@relay.example:10001?security=reality&sni=a.com#HK-01"
 		if it.RelayURI != want {

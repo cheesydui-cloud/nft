@@ -139,11 +139,15 @@ func (s *Server) landingIndexFromDB(userID int64) map[string]landing.Node {
 					uri = rewritten
 				}
 			}
-			m[key] = landing.Node{Name: name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, URI: uri}
+				m[key] = landing.Node{
+					Name: name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, URI: uri,
+					// Per-user assignment expiry (user_landing_exits), not warehouse.
+					ExpiresAt: e.ExpiresAt,
+				}
+			}
 		}
+		return m
 	}
-	return m
-}
 
 // hasDynamicSource reports whether the user has a subscription URL (a refresh
 // button only makes sense then; a manual-only source is static).

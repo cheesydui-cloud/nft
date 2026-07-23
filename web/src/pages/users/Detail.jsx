@@ -504,6 +504,8 @@ export default function UserDetail() {
                     // make every row show the same rate when one of them is busy.
                     const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
                     const copyRuleLink = async () => {
+                      // Prefer rule.landing_expires_at (user_landing_exits).
+                      // landing_nodes[].expires_at is the same source after API fix.
                       const expiryMap = new Map()
                       for (const n of landing_nodes) {
                         if (n.expires_at > 0) expiryMap.set(`${n.host}:${n.port}`, n.expires_at)

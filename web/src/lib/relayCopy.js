@@ -41,6 +41,16 @@ export function formatRelayCopyText(uri, {
 }
 
 /**
+ * Prefer rule.landing_expires_at (user_landing_exits / 用户下发落地到期).
+ * Optional expiryMap is a fallback keyed by host:port (e.g. /my/landing-nodes).
+ * Never use node_repo warehouse expiry.
+ */
+export function ruleLandingExpiresAt(rule, expiryMap) {
+  if (rule?.landing_expires_at > 0) return rule.landing_expires_at
+  return relayExpiryFromMap(expiryMap, rule?.exit_host, rule?.exit_port)
+}
+
+/**
  * Build clipboard text for a rule's client-facing links.
  * Prefer renamed relay URIs; fall back to entry host:port (unchanged).
  */
@@ -50,7 +60,7 @@ export function formatRuleCopyParts(rule, {
   asYaml = false,
   displayName,
 } = {}) {
-  const expiresAt = relayExpiryFromMap(expiryMap, rule?.exit_host, rule?.exit_port)
+  const expiresAt = ruleLandingExpiresAt(rule, expiryMap)
   const opts = {
     username: username || rule?.owner_name || '',
     ruleName: rule?.name || '',

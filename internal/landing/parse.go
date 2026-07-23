@@ -17,12 +17,16 @@ import (
 )
 
 // Node is a single parsed landing node.
+// ExpiresAt is not part of a subscription URI; it is filled from the user's
+// assigned landing-exit ledger (user_landing_exits.expires_at) when the panel
+// materializes admin-assigned exits — never from the node-repo warehouse.
 type Node struct {
-	Name     string `json:"name"`
-	Protocol string `json:"protocol"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	URI      string `json:"uri"`
+	Name      string `json:"name"`
+	Protocol  string `json:"protocol"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	URI       string `json:"uri"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
 // ParseURIs parses each proxy URI, skipping blank lines, comments (lines
