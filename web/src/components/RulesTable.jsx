@@ -216,7 +216,8 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
-                  <QRCodeButton text={ruleQRText(r)} toast={toast} />
+                  {/* QR lives on「我的代理」for users; admin list keeps one-tap scan. */}
+                  {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} />}
                   <MoreMenu items={[
                     onEdit && { label: '编辑', onClick: () => onEdit(r) },
                     onCopy && { label: '复制', onClick: () => onCopy(r) },
@@ -244,7 +245,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <span className="font-semibold text-[14px]">{r.name}</span>
               <div className="flex items-center gap-2">
                 <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
-                <QRCodeButton text={ruleQRText(r)} toast={toast} />
+                {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} />}
                 <ProtoBadge proto={r.proto} />
               </div>
             </div>

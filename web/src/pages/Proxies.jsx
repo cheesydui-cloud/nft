@@ -153,7 +153,10 @@ export default function Proxies() {
               }`}>{label} {n}</button>
           ))}
           {filtered.length > 0 && (
-            <button onClick={() => {
+            <button
+              type="button"
+              title="一次复制当前列表全部链接，适合批量导入电脑端"
+              onClick={() => {
               const all = copyAllText()
               if (!all) { toast('没有可复制的内容', 'error'); return }
               copyToClipboard(all).then(() => toast(`已复制 ${filtered.length} 条`)).catch(() => toast('复制失败', 'error'))
@@ -206,14 +209,35 @@ export default function Proxies() {
                         : <Badge color="blue">直连</Badge>}
                     </td>
                     <td className="text-right">
-                      <div className="inline-flex items-center gap-2.5 justify-end">
-                        {qr && <QRCodeButton text={qr} toast={toast} />}
-                        {text && (
+                      <div className="inline-flex items-center gap-4 justify-end">
+                        <QRCodeButton
+                          text={qr}
+                          toast={toast}
+                          label="生成二维码"
+                          title="适合手机端扫码导入"
+                        />
+                        {text ? (
                           <CopyText text={text}>
-                            <span className="text-emerald-600 font-sans text-xs font-semibold">
-                              {copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri) ? '复制YAML' : '复制'}
+                            <span
+                              className="text-emerald-600 font-sans text-xs font-semibold cursor-pointer hover:underline"
+                              title={
+                                copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri)
+                                  ? '适合 Clash、软路由等粘贴配置'
+                                  : '适合电脑 V2RayN、Clash、软路由等粘贴导入'
+                              }
+                            >
+                              {copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri)
+                                ? '复制 YAML'
+                                : '复制链接'}
                             </span>
                           </CopyText>
+                        ) : (
+                          <span
+                            className="text-ink-mut font-sans text-xs font-semibold opacity-40 cursor-not-allowed"
+                            title="暂无可导入链接"
+                          >
+                            复制链接
+                          </span>
                         )}
                       </div>
                     </td>

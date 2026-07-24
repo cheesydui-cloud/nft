@@ -72,7 +72,7 @@ export function QRCodeButton({ text, disabled, className = '', label = '二维�
       <button
         type="button"
         disabled={!can}
-        title={can ? title : '无可导入链接'}
+        title={can ? title : '暂无可导入链接'}
         onClick={() => {
           if (onOpen) onOpen()
           setOpen(true)
