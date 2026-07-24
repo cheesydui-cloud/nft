@@ -14,6 +14,9 @@ import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/R
 import UserConfigCard from './UserConfigCard'
 import GrantedNodesCard from './GrantedNodesCard'
 import LandingSourceCard from './LandingSourceCard'
+import { UserCardModal } from '../../components/UserCardModal'
+import { QRCodeButton } from '../../components/QRCodeModal'
+import { HealthDot } from '../../components/HealthDot'
 
 // Cap concurrent probe-chain calls for 「测试全部」 (each request fans out hops).
 const detailProbeLimit = createLimiter(6)
@@ -35,6 +38,7 @@ export default function UserDetail() {
   const [bindings, setBindings] = useState([])
   const [nodeRoles, setNodeRoles] = useState({})
   const [probeAllTrigger, setProbeAllTrigger] = useState(0)
+  const [showCard, setShowCard] = useState(false)
   const confirm = useConfirm()
 
   const load = () => {
@@ -238,6 +242,7 @@ export default function UserDetail() {
         chips={chips}
         actions={isRegularUser ? (
           <>
+            <button onClick={() => setShowCard(true)} className="btn-primary text-xs">复制名片</button>
             <button onClick={toggleUser} className="btn-secondary text-xs">{user.disabled ? '启用' : '禁用'}</button>
             <button onClick={resetTraffic} className="btn-secondary text-xs">重置流量</button>
             <button onClick={resetPassword} className="btn-secondary text-xs">重置密码</button>
@@ -503,21 +508,25 @@ export default function UserDetail() {
                     // on the same relay/composite share a node_id; node speed would
                     // make every row show the same rate when one of them is busy.
                     const sp = ruleSpeeds[r.id] || { up: 0, down: 0 }
+                    const expiryMap = new Map()
+                    for (const n of landing_nodes) {
+                      if (n.expires_at > 0) expiryMap.set(`${n.host}:${n.port}`, n.expires_at)
+                    }
+                    const ruleCopyText = formatRuleCopyText(r, {
+                      username: user.username,
+                      expiryMap,
+                      asYaml: copyFmt === 'yaml',
+                    })
+                    // QR always uses raw URI (not YAML) for client scanners.
+                    const ruleQRText = formatRuleCopyText(r, {
+                      username: user.username,
+                      expiryMap,
+                      asYaml: false,
+                    })
                     const copyRuleLink = async () => {
-                      // Prefer rule.landing_expires_at (user_landing_exits).
-                      // landing_nodes[].expires_at is the same source after API fix.
-                      const expiryMap = new Map()
-                      for (const n of landing_nodes) {
-                        if (n.expires_at > 0) expiryMap.set(`${n.host}:${n.port}`, n.expires_at)
-                      }
-                      const text = formatRuleCopyText(r, {
-                        username: user.username,
-                        expiryMap,
-                        asYaml: copyFmt === 'yaml',
-                      })
-                      if (!text) { toast('该规则没有可复制的链接', 'error'); return }
+                      if (!ruleCopyText) { toast('该规则没有可复制的链接', 'error'); return }
                       try {
-                        await copyToClipboard(text)
+                        await copyToClipboard(ruleCopyText)
                         toast('规则链接已复制')
                       } catch {
                         toast('复制失败', 'error')
@@ -533,13 +542,19 @@ export default function UserDetail() {
                         toast(err.message, 'error')
                       }
                     }
+                    const node = nodeMap[r.node_id]
                     return (
                       <tr key={r.id}>
                         <td className="font-mono text-xs text-ink-mut">{r.id}</td>
                         <td className="font-semibold">
                           <Link to={`/rules/${r.id}`} className="text-emerald-600 hover:underline">{r.name}</Link>
                         </td>
-                        <td className="font-mono text-ink-soft">{nodeMap[r.node_id]?.name || `#${r.node_id}`}</td>
+                        <td className="font-mono text-ink-soft">
+                          <span className="inline-flex items-center gap-2">
+                            <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
+                            {node?.name || `#${r.node_id}`}
+                          </span>
+                        </td>
                         <td className="font-mono text-xs whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
                             <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
@@ -555,6 +570,7 @@ export default function UserDetail() {
                               probeAllTrigger={probeAllTrigger}
                               limit={detailProbeLimit}
                             />
+                            <QRCodeButton text={ruleQRText} toast={toast} />
                             <button onClick={copyRuleLink} className="text-emerald-600 text-xs font-semibold hover:underline">复制</button>
                             <button onClick={() => setEditRule(r)} className="text-emerald-600 text-xs font-semibold hover:underline">编辑</button>
                             <button onClick={deleteRule} className="text-red-600 text-xs font-semibold hover:underline">删除</button>
@@ -617,6 +633,14 @@ export default function UserDetail() {
           <button onClick={() => setNewPassword(null)} className="btn-secondary">关闭</button>
         </div>
       </Modal>
+
+      <UserCardModal
+        open={showCard}
+        onClose={() => setShowCard(false)}
+        user={user}
+        rules={rules}
+        toast={toast}
+      />
     </Layout>
   )
 }

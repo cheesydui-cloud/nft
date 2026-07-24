@@ -11,6 +11,7 @@ import {
 import { formatRelayBatch, formatRelayCopyText, relayExpiryFromMap } from '../lib/relayCopy'
 import { uriToClashYaml } from '../lib/yaml-convert'
 import { fmtDate, expiryBadge } from '../lib/fmt'
+import { QRCodeButton } from '../components/QRCodeModal'
 
 export default function Proxies() {
   const [rules, setRules] = useState(null)
@@ -88,7 +89,7 @@ export default function Proxies() {
 
   // List still shows landing node name; only clipboard renames relay URIs to
   // `{username}-8月5日` / `{username}-{ruleName}`. Direct proxies keep original names.
-  const copyText = (n, displayName) => {
+  const copyText = (n, displayName, { asYaml = copyFmt === 'yaml' } = {}) => {
     if (n.kind === 'relay') {
       if (!n.relay) return null
       const expiresAt = relayExpiryFromMap(expiryMap, n.host, n.port)
@@ -97,17 +98,20 @@ export default function Proxies() {
         ruleName: n.ruleName,
         expiresAt,
         displayName,
-        asYaml: copyFmt === 'yaml',
+        asYaml,
       })
     }
     const uri = n.uri
     if (!uri) return null
-    if (copyFmt === 'yaml') {
+    if (asYaml) {
       const yaml = uriToClashYaml(uri)
       if (yaml) return yaml
     }
     return uri
   }
+
+  // QR always uses raw URI (not YAML) so client scanners can import.
+  const qrText = (n) => copyText(n, undefined, { asYaml: false })
 
   const copyAllText = () => {
     const relayItems = []
@@ -170,6 +174,7 @@ export default function Proxies() {
             <tbody>
               {filtered.map((n, i) => {
                 const text = copyText(n)
+                const qr = qrText(n)
                 return (
                   <tr key={i}>
                     <td className="font-semibold">
@@ -201,13 +206,16 @@ export default function Proxies() {
                         : <Badge color="blue">直连</Badge>}
                     </td>
                     <td className="text-right">
-                      {text && (
-                        <CopyText text={text}>
-                          <span className="text-emerald-600 font-sans text-xs font-semibold">
-                            {copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri) ? '复制YAML' : '复制'}
-                          </span>
-                        </CopyText>
-                      )}
+                      <div className="inline-flex items-center gap-2.5 justify-end">
+                        {qr && <QRCodeButton text={qr} toast={toast} />}
+                        {text && (
+                          <CopyText text={text}>
+                            <span className="text-emerald-600 font-sans text-xs font-semibold">
+                              {copyFmt === 'yaml' && uriToClashYaml(n.kind === 'relay' ? n.relay : n.uri) ? '复制YAML' : '复制'}
+                            </span>
+                          </CopyText>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )

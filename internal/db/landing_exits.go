@@ -405,6 +405,56 @@ func ExpiredLandingExits(d *sql.DB) ([]UserExitKey, error) {
 	return out, rows.Err()
 }
 
+// LandingExitSoonItem is one present landing exit due within a window
+// (or already expired), for admin expiry calendar.
+type LandingExitSoonItem struct {
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Name      string `json:"name"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// ListLandingExitsExpiringWithin returns present exits with expires_at in
+// (0, now+withinSec], ordered by expires_at ascending. withinSec is clamped
+// to at least 0.
+func ListLandingExitsExpiringWithin(d *sql.DB, withinSec int64) ([]LandingExitSoonItem, error) {
+	if withinSec < 0 {
+		withinSec = 0
+	}
+	rows, err := d.Query(`
+		SELECT e.user_id, u.username, e.host, e.port,
+			COALESCE(NULLIF(e.name_override,''), e.name) AS name,
+			e.expires_at
+		FROM user_landing_exits e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.present=1 AND e.expires_at > 0
+		  AND e.expires_at <= strftime('%s','now') + ?
+		ORDER BY e.expires_at ASC, u.username COLLATE NOCASE
+		LIMIT 200`, withinSec)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LandingExitSoonItem
+	for rows.Next() {
+		var it LandingExitSoonItem
+		var exp sql.NullInt64
+		if err := rows.Scan(&it.UserID, &it.Username, &it.Host, &it.Port, &it.Name, &exp); err != nil {
+			return nil, err
+		}
+		if exp.Valid {
+			it.ExpiresAt = exp.Int64
+		}
+		out = append(out, it)
+	}
+	if out == nil {
+		out = []LandingExitSoonItem{}
+	}
+	return out, rows.Err()
+}
+
 // NodesForUserExit returns the distinct physical hop nodes of the user's rules
 // that exit to host:port. Composite entries are already expanded into physical
 // hops in rule_hops; composite virtual nodes have no agent connection and must

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { fmtBytes, fmtTime, nullStr, nullInt } from '../lib/fmt'
+import { fmtBytes, fmtTime, fmtDate, nullStr, nullInt, expiryBadge } from '../lib/fmt'
 import { Layout, useBlur, useUser } from '../components/Layout'
 import { Loading, Empty, Badge, ErrorState, SensText, NodeTypeBadge, NodeBillingBadges } from '../components/ui'
 import { ProxyURIEditor } from '../components/ProxyURIEditor'
@@ -38,6 +38,10 @@ export default function Dashboard() {
 
   const attention = useMemo(() => buildAttention(data, users), [data, users])
   const opsSummary = useMemo(() => buildOpsSummary(data, users), [data, users])
+  const expiryCalendar = useMemo(
+    () => buildExpiryCalendar(users, data?.landing_expiring || []),
+    [users, data?.landing_expiring],
+  )
 
   if (loading) return <Layout><Loading /></Layout>
   if (error || !data) {
@@ -77,6 +81,67 @@ export default function Dashboard() {
           icon={<><path d="M12 3v18"/><path d="m5 12 7-7 7 7"/></>} />
         <StatCard label="用户" value={user_count} sub="系统用户数"
           icon={<><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/></>} />
+      </div>
+
+      <div className="card mb-6">
+        <div className="card-header justify-between">
+          <h3 className="text-[15px] font-bold">到期日历 · 7 天内</h3>
+          <span className="text-[12.5px] text-ink-mut">
+            {expiryCalendar.length ? `${expiryCalendar.length} 项待续` : '暂无即将到期'}
+          </span>
+        </div>
+        {expiryCalendar.length === 0 ? (
+          <div className="px-5 py-8 text-center text-[13px] text-ink-mut">
+            7 天内没有账号或落地即将到期
+          </div>
+        ) : (
+          <TableBox>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>类型</th>
+                  <th>用户</th>
+                  <th>名称</th>
+                  <th>到期日</th>
+                  <th>剩余</th>
+                  <th className="text-right">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expiryCalendar.map(row => (
+                  <tr key={row.key}>
+                    <td>
+                      <Badge color={row.kind === 'user' ? 'blue' : 'emerald'}>
+                        {row.kind === 'user' ? '账号' : '落地'}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Link to={`/users/${row.userId}`} className="font-semibold text-emerald-600 hover:underline">
+                        {row.username}
+                      </Link>
+                    </td>
+                    <td className="text-ink-soft text-[13px] truncate max-w-[220px]" title={row.name}>
+                      {row.name}
+                    </td>
+                    <td className="font-mono text-xs">{fmtDate(row.expiresAt)}</td>
+                    <td className="font-mono text-xs">
+                      {row.daysLeft < 0
+                        ? <span className="text-red-600">已过期</span>
+                        : row.daysLeft === 0
+                          ? <span className="text-amber-600">今天</span>
+                          : `${row.daysLeft} 天`}
+                    </td>
+                    <td className="text-right">
+                      {row.badge
+                        ? <Badge color={row.badge.color}>{row.badge.label}</Badge>
+                        : <span className="text-ink-mut text-xs">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableBox>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-[18px] mb-6">
@@ -416,4 +481,52 @@ function NodeStatus({ node }) {
   const lastErr = nullStr(node.last_error)
   if (lastErr) return <Badge color="red" title={lastErr}>错误</Badge>
   return node.online === 1 ? <Badge color="green">在线</Badge> : <Badge color="gray">离线</Badge>
+}
+
+/** Merge account + landing exits due within 7 days for the ops expiry calendar. */
+function buildExpiryCalendar(users, landingExpiring) {
+  const now = Math.floor(Date.now() / 1000)
+  const rows = []
+
+  if (Array.isArray(users)) {
+    for (const u of users) {
+      if (u.role === 'admin' || u.disabled) continue
+      const exp = nullInt(u.expires_at) || 0
+      if (exp <= 0) continue
+      if (exp > now + 7 * DAY) continue
+      const daysLeft = Math.ceil((exp - now) / DAY)
+      rows.push({
+        key: `user-${u.id}`,
+        kind: 'user',
+        userId: u.id,
+        username: u.username,
+        name: '账号到期',
+        expiresAt: exp,
+        daysLeft,
+        badge: expiryBadge(exp),
+      })
+    }
+  }
+
+  if (Array.isArray(landingExpiring)) {
+    for (const e of landingExpiring) {
+      const exp = e.expires_at || 0
+      if (exp <= 0) continue
+      const daysLeft = Math.ceil((exp - now) / DAY)
+      const hostPort = e.port ? `${e.host}:${e.port}` : e.host
+      rows.push({
+        key: `land-${e.user_id}-${e.host}-${e.port}`,
+        kind: 'landing',
+        userId: e.user_id,
+        username: e.username,
+        name: e.name || hostPort || '落地',
+        expiresAt: exp,
+        daysLeft,
+        badge: expiryBadge(exp),
+      })
+    }
+  }
+
+  rows.sort((a, b) => a.expiresAt - b.expiresAt)
+  return rows.slice(0, 50)
 }

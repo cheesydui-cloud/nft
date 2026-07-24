@@ -308,6 +308,12 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 	// today_raw_bytes is operator actual traffic (raw up+down), not billable.
 	todayRawBytes, _ := db.TodayRawTrafficBytes(s.DB)
 	userCount, _ := db.CountUsers(s.DB)
+	// Landing exits due within 7 days (and already expired present rows) for
+	// the admin expiry calendar on the ops overview.
+	landingSoon, _ := db.ListLandingExitsExpiringWithin(s.DB, 7*24*3600)
+	if landingSoon == nil {
+		landingSoon = []db.LandingExitSoonItem{}
+	}
 	jsonOK(w, map[string]any{
 		"nodes":              nodes,
 		"node_traffic":       nodeTraffic,
@@ -316,6 +322,7 @@ func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
 		"total_bytes":        totalBytes,
 		"today_raw_bytes":    todayRawBytes,
 		"user_count":         userCount,
+		"landing_expiring":   landingSoon,
 	})
 }
 
@@ -2842,9 +2849,26 @@ func (s *Server) apiMyDashboard(w http.ResponseWriter, r *http.Request) {
 			userView["has_landing_source"] = true
 		}
 	}
+	// Present landing exits with expires_at for the user overview "还剩 X 天" banner.
+	landingExits := []map[string]any{}
+	if exits, err := db.PresentLandingExitsForUser(s.DB, u.ID); err == nil {
+		for _, e := range exits {
+			if e.ExpiresAt <= 0 {
+				continue
+			}
+			name := e.Name
+			if e.NameOverride != "" {
+				name = e.NameOverride
+			}
+			landingExits = append(landingExits, map[string]any{
+				"host": e.Host, "port": e.Port, "name": name, "expires_at": e.ExpiresAt,
+			})
+		}
+	}
 	jsonOK(w, map[string]any{
 		"user": userView, "nodes": grantedNodes, "grants": grants,
 		"rules": rules, "show_rate": showRate == "1",
+		"landing_exits": landingExits,
 	})
 }
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { copyToClipboard } from '../lib/clipboard'
+import { HealthDot } from './HealthDot'
 
 /* ---------- Modal ---------- */
 // Portal to document.body so nested page overflow/transform can't clip the sheet.
@@ -309,6 +310,7 @@ export function ProbeButton({ target, nodeId, disabled = false, disabledTitle = 
 export function ProbeChainButton({ chainId, ruleId, probeAllTrigger, limit }) {
   const [state, setState] = useState('idle')
   const [result, setResult] = useState('')
+  const [latencyMs, setLatencyMs] = useState(null)
   const probe = () => {
     setState('loading')
     const param = ruleId ? `rule_id=${ruleId}` : `chain=${chainId}`
@@ -320,32 +322,48 @@ export function ProbeChainButton({ chainId, ruleId, probeAllTrigger, limit }) {
         const joined = parts.join(' + ')
         if (d.ok) {
           setState('ok')
+          setLatencyMs(d.latency_ms || 0)
           setResult(d.hops.length > 1 ? joined + ' = ' + d.latency_ms + 'ms' : d.latency_ms + 'ms')
         } else {
           setState('fail')
+          setLatencyMs(null)
           setResult(joined)
         }
       } else if (d.ok) {
-        setState('ok'); setResult(d.latency_ms + 'ms')
+        setState('ok')
+        setLatencyMs(d.latency_ms || 0)
+        setResult(d.latency_ms + 'ms')
       } else {
-        setState('fail'); setResult(d.error || '不通')
+        setState('fail')
+        setLatencyMs(null)
+        setResult(d.error || '不通')
       }
-    }).catch(() => { setState('fail'); setResult('请求失败') })
+    }).catch(() => { setState('fail'); setLatencyMs(null); setResult('请求失败') })
   }
   useEffect(() => {
     if (probeAllTrigger) probe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [probeAllTrigger])
   const busy = state === 'loading'
+  const probeOk = state === 'ok' ? true : state === 'fail' ? false : null
   return (
     <span className="inline-flex items-center gap-2">
       <button type="button" onClick={probe} disabled={busy}
         className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50">
         {busy ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
-      {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
-      {state === 'fail' && <span className="text-[11px] text-red-600">{result}</span>}
       {busy && <span className="text-[11px] text-ink-mut">测试中...</span>}
+      {!busy && state !== 'idle' && (
+        <span className="inline-flex items-center gap-1.5" title={result}>
+          <HealthDot probeOk={probeOk} latencyMs={latencyMs} showLabel />
+          {result && state === 'ok' && result.includes('=') && (
+            <span className="text-[11px] text-ink-mut font-mono hidden sm:inline">{result}</span>
+          )}
+          {state === 'fail' && result && (
+            <span className="text-[11px] text-red-600 font-mono max-w-[140px] truncate">{result}</span>
+          )}
+        </span>
+      )}
     </span>
   )
 }

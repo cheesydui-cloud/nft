@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Badge, ProtoBadge, SensText, CopyText, Tooltip, ExitKindBadge, Spinner, NodeTypeIcon } from './ui'
-import { useCopyFmt } from './Layout'
+import { useCopyFmt, useToast } from './Layout'
 import { fmtBytes, fmtDate, isExpired, expiryBadge } from '../lib/fmt'
 import { buildRelayDisplayName } from '../lib/landing'
-import { formatRelayCopyText, relayExpiryFromMap } from '../lib/relayCopy'
+import { formatRelayCopyText, formatRuleCopyText, relayExpiryFromMap } from '../lib/relayCopy'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useRuleSpeed, fmtSpeed } from '../lib/useSpeed'
+import { HealthDot } from './HealthDot'
+import { QRCodeButton } from './QRCodeModal'
 
 // Cap concurrent connectivity probes so "test all" doesn't fire one request per
 // rule at once (each fans out to every hop on the server side).
@@ -36,11 +38,19 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
   const isMobile = useIsMobile()
   const [sort, setSort] = useState({ col: null, dir: null })
   const { copyFmt } = useCopyFmt()
+  const toast = useToast()
   // Live rates are admin-only: the user list hides the speed column entirely.
   // Per-rule only (never node totals) so rules sharing a relay show independent ↑/↓.
   const ruleSpeeds = useRuleSpeed({ enabled: isAdmin })
 
   const ownerForCopy = (r) => r.owner_name || copyUsername || ''
+
+  // QR always uses raw URI (not YAML) for client scanners.
+  const ruleQRText = (r) => formatRuleCopyText(r, {
+    username: ownerForCopy(r),
+    expiryMap: landingExpiry,
+    asYaml: false,
+  })
 
   const renderLandingExpiry = (r) => {
     // Prefer server field (user_landing_exits); map is fallback for older payloads.
@@ -110,6 +120,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <td className="font-semibold">{r.name}</td>
               <td>
                 <span className="inline-flex items-center gap-1.5 font-mono text-ink-soft">
+                  <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
                   <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
                   {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
                 </span>
@@ -205,6 +216,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <td className="text-right whitespace-nowrap">
                 <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
+                  <QRCodeButton text={ruleQRText(r)} toast={toast} />
                   <MoreMenu items={[
                     onEdit && { label: '编辑', onClick: () => onEdit(r) },
                     onCopy && { label: '复制', onClick: () => onCopy(r) },
@@ -232,11 +244,13 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <span className="font-semibold text-[14px]">{r.name}</span>
               <div className="flex items-center gap-2">
                 <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
+                <QRCodeButton text={ruleQRText(r)} toast={toast} />
                 <ProtoBadge proto={r.proto} />
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-ink-soft mb-1.5 flex-wrap">
               <span className="inline-flex items-center gap-1 font-mono">
+                <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
                 <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
                 {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
               </span>
@@ -273,6 +287,7 @@ function ProbeIconButton({ ruleId, probeAllTrigger }) {
   const [state, setState] = useState('idle')
   const [label, setLabel] = useState('')
   const [tip, setTip] = useState('')
+  const [latencyMs, setLatencyMs] = useState(null)
   useEffect(() => {
     if (probeAllTrigger) probe()
   }, [probeAllTrigger])
@@ -284,25 +299,38 @@ function ProbeIconButton({ ruleId, probeAllTrigger }) {
         const joined = parts.join(' → ')
         if (d.ok) {
           setState('ok')
+          setLatencyMs(d.latency_ms || 0)
           setLabel(d.hops.length > 1 ? joined + ' = ' + d.latency_ms + 'ms' : d.latency_ms + 'ms')
           setTip(joined + ' = ' + d.latency_ms + 'ms')
         } else {
           setState('fail')
+          setLatencyMs(null)
           setLabel(joined)
           setTip(joined)
         }
-      } else if (d.ok) { setState('ok'); setLabel(d.latency_ms + 'ms'); setTip('') }
-      else { setState('fail'); setLabel(d.error || '不通'); setTip('') }
-    }).catch(() => { setState('fail'); setLabel('失败'); setTip('') })
+      } else if (d.ok) {
+        setState('ok')
+        setLatencyMs(d.latency_ms || 0)
+        setLabel(d.latency_ms + 'ms')
+        setTip('')
+      } else {
+        setState('fail')
+        setLatencyMs(null)
+        setLabel(d.error || '不通')
+        setTip('')
+      }
+    }).catch(() => { setState('fail'); setLatencyMs(null); setLabel('失败'); setTip('') })
   }
+  const probeOk = state === 'ok' ? true : state === 'fail' ? false : null
   return (
     <span className="inline-flex items-center gap-1">
       <button onClick={probe} disabled={state === 'loading'} title={tip || label || '测试连通性'}
         className={`icon-btn ${state === 'ok' ? '!text-green-500 !border-green-500/30' : state === 'fail' ? '!text-red-400 !border-red-500/30' : ''}`}>
         {state === 'loading' ? <Spinner className="w-4 h-4" /> : <IconPulse />}
       </button>
-      {state === 'ok' && <span className="text-[11px] text-green-600 font-mono font-semibold">{label}</span>}
-      {state === 'fail' && <span className="text-[11px] text-red-500 font-mono">{label}</span>}
+      {state !== 'idle' && state !== 'loading' && (
+        <HealthDot probeOk={probeOk} latencyMs={latencyMs} showLabel />
+      )}
     </span>
   )
 }

@@ -9,6 +9,8 @@ import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarAct
 import FolderBar, { MoveToFolderModal } from '../../components/FolderBar'
 import PasteGrantsModal from './PasteGrantsModal'
 import { useIsMobile } from '../../lib/useIsMobile'
+import { UserCardModal } from '../../components/UserCardModal'
+import { buildUserCardText, CARD_INITIAL_PASSWORD, loadPanelBranding } from '../../lib/userCard'
 
 export default function UserList() {
   const [data, setData] = useState(null)
@@ -26,6 +28,7 @@ export default function UserList() {
   const [folderFilter, setFolderFilter] = useState('') // '' all | '0' ungrouped | folder id
   const [sel, setSel] = useState(new Set())
   const [sortBy, setSortBy] = useState(null) // null | 'expires_asc' | 'expires_desc'
+  const [cardUser, setCardUser] = useState(null)
   const { user: currentUser } = useUser()
   const toast = useToast()
   const confirm = useConfirm()
@@ -177,6 +180,11 @@ export default function UserList() {
                         <span className="text-xs text-ink-mut">(当前用户)</span>
                       ) : (
                         <div className="flex gap-2 justify-end">
+                          {u.role !== 'admin' && (
+                            <button onClick={() => setCardUser(u)} title="复制名片" className="icon-btn !text-emerald-600 !border-emerald-500/30">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h3M15 12h3M7 15h10"/></svg>
+                            </button>
+                          )}
                           <button onClick={() => toggleUser(u)} title={u.disabled ? '启用' : '禁用'}
                             className={u.disabled ? 'icon-btn !text-green-600 !border-green-500/30' : 'icon-btn'}>
                             {u.disabled
@@ -252,6 +260,8 @@ export default function UserList() {
           <button onClick={() => setNewPassword(null)} className="btn-secondary">关闭</button>
         </div>
       </Modal>
+
+      <UserCardModal open={!!cardUser} onClose={() => setCardUser(null)} user={cardUser} toast={toast} />
     </Layout>
   )
 }
@@ -308,7 +318,7 @@ function genPassword(len = 16) {
   crypto.getRandomValues(arr)
   return [...arr].map(n => chars[n % chars.length]).join('')
 }
-const emptyForm = () => ({ username: '', password: '', role: 'user', max_forwards: '100', traffic_quota_gb: '0', speed_limit_mbytes: '0', expires_at: todayStr(), landing_sub_url: '', admin_note: '', billing_rate: '1' })
+const emptyForm = () => ({ username: '', password: CARD_INITIAL_PASSWORD, role: 'user', max_forwards: '100', traffic_quota_gb: '0', speed_limit_mbytes: '0', expires_at: todayStr(), landing_sub_url: '', admin_note: '', billing_rate: '1' })
 
 function CreateUserModal({ open, onClose, onDone }) {
   const [form, setForm] = useState(emptyForm)
@@ -345,13 +355,35 @@ function CreateUserModal({ open, onClose, onDone }) {
     // fields are known pre-submit, so copying first is safe; the result is
     // announced only after a successful create, so a failed create never claims
     // the credentials were copied.
-    const info = `面板地址：${panelURL}\n用户名：${form.username}\n密码：${form.password}`
+    // Card always publishes the fixed initial password for delivery consistency.
+    const brand = await loadPanelBranding(api).catch(() => ({ panelURL, panelName: '' }))
+    const expUnix = form.expires_at
+      ? Math.floor(new Date(form.expires_at + 'T00:00:00').getTime() / 1000)
+      : 0
+    const draftUser = {
+      username: form.username,
+      expires_at: expUnix,
+      traffic_used_bytes: 0,
+      traffic_quota_bytes: Math.max(0, Math.round((Number(form.traffic_quota_gb) || 0) * 1073741824)),
+      max_forwards: Number(form.max_forwards) || 0,
+      speed_limit_mbytes: Math.max(0, Math.round(Number(form.speed_limit_mbytes) || 0)),
+      billing_rate: Math.max(0, Number(form.billing_rate) || 1),
+      rule_count: 0,
+    }
+    const info = buildUserCardText({
+      panelName: brand.panelName,
+      panelURL: brand.panelURL || panelURL,
+      user: draftUser,
+      rules: [],
+      password: CARD_INITIAL_PASSWORD,
+    })
     let copied = true
     try { await copyToClipboard(info) } catch { copied = false }
     try {
       const res = await api.post('/users', {
         username: form.username,
-        password: form.password,
+        // Store the same password the card advertises unless admin typed another.
+        password: form.password || CARD_INITIAL_PASSWORD,
         role: form.role,
         ...(isUser ? {
           max_forwards: Number(form.max_forwards),
@@ -363,7 +395,7 @@ function CreateUserModal({ open, onClose, onDone }) {
           billing_rate: Math.max(0, Number(form.billing_rate) || 1),
         } : {}),
       })
-      toast(copied ? '用户已创建，登录信息已复制' : '用户已创建（复制失败，请手动记录密码）')
+      toast(copied ? '用户已创建，名片已复制' : '用户已创建（复制失败，请手动记录）')
       setForm(emptyForm())
       onDone(res?.user?.id)
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
@@ -416,7 +448,7 @@ function CreateUserModal({ open, onClose, onDone }) {
           )}
         </div>
         <div className="flex items-center gap-3 pt-4 border-t border-line-soft">
-          <button type="submit" disabled={loading} className="btn-primary">创建并复制信息</button>
+          <button type="submit" disabled={loading} className="btn-primary">创建并复制名片</button>
           <button type="button" onClick={onClose} className="btn-secondary">取消</button>
         </div>
       </form>

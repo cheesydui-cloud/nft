@@ -27,9 +27,30 @@ export default function MyDashboard() {
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="无法加载数据" /></Layout>
-  const { user, nodes = [], grants = [], rules = [], show_rate } = data
+  const { user, nodes = [], grants = [], rules = [], show_rate, landing_exits = [] } = data
 
   const expiresAt = user.expires_at && user.expires_at > 0 ? user.expires_at : null
+  const nowSec = Math.floor(Date.now() / 1000)
+  const DAY = 86400
+  // Soonest present landing with expiry — banner "落地还剩 X 天".
+  const soonestLanding = (Array.isArray(landing_exits) ? landing_exits : [])
+    .filter(e => e.expires_at > 0)
+    .sort((a, b) => a.expires_at - b.expires_at)[0] || null
+  const landingDaysLeft = soonestLanding
+    ? Math.ceil((soonestLanding.expires_at - nowSec) / DAY)
+    : null
+  const landingBanner = soonestLanding && (
+    landingDaysLeft < 0
+      ? { tone: 'danger', text: `落地「${soonestLanding.name || soonestLanding.host}」已到期，请联系管理员续期。` }
+      : landingDaysLeft <= 7
+        ? {
+            tone: landingDaysLeft <= 3 ? 'warn' : 'info',
+            text: landingDaysLeft === 0
+              ? `落地「${soonestLanding.name || soonestLanding.host}」今天到期，请尽快联系管理员续期。`
+              : `落地「${soonestLanding.name || soonestLanding.host}」还剩 ${landingDaysLeft} 天到期。`,
+          }
+        : null
+  )
 
   const grantByNode = {}
   nodes.forEach((n, i) => { grantByNode[n.id] = grants[i] })
@@ -65,6 +86,18 @@ export default function MyDashboard() {
       {user.disabled && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm font-medium">
           您的账号已被禁用：{nullStr(user.disable_reason)}。请联系管理员。
+        </div>
+      )}
+
+      {landingBanner && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium border ${
+          landingBanner.tone === 'danger'
+            ? 'bg-red-50 border-red-200 text-red-700'
+            : landingBanner.tone === 'warn'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-sky-50 border-sky-200 text-sky-800'
+        }`}>
+          {landingBanner.text}
         </div>
       )}
 
