@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtBytes, fmtTrafficGB, pct, fmtDate, expiryBadge, nullStr } from '../../lib/fmt'
 import { Layout, useToast, useBlur, useCopyFmt } from '../../components/Layout'
-import { Loading, Empty, Badge, Modal, useConfirm, ProbeChainButton } from '../../components/ui'
+import { Loading, Empty, Badge, Modal, useConfirm, ProbeChainButton, SensText } from '../../components/ui'
 import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
@@ -496,7 +496,7 @@ export default function UserDetail() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>ID</th><th>名称</th><th>节点</th><th>网速</th>
+                    <th>ID</th><th>名称</th><th>节点</th><th>落地 IP</th><th>网速</th>
                     <th className="text-right">真实用量</th>
                     <th className="text-right">显示用量(×{rate})</th>
                     <th className="text-right">操作</th>
@@ -543,6 +543,11 @@ export default function UserDetail() {
                       }
                     }
                     const node = nodeMap[r.node_id]
+                    // Landing exit host:port — what the rule dials out to (not entry).
+                    const landingIP = (r.exit_host && r.exit_port)
+                      ? `${r.exit_host}:${r.exit_port}`
+                      : (r.exit || '')
+                    const landingLabel = r.landing_name || ''
                     return (
                       <tr key={r.id}>
                         <td className="font-mono text-xs text-ink-mut">{r.id}</td>
@@ -554,6 +559,20 @@ export default function UserDetail() {
                             <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
                             {node?.name || `#${r.node_id}`}
                           </span>
+                        </td>
+                        <td className="text-xs max-w-[220px]">
+                          {landingIP ? (
+                            <div className="min-w-0">
+                              {landingLabel && (
+                                <div className="text-ink font-medium truncate" title={landingLabel}>{landingLabel}</div>
+                              )}
+                              <div className="font-mono text-ink-soft truncate" title={landingIP}>
+                                <SensText blurred={blurred}>{landingIP}</SensText>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-ink-mut">—</span>
+                          )}
                         </td>
                         <td className="font-mono text-xs whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
