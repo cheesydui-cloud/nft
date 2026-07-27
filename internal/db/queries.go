@@ -104,6 +104,17 @@ type Node struct {
 	// ResolveCompositeHops so the UI can flatten the composite into its member
 	// chain for display and preview. Empty for single nodes.
 	Hops []NodeChildHop `json:"hops,omitempty"`
+	// Optional Cloudflare DNS sync for the entry relay domain. When CFSync
+	// is on, RelayHost should be a stable domain; BackendIP is the A-record
+	// value pushed to Cloudflare. Users never need these fields — they keep
+	// connecting to the domain while the operator swaps BackendIP.
+	BackendIP    string `json:"backend_ip"`
+	CFSync       bool   `json:"cf_sync"`
+	CFZoneID     string `json:"cf_zone_id"`
+	CFRecordName string `json:"cf_record_name"`
+	CFLastSyncAt int64  `json:"cf_last_sync_at"`
+	CFLastError  string `json:"cf_last_error"`
+	CFLastIP     string `json:"cf_last_ip"`
 }
 
 // NodeChildHop is one member of a composite node's chain, resolved to its
@@ -434,7 +445,7 @@ func ResetNodeSecret(d *sql.DB, id int64) (string, error) {
 
 // NOTE: scanNode and the inline scan in grants.go (ListNodesForUser) read these
 // columns in this exact order — keep all three in lockstep when adding a column.
-const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit`
+const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip`
 
 func GetNode(d *sql.DB, id int64) (*Node, error) {
 	row := d.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id)
@@ -445,7 +456,7 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanNode(r rowScanner) (*Node, error) {
 	n := &Node{}
-	var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit int
+	var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
 	var localMigratedAt, lastSeen sql.NullInt64
 	var agentVersion sql.NullString
 	var ownerID sql.NullInt64
@@ -458,6 +469,8 @@ func scanNode(r rowScanner) (*Node, error) {
 		&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
 		&n.SortOrder, &n.RateMultiplier, &unidirectional,
 		&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+		&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
 	); err != nil {
 		return nil, err
 	}
@@ -466,6 +479,7 @@ func scanNode(r rowScanner) (*Node, error) {
 	n.NoDirectExit = noDirectExit == 1
 	n.RelayHostDeclared = relayHostDeclared == 1
 	n.RelayHostV6Declared = relayHostV6Declared == 1
+	n.CFSync = cfSync == 1
 	if ownerID.Valid {
 		v := ownerID.Int64
 		n.OwnerID = &v
@@ -485,6 +499,36 @@ func scanNode(r rowScanner) (*Node, error) {
 	n.LastUpgradeStatus = luStatus.String
 	n.LastUpgradeError = luError.String
 	return n, nil
+}
+
+// NodeCFFields is the CF DNS block for a line node (mirrors node_repo).
+type NodeCFFields struct {
+	BackendIP    string
+	CFSync       bool
+	CFZoneID     string
+	CFRecordName string
+}
+
+// UpdateNodeCFFields writes the CF config block without touching relay_host.
+func UpdateNodeCFFields(d *sql.DB, id int64, cf NodeCFFields) error {
+	sync := 0
+	if cf.CFSync {
+		sync = 1
+	}
+	_, err := d.Exec(`UPDATE nodes SET backend_ip=?, cf_sync=?, cf_zone_id=?, cf_record_name=? WHERE id=?`,
+		strings.TrimSpace(cf.BackendIP), sync, strings.TrimSpace(cf.CFZoneID), strings.TrimSpace(cf.CFRecordName), id)
+	return err
+}
+
+// SetNodeCFSyncResult records the outcome of a Cloudflare DNS push for a node.
+func SetNodeCFSyncResult(d *sql.DB, id int64, ok bool, ip, errMsg string) error {
+	if ok {
+		_, err := d.Exec(`UPDATE nodes SET cf_last_sync_at=?, cf_last_error='', cf_last_ip=? WHERE id=?`,
+			time.Now().Unix(), strings.TrimSpace(ip), id)
+		return err
+	}
+	_, err := d.Exec(`UPDATE nodes SET cf_last_error=? WHERE id=?`, strings.TrimSpace(errMsg), id)
+	return err
 }
 
 func ListNodes(d *sql.DB) ([]*Node, error) {

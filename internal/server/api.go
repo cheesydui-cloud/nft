@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"nft/internal/cloudflare"
 	"nft/internal/db"
 	"nft/internal/landing"
 	"nft/internal/resolver"
@@ -1070,6 +1071,243 @@ func (s *Server) apiSetNodeRelayHostV6(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+// validateNodeCF checks CF fields against the node's relay_host (stable domain).
+func validateNodeCF(relayHost string, cf db.NodeCFFields) error {
+	if !cf.CFSync {
+		if cf.BackendIP != "" && !cloudflare.IsIPv4(cf.BackendIP) {
+			return errBad("当前 IP 必须是 IPv4 地址")
+		}
+		return nil
+	}
+	host := strings.TrimSpace(relayHost)
+	if host == "" {
+		return errBad("开启 CF 同步时，请先把中继地址设为域名")
+	}
+	if net.ParseIP(host) != nil {
+		return errBad("开启 CF 同步时，中继地址须为域名（不能是 IP）")
+	}
+	if !resolver.PlausibleHostname(host) {
+		return errBad("开启 CF 同步时，中继地址须为合法域名")
+	}
+	if !cloudflare.IsIPv4(cf.BackendIP) {
+		return errBad("开启 CF 同步时，须填写当前 IPv4")
+	}
+	return nil
+}
+
+// maybeSyncNodeCF pushes an A record when the line node has cf_sync enabled.
+// relay_host is the DNS name; backend_ip is the A value. Failures are stored
+// on the node row so the admin can fix token/IP and retry without re-saving
+// the whole form.
+func (s *Server) maybeSyncNodeCF(ctx context.Context, adminID int64, n *db.Node) cfSyncResult {
+	if n == nil || !n.CFSync {
+		return cfSyncResult{Attempted: false, Skipped: true, Message: "未开启 CF 同步"}
+	}
+	token, _ := db.GetSetting(s.DB, "cf_api_token")
+	if strings.TrimSpace(token) == "" {
+		msg := "未配置 Cloudflare API Token（请到系统设置填写）"
+		_ = db.SetNodeCFSyncResult(s.DB, n.ID, false, "", msg)
+		n.CFLastError = msg
+		return cfSyncResult{Attempted: true, OK: false, Message: msg}
+	}
+	zoneID := strings.TrimSpace(n.CFZoneID)
+	if zoneID == "" {
+		zoneName, _ := db.GetSetting(s.DB, "cf_zone_name")
+		zoneName = strings.TrimSpace(zoneName)
+		if zoneName == "" {
+			msg := "未指定 Zone（条目 cf_zone_id 为空且系统未设默认 Zone）"
+			_ = db.SetNodeCFSyncResult(s.DB, n.ID, false, "", msg)
+			n.CFLastError = msg
+			return cfSyncResult{Attempted: true, OK: false, Message: msg}
+		}
+		cli := &cloudflare.Client{Token: token}
+		if base, _ := db.GetSetting(s.DB, "cf_api_base"); strings.TrimSpace(base) != "" {
+			cli.BaseURL = strings.TrimSpace(base)
+		}
+		id, err := cli.ResolveZoneID(ctx, zoneName)
+		if err != nil {
+			msg := err.Error()
+			_ = db.SetNodeCFSyncResult(s.DB, n.ID, false, "", msg)
+			n.CFLastError = msg
+			db.WriteAudit(s.DB, adminID, "cf.node.dns.fail", n.RelayHost, msg)
+			return cfSyncResult{Attempted: true, OK: false, Message: msg}
+		}
+		zoneID = id
+		_ = db.UpdateNodeCFFields(s.DB, n.ID, db.NodeCFFields{
+			BackendIP: n.BackendIP, CFSync: n.CFSync, CFZoneID: zoneID, CFRecordName: n.CFRecordName,
+		})
+		n.CFZoneID = zoneID
+	}
+
+	recordName := cloudflare.RecordNameForHost(n.RelayHost, n.CFRecordName)
+	ttlStr, _ := db.GetSetting(s.DB, "cf_ttl")
+	ttl := 1
+	if t, err := strconv.Atoi(strings.TrimSpace(ttlStr)); err == nil && t > 0 {
+		ttl = t
+	}
+
+	cli := &cloudflare.Client{Token: token}
+	if base, _ := db.GetSetting(s.DB, "cf_api_base"); strings.TrimSpace(base) != "" {
+		cli.BaseURL = strings.TrimSpace(base)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	rec, err := cli.UpsertARecord(ctx, zoneID, recordName, n.BackendIP, ttl)
+	if err != nil {
+		msg := err.Error()
+		_ = db.SetNodeCFSyncResult(s.DB, n.ID, false, "", msg)
+		n.CFLastError = msg
+		db.WriteAudit(s.DB, adminID, "cf.node.dns.fail", recordName, msg)
+		return cfSyncResult{Attempted: true, OK: false, Message: msg, Record: recordName, IP: n.BackendIP}
+	}
+	_ = db.SetNodeCFSyncResult(s.DB, n.ID, true, n.BackendIP, "")
+	n.CFLastError = ""
+	n.CFLastIP = n.BackendIP
+	n.CFLastSyncAt = time.Now().Unix()
+	db.WriteAudit(s.DB, adminID, "cf.node.dns.update", recordName, n.BackendIP)
+	return cfSyncResult{
+		Attempted: true,
+		OK:        true,
+		Message:   "已同步 A 记录",
+		IP:        rec.Content,
+		Record:    recordName,
+	}
+}
+
+// apiSetNodeCF configures Cloudflare DNS for a line node's entry domain.
+// relay_host stays the stable client-facing name; backend_ip is the live A value.
+func (s *Server) apiSetNodeCF(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	node, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if node.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点请在入口物理节点上配置 CF")
+		return
+	}
+	var body struct {
+		BackendIP    string `json:"backend_ip"`
+		CFSync       bool   `json:"cf_sync"`
+		CFZoneID     string `json:"cf_zone_id"`
+		CFRecordName string `json:"cf_record_name"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	cf := db.NodeCFFields{
+		BackendIP:    strings.TrimSpace(body.BackendIP),
+		CFSync:       body.CFSync,
+		CFZoneID:     strings.TrimSpace(body.CFZoneID),
+		CFRecordName: strings.TrimSpace(body.CFRecordName),
+	}
+	if err := validateNodeCF(node.RelayHost, cf); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := db.UpdateNodeCFFields(s.DB, id, cf); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	node, _ = db.GetNode(s.DB, id)
+	cfResult := s.maybeSyncNodeCF(r.Context(), u.ID, node)
+	node, _ = db.GetNode(s.DB, id)
+	db.WriteAudit(s.DB, u.ID, "node.set_cf", strconv.FormatInt(id, 10),
+		fmt.Sprintf("sync=%v ip=%s", cf.CFSync, cf.BackendIP))
+	jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult})
+}
+
+// apiSetNodeBackendIP updates only the current IPv4 and re-pushes CF A record.
+// relay_host (domain) is unchanged so user links keep working.
+func (s *Server) apiSetNodeBackendIP(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	node, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if node.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点请在入口物理节点上更换 IP")
+		return
+	}
+	var body struct {
+		BackendIP string `json:"backend_ip"`
+		CFSync    *bool  `json:"cf_sync"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	ip := strings.TrimSpace(body.BackendIP)
+	if !cloudflare.IsIPv4(ip) {
+		jsonErr(w, http.StatusBadRequest, "当前 IP 必须是 IPv4 地址")
+		return
+	}
+	cfSync := node.CFSync
+	if body.CFSync != nil {
+		cfSync = *body.CFSync
+	}
+	if net.ParseIP(strings.TrimSpace(node.RelayHost)) != nil && cfSync {
+		jsonErr(w, http.StatusBadRequest, "中继地址是 IP 时不能开启 CF 同步；请先把中继地址改为域名")
+		return
+	}
+	cf := db.NodeCFFields{
+		BackendIP: ip, CFSync: cfSync,
+		CFZoneID: node.CFZoneID, CFRecordName: node.CFRecordName,
+	}
+	if err := validateNodeCF(node.RelayHost, cf); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := db.UpdateNodeCFFields(s.DB, id, cf); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	node, _ = db.GetNode(s.DB, id)
+	cfResult := s.maybeSyncNodeCF(r.Context(), u.ID, node)
+	node, _ = db.GetNode(s.DB, id)
+	db.WriteAudit(s.DB, u.ID, "node.set_backend_ip", strconv.FormatInt(id, 10), ip)
+	jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult})
+}
+
+// apiResyncNodeCF re-pushes the A record without changing other fields.
+func (s *Server) apiResyncNodeCF(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	node, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if !node.CFSync {
+		jsonErr(w, http.StatusBadRequest, "未开启 CF 同步")
+		return
+	}
+	if !cloudflare.IsIPv4(node.BackendIP) {
+		jsonErr(w, http.StatusBadRequest, "当前 IP 无效，请先设置 IPv4")
+		return
+	}
+	cfResult := s.maybeSyncNodeCF(r.Context(), u.ID, node)
+	node, _ = db.GetNode(s.DB, id)
+	jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult})
+}
+
 func (s *Server) apiUpdateNodePortRange(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	id, err := urlParamInt64(r, "id")
@@ -1500,10 +1738,10 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		ShowRateToUser *bool   `json:"show_rate_to_user"`
 		PoolSize       *int    `json:"pool_size"`
 		// Cloudflare: empty token string means "leave unchanged"; explicit clear via cf_clear_token.
-		CFAPIToken  *string `json:"cf_api_token"`
-		CFClearToken bool   `json:"cf_clear_token"`
-		CFZoneName  *string `json:"cf_zone_name"`
-		CFTTL       *int    `json:"cf_ttl"`
+		CFAPIToken   *string `json:"cf_api_token"`
+		CFClearToken bool    `json:"cf_clear_token"`
+		CFZoneName   *string `json:"cf_zone_name"`
+		CFTTL        *int    `json:"cf_ttl"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")

@@ -50,6 +50,14 @@ export default function NodeDetail() {
   const [ghProxy, setGhProxy] = useState('https://gh-proxy.com/')
   const [cmdRelayHost, setCmdRelayHost] = useState('')
   const [cmdRelayHostV6, setCmdRelayHostV6] = useState('')
+  // CF DNS for line entry domain (same idea as 落地仓库).
+  const [cfSync, setCfSync] = useState(false)
+  const [backendIP, setBackendIP] = useState('')
+  const [cfRecordName, setCfRecordName] = useState('')
+  const [cfZoneID, setCfZoneID] = useState('')
+  const [changeIPOpen, setChangeIPOpen] = useState(false)
+  const [changeIPVal, setChangeIPVal] = useState('')
+  const [cfBusy, setCfBusy] = useState(false)
   // revealedSecret holds the one-time plaintext token returned by a reset; it
   // is never persisted server-side and is cleared when the reveal modal closes.
   const [revealedSecret, setRevealedSecret] = useState('')
@@ -67,6 +75,10 @@ export default function NodeDetail() {
     setRateMult(String(d.node?.rate_multiplier ?? 1))
     setUnidirectional(!!d.node?.unidirectional)
     setNoDirectExit(!!d.node?.no_direct_exit)
+    setCfSync(!!d.node?.cf_sync)
+    setBackendIP(d.node?.backend_ip || '')
+    setCfRecordName(d.node?.cf_record_name || '')
+    setCfZoneID(d.node?.cf_zone_id || '')
   }
   const load = () => {
     setLoading(true)
@@ -125,6 +137,58 @@ export default function NodeDetail() {
   const saveRelayV6 = async (e) => {
     e.preventDefault()
     try { await api.post(`/nodes/${id}/relay-host-v6`, { relay_host_v6: relayHostV6 }); toast('IPv6 中继地址已保存'); load() } catch (err) { toast(err.message, 'error') }
+  }
+  const notifyCF = (cf) => {
+    if (!cf || cf.skipped) return
+    if (cf.ok) toast(cf.message || `CF 已同步 ${cf.record || ''} → ${cf.ip || ''}`.trim())
+    else toast(`CF 同步失败：${cf.message || '未知错误'}`, 'error')
+  }
+  const saveCF = async (e) => {
+    e.preventDefault()
+    setCfBusy(true)
+    try {
+      const res = await api.post(`/nodes/${id}/cf`, {
+        cf_sync: !!cfSync,
+        backend_ip: backendIP.trim(),
+        cf_record_name: cfRecordName.trim(),
+        cf_zone_id: cfZoneID.trim(),
+      })
+      toast('CF 配置已保存')
+      notifyCF(res?.cf_sync)
+      applyData({ ...data, node: res?.node || data.node })
+      load()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setCfBusy(false) }
+  }
+  const resyncCF = async () => {
+    setCfBusy(true)
+    try {
+      const res = await api.post(`/nodes/${id}/cf-resync`, {})
+      notifyCF(res?.cf_sync)
+      if (res?.node) applyData({ ...data, node: res.node })
+      else load()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setCfBusy(false) }
+  }
+  const submitChangeIP = async (e) => {
+    e.preventDefault()
+    const v = changeIPVal.trim()
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) { toast('请填写合法 IPv4', 'error'); return }
+    setCfBusy(true)
+    try {
+      const body = { backend_ip: v }
+      // Domain relay + first-time change IP → auto enable CF like 落地仓库.
+      const rh = (node?.relay_host || '').trim()
+      const looksDomain = rh && !/^\d{1,3}(\.\d{1,3}){3}$/.test(rh) && !rh.includes(':')
+      if (looksDomain && !node?.cf_sync) body.cf_sync = true
+      const res = await api.post(`/nodes/${id}/backend-ip`, body)
+      toast('IP 已更新')
+      notifyCF(res?.cf_sync)
+      setChangeIPOpen(false)
+      if (res?.node) applyData({ ...data, node: res.node })
+      load()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setCfBusy(false) }
   }
   const savePortRange = async (e) => {
     e.preventDefault()
@@ -416,13 +480,77 @@ export default function NodeDetail() {
 
             <ConfigField
               label="中继地址（数据面）"
-              hint={node.relay_host_declared ? '由 daemon 启动参数 --relay-host 管理，UI 不可修改；如需变更请更新节点配置后重启 daemon' : '中继链路用它作为上一跳打向本节点的目标地址'}
+              hint={node.relay_host_declared ? '由 daemon 启动参数 --relay-host 管理，UI 不可修改；如需变更请更新节点配置后重启 daemon' : '用户/上游连这个地址。开 CF 时请填域名（灰云 A 记录），崩线后只改当前 IP 即可'}
             >
               <form onSubmit={saveRelay} className="flex gap-2">
                 <input className="input-field font-mono flex-1" value={relayHost} onChange={e => setRelayHost(e.target.value)} placeholder="数据面公网 IP 或域名" disabled={node.relay_host_declared} />
                 <button type="submit" className="btn-primary flex-none px-5" disabled={node.relay_host_declared}>保存</button>
               </form>
             </ConfigField>
+
+            {!isComposite && (
+              <ConfigField
+                label="Cloudflare DNS"
+                hint="与落地仓库相同：中继填域名后开启同步；线路崩了点「改 IP」写入新 A 记录，用户链接不用改"
+              >
+                <form onSubmit={saveCF} className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[13px] text-ink-soft">
+                      同步 A 记录（DNS only / 灰云，勿开橙云代理）
+                    </div>
+                    <button type="button" role="switch" aria-checked={cfSync}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${cfSync ? 'bg-emerald-600' : 'bg-gray-500'}`}
+                      onClick={() => setCfSync(!cfSync)}>
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cfSync ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[12px] font-semibold text-ink-soft mb-1">
+                        当前 IP {cfSync && <span className="text-red-500">*</span>}
+                      </label>
+                      <input className="input-field font-mono text-sm w-full" value={backendIP}
+                        onChange={e => setBackendIP(e.target.value)} placeholder="要写入 A 记录的 IPv4" />
+                    </div>
+                    <div>
+                      <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名（可选）</label>
+                      <input className="input-field font-mono text-sm w-full" value={cfRecordName}
+                        onChange={e => setCfRecordName(e.target.value)} placeholder="默认用中继域名" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-semibold text-ink-soft mb-1">Zone ID（可选）</label>
+                    <input className="input-field font-mono text-sm w-full" value={cfZoneID}
+                      onChange={e => setCfZoneID(e.target.value)} placeholder="空则用系统设置默认 Zone" />
+                  </div>
+                  {(node.cf_last_sync_at > 0 || node.cf_last_error) && (
+                    <div className={`text-[11px] ${node.cf_last_error ? 'text-red-600' : 'text-ink-mut'}`}>
+                      {node.cf_last_sync_at > 0 && (
+                        <>上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
+                          {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
+                          {node.cf_last_error ? '' : ' · 成功'}
+                        </>
+                      )}
+                      {node.cf_last_error && <>{node.cf_last_sync_at > 0 ? ' · ' : ''}错误：{node.cf_last_error}</>}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="submit" className="btn-primary px-5" disabled={cfBusy}>{cfBusy ? '保存中…' : '保存 CF 配置'}</button>
+                    {node.cf_sync && (
+                      <>
+                        <button type="button" className="btn-secondary px-4" disabled={cfBusy}
+                          onClick={() => { setChangeIPVal(node.backend_ip || backendIP || ''); setChangeIPOpen(true) }}>
+                          改 IP
+                        </button>
+                        <button type="button" className="btn-secondary px-4" disabled={cfBusy} onClick={resyncCF}>
+                          重新同步
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </form>
+              </ConfigField>
+            )}
 
             <ConfigField
               label="IPv6 中继地址"
@@ -561,6 +689,31 @@ export default function NodeDetail() {
         <div className="flex justify-end mt-5">
           <button onClick={() => setRevealedSecret('')} className="btn-primary px-5">我已保存</button>
         </div>
+      </Modal>
+
+      <Modal open={changeIPOpen} onClose={() => !cfBusy && setChangeIPOpen(false)} title={`改 IP · ${node.name}`}>
+        <form onSubmit={submitChangeIP} className="space-y-4">
+          <div className="text-[13px] text-ink-soft">
+            中继 <span className="font-mono font-semibold text-ink">{node.relay_host || '（未设置）'}</span>
+            <div className="text-[12px] text-ink-mut mt-1">
+              只改当前入口 IP 并推送到 CF A 记录；中继域名与用户链接不变。
+            </div>
+          </div>
+          <div>
+            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">当前 IPv4</label>
+            <input className="input-field font-mono" value={changeIPVal}
+              onChange={e => setChangeIPVal(e.target.value)}
+              placeholder="例如 68.252.208.113" autoFocus />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="submit" disabled={cfBusy} className="btn-primary flex-1">
+              {cfBusy ? '保存中…' : '保存并同步 CF'}
+            </button>
+            <button type="button" disabled={cfBusy} onClick={() => setChangeIPOpen(false)} className="btn-secondary flex-1">
+              取消
+            </button>
+          </div>
+        </form>
       </Modal>
     </Layout>
   )

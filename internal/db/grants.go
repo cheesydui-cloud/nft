@@ -111,7 +111,7 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 	for rows.Next() {
 		n := &Node{}
 		g := &UserNode{UserID: userID}
-		var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit int
+		var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
 		var localMigratedAt, lastSeen sql.NullInt64
 		var agentVersion sql.NullString
 		var ownerID sql.NullInt64
@@ -124,6 +124,8 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
 			&n.SortOrder, &n.RateMultiplier, &unidirectional,
 			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
 			&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
 		); err != nil {
 			return nil, nil, err
@@ -136,6 +138,7 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 		n.NoDirectExit = noDirectExit == 1
 		n.RelayHostDeclared = relayHostDeclared == 1
 		n.RelayHostV6Declared = relayHostV6Declared == 1
+		n.CFSync = cfSync == 1
 		if ownerID.Valid {
 			v := ownerID.Int64
 			n.OwnerID = &v
