@@ -20,7 +20,7 @@ const EMPTY = { node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, users }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
   const toast = useToast()
@@ -87,7 +87,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
 
   // Select 的 label 必须是纯字符串（搜索过滤要 .toLowerCase()）：协议栈、
   // 倍率走文本前缀；单点/组合的区分走 options 的 icon 字段。
+  // showStack=false（用户端）时不暴露 v4/v6 能力标签，只显示线路名。
   const fmtStack = (n) => {
+    if (showStack === false) return ''
     const { entryV4, entryV6, exitV6 } = nodeStack(n)
     const parts = [entryV4 && 'v4', entryV6 && 'v6'].filter(Boolean)
     let tag = parts.join('+')

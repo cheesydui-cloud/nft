@@ -130,7 +130,7 @@ export default function MyRuleDetail() {
       <RuleFormModal
         open={showEdit} onClose={() => setShowEdit(false)} title="编辑规则" submitLabel="保存并重下发"
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={showEdit ? ruleToForm(rule) : null}
-        onSubmit={saveEdit} showRate={show_rate} />
+        onSubmit={saveEdit} showRate={show_rate} showStack={false} />
     </Layout>
   )
 }

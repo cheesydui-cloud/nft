@@ -143,7 +143,7 @@ export default function MyRules() {
 
       <RuleFormModal
         open={createOpen} onClose={() => setCreateOpen(false)} title="创建规则" submitLabel="创建规则"
-        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate}
+        nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate} showStack={false}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))
           toast('规则已创建'); setCreateOpen(false)
