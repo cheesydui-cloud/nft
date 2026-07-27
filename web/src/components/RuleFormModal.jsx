@@ -105,15 +105,24 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     const r = n.rate_multiplier ?? 1
     return r !== 1 ? `${stack}${n.name} (×${r})` : `${stack}${n.name}`
   }
-  const nodeOption = (n) => ({ value: n.id, label: fmtRate(n), icon: <NodeTypeIcon type={n.node_type} /> })
+  // User side (showStack=false): no single/composite icons — only a plain name.
+  const nodeOption = (n) => ({
+    value: n.id,
+    label: fmtRate(n),
+    icon: showStack === false ? null : <NodeTypeIcon type={n.node_type} />,
+  })
   // Only entry-role nodes can be the rule's entry — roles missing (nodes
   // reported by a server that predates the roles column) default to entry,
   // so old deployments keep working until an admin explicitly narrows roles.
   const entryNodes = nodes.filter(n => ((n.roles ?? 1) & 1) !== 0)
-  const groups = [
-    { label: '单点', options: entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption) },
-    { label: '组合', options: entryNodes.filter(n => n.node_type === 'composite').map(nodeOption) },
-  ]
+  // Admin: tabbed single/composite groups. User: one flat list of all lines.
+  const entryOptions = entryNodes.map(nodeOption)
+  const groups = showStack === false
+    ? null
+    : [
+        { label: '单点', options: entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption) },
+        { label: '组合', options: entryNodes.filter(n => n.node_type === 'composite').map(nodeOption) },
+      ]
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
@@ -200,7 +209,15 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
       <form onSubmit={submit} className="space-y-[22px]">
         <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
           <label className="fl">选择线路</label>
-          <Select value={form.node_id} onChange={pickEntry} placeholder="-- 选择节点 --" searchable tabs groups={groups} />
+          <Select
+            value={form.node_id}
+            onChange={pickEntry}
+            placeholder="-- 选择节点 --"
+            searchable
+            tabs={showStack !== false}
+            groups={groups || undefined}
+            options={groups ? undefined : entryOptions}
+          />
           {viaLevels.map(({ level, cands, chosen, mustVia }) => (
             <Fragment key={level}>
               <label className="fl">{level === 0 ? '线路层' : `线路层 ${level + 1}`}</label>

@@ -3,13 +3,12 @@ import { api } from '../../lib/api'
 import { pct, fmtTrafficGB, fmtDate, isExpired, nullStr } from '../../lib/fmt'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { Layout } from '../../components/Layout'
-import { Loading, Empty, Badge, NodeTypeBadge } from '../../components/ui'
+import { Loading, Empty, Badge } from '../../components/ui'
 import { TableBox } from '../../components/page'
 
 export default function MyDashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('single')
   const isMobile = useIsMobile()
 
   // 已授权线路的展示顺序是个人偏好，只存本浏览器不上服务器；键按用户 id 区分，
@@ -61,24 +60,17 @@ export default function MyDashboard() {
     const ib = orderIdx.get(b.id) ?? Infinity
     return ia === ib ? 0 : ia - ib
   })
-  const singleNodes = orderedNodes.filter(n => n.node_type !== 'composite')
-  const compositeNodes = orderedNodes.filter(n => n.node_type === 'composite')
-  const tabNodes = tab === 'composite' ? compositeNodes : singleNodes
   const saveNodeOrder = (ids) => {
     setNodeOrder(ids)
     localStorage.setItem(`my.nodeOrder.${user.id}`, JSON.stringify(ids))
   }
   const onDropRow = (toIdx) => {
     if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); return }
-    const list = [...tabNodes]
+    const list = [...orderedNodes]
     const [moved] = list.splice(dragIdx, 1)
     list.splice(toIdx, 0, moved)
     setDragIdx(null)
-    const other = tab === 'composite' ? singleNodes : compositeNodes
-    const ids = tab === 'composite'
-      ? [...other.map(n => n.id), ...list.map(n => n.id)]
-      : [...list.map(n => n.id), ...other.map(n => n.id)]
-    saveNodeOrder(ids)
+    saveNodeOrder(list.map(n => n.id))
   }
 
   return (
@@ -155,28 +147,18 @@ export default function MyDashboard() {
         <AnnouncementArea />
       </div>
 
-      {/* Granted nodes */}
+      {/* Granted nodes — flat list; hide single/composite classification from users */}
       <div className="card">
         <div className="card-header">
           <h3 className="text-[15px] font-bold">已授权线路</h3>
         </div>
-        {nodes.length > 0 && (
-          <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
-            {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
-              <button key={key} onClick={() => setTab(key)}
-                className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
-                  tab === key ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
-                }`}>{label} {n}</button>
-            ))}
-          </div>
-        )}
-        {tabNodes.length > 0 ? (<>
+        {orderedNodes.length > 0 ? (<>
           {/* Desktop table */}
           {!isMobile && <TableBox>
           <table className="tbl">
-            <thead><tr><th>节点</th><th>类型</th>{show_rate && <th>倍率</th>}<th>状态</th><th>限速</th><th>本节点上限</th></tr></thead>
+            <thead><tr><th>节点</th>{show_rate && <th>倍率</th>}<th>状态</th><th>限速</th><th>本节点上限</th></tr></thead>
             <tbody>
-              {tabNodes.map((n, i) => {
+              {orderedNodes.map((n, i) => {
                 const g = grantByNode[n.id]
                 return (
                   <tr key={n.id}
@@ -191,7 +173,6 @@ export default function MyDashboard() {
                       {n.name}
                       {(n.roles & 2) !== 0 && <Badge color="blue" className="ml-1.5">中间层</Badge>}
                     </td>
-                    <td><NodeTypeBadge type={n.node_type} /></td>
                     {show_rate && <td><Badge color="blue">×{n.rate_multiplier ?? 1}</Badge>{n.unidirectional && <Badge color="amber" className="ml-1">单向</Badge>}</td>}
                     <td><NodeOnline node={n} /></td>
                     <td className="font-mono text-xs">{g?.rate_limit_mbytes > 0 ? `${g.rate_limit_mbytes} Mbps` : '不限'}</td>
@@ -204,7 +185,7 @@ export default function MyDashboard() {
           </TableBox>}
           {/* Mobile cards */}
           {isMobile && <div>
-            {tabNodes.map(n => {
+            {orderedNodes.map(n => {
               const g = grantByNode[n.id]
               return (
                 <div key={n.id} className="mobile-card">
@@ -216,7 +197,6 @@ export default function MyDashboard() {
                     <NodeOnline node={n} />
                   </div>
                   <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
-                    <NodeTypeBadge type={n.node_type} />
                     {show_rate && <Badge color="blue">×{n.rate_multiplier ?? 1}</Badge>}
                     {n.unidirectional && <Badge color="amber">单向</Badge>}
                     {g?.rate_limit_mbytes > 0 && <>
@@ -228,9 +208,7 @@ export default function MyDashboard() {
               )
             })}
           </div>}
-        </>) : nodes.length > 0 ? (
-          <Empty title={tab === 'composite' ? '暂无已授权的组合线路' : '暂无已授权的单点线路'} />
-        ) : <Empty title="管理员尚未为您授权任何线路" desc="请联系管理员。" />}
+        </>) : <Empty title="管理员尚未为您授权任何线路" desc="请联系管理员。" />}
       </div>
     </Layout>
   )
