@@ -487,6 +487,7 @@ do_update() {
 
   # ---- 原子替换 ----
   note "[3/5] 原子替换二进制 ..."
+  mkdir -p "$INSTALL_DIR"
   install -m 0755 "$_update_tmp/nft-agent" "$INSTALL_DIR/nft-agent"
   if [[ "$want_server" -eq 1 ]]; then
     install -m 0755 "$_update_tmp/nft-server" "$INSTALL_DIR/nft-server"
@@ -790,6 +791,8 @@ if [[ "$mode" == "server" ]]; then
 fi
 
 note "[2/3] 安装到 $INSTALL_DIR ..."
+# Some minimal images omit /usr/local/sbin; create before install(1).
+mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp/nft-agent" "$INSTALL_DIR/nft-agent"
 if [[ "$mode" == "server" ]]; then
   install -m 0755 "$tmp/nft-server" "$INSTALL_DIR/nft-server"
@@ -883,7 +886,12 @@ EOF
       *)  panel_url="${panel_url}/v1/agents" ;;
     esac
     mkdir -p /etc/nft
-    install -m 0600 /dev/stdin /etc/nft/panel.token <<<"$token"
+    # Do NOT use `install … /dev/stdin` — on some VPS images install(1) cannot
+    # open /dev/stdin and aborts with "No such file or directory" after the
+    # binary is already laid down, leaving the agent never started.
+    umask 077
+    printf '%s' "$token" > /etc/nft/panel.token
+    chmod 600 /etc/nft/panel.token
     range_arg=""
     [[ -n "$port_range" ]] && range_arg=" --port-range $port_range"
     relay_arg=""
