@@ -61,9 +61,15 @@ type Config struct {
 	// daemon stays in tui/server-local mode and only serves its unix
 	// socket. ConnectToken is the bearer credential sent in the hello
 	// frame; required when ConnectURL is set.
+	// Prefer ConnectFile (/etc/nft/panel.connect) when that file is set —
+	// main resolves file-over-flag before constructing Config.
 	ConnectURL   string
 	ConnectToken string
-	PortRange    string
+	// ConnectFile is where panel_redirect persists the new URL.
+	ConnectFile string
+	// AllowInsecureConnect permits ws:// redirects (mirrors CLI flag).
+	AllowInsecureConnect bool
+	PortRange            string
 
 	// DeclaredRelayHost/DeclaredRelayHostV6, when set, are sent with every
 	// hello as the authoritative data-plane address for this node — see
@@ -102,19 +108,25 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.Dataplane == nil {
 		cfg.Dataplane = forward.New(forward.Config{Iface: iface})
 	}
+	connectFile := cfg.ConnectFile
+	if connectFile == "" {
+		connectFile = DefaultConnectFile
+	}
 	return &Daemon{
-		socketPath:          cfg.SocketPath,
-		statePath:           cfg.StatePath,
-		groupName:           cfg.GroupName,
-		dp:                  cfg.Dataplane,
-		legacyPaths:         cfg.LegacyPaths,
-		countersFn:          cfg.Dataplane.Counters,
-		resolveFn:           defaultResolver(resolver.New()),
-		connectURL:          cfg.ConnectURL,
-		connectTok:          cfg.ConnectToken,
-		portRange:           cfg.PortRange,
-		declaredRelayHost:   cfg.DeclaredRelayHost,
-		declaredRelayHostV6: cfg.DeclaredRelayHostV6,
+		socketPath:           cfg.SocketPath,
+		statePath:            cfg.StatePath,
+		groupName:            cfg.GroupName,
+		dp:                   cfg.Dataplane,
+		legacyPaths:          cfg.LegacyPaths,
+		countersFn:           cfg.Dataplane.Counters,
+		resolveFn:            defaultResolver(resolver.New()),
+		connectURL:           cfg.ConnectURL,
+		connectTok:           cfg.ConnectToken,
+		connectFile:          connectFile,
+		allowInsecureConnect: cfg.AllowInsecureConnect,
+		portRange:            cfg.PortRange,
+		declaredRelayHost:    cfg.DeclaredRelayHost,
+		declaredRelayHostV6:  cfg.DeclaredRelayHostV6,
 	}, nil
 }
 
@@ -258,6 +270,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			AgentVersion:        agentVersion(),
 			AgentSHA:            agentSHA(),
 			PortRange:           d.portRange,
+			ConnectFile:         d.connectFile,
+			AllowInsecure:       d.allowInsecureConnect,
 			DeclaredRelayHost:   d.declaredRelayHost,
 			DeclaredRelayHostV6: d.declaredRelayHostV6,
 			GetState:            d.SnapshotForDialer,

@@ -203,8 +203,57 @@ nft-server --reset-admin-password <newpw>
 | `/var/run/nft.sock` | daemon Unix socket |
 | `/var/lib/nft/state.json` | daemon 规则持久化 |
 | `/var/lib/nft/panel.db` | 面板 SQLite 数据库 |
+| `/var/lib/nft/docs-assets/` | 文档图片（与库同目录，迁移时建议一并拷贝） |
 | `/etc/nft/panel.token` | agent token |
+| `/etc/nft/panel.connect` | agent 连接的面板 WebSocket 地址（迁移时自动改写；优先于 unit 里的 `--connect`） |
 | `/usr/local/sbin/nft-upgrade` | 自动生成的升级脚本 |
+
+---
+
+## 面板迁移（换服务器）
+
+把整站数据迁到新机器，并让各节点 agent **自动改连新面板**，无需逐台重装。
+
+### 前置
+
+- 旧面板、新面板都能由管理员登录。
+- Agent 版本支持 `panel_redirect`（v6.4.0+）。更旧的节点请先在旧面板「升级 agent」，或事后对该节点手动重装 agent。
+- 控制面建议 HTTPS；明文安装的 agent 需带 `--insecure-connect` 才能接受 `http://` 新地址。
+
+### 步骤
+
+1. **旧面板** → 系统设置 → **面板迁移** → **导出数据库**，得到 `panel-migrate-YYYYMMDD-HHMMSS.db`。
+2. **新机器**安装面板：
+   ```bash
+   curl -fsSL … | sudo bash -s server   # 或你的 install.sh server
+   sudo systemctl stop nft-server
+   sudo cp /path/to/panel-migrate-….db /var/lib/nft/panel.db
+   # 可选：sudo cp -a 旧机:/var/lib/nft/docs-assets /var/lib/nft/
+   sudo systemctl start nft-server
+   ```
+3. 浏览器打开**新面板**，用原 admin 账号登录，确认用户/节点列表与旧机一致（此时远程节点会显示离线，正常）。
+4. 回到**仍在运行的旧面板** → 系统设置 → 填写新地址（如 `https://新IP:7788`）→ **通知 Agent 切换**。
+5. 观察迁移状态：在线节点会断开并连到新面板；当时离线的节点一旦连上旧面板，会自动收到补推。
+6. 新面板上节点均在线后，停掉旧机；可在旧面板点 **清除待迁移**（或直接关机）。
+
+### 原理简述
+
+| 步骤 | 行为 |
+|------|------|
+| 导出 | 对运行中的 SQLite 做 `VACUUM INTO` 一致快照 |
+| 恢复 | 覆盖新机 `/var/lib/nft/panel.db`（含节点 secret，故 Token 不用改） |
+| 推送 | 旧面板经 WebSocket 下发 `panel_redirect`；agent 写入 `/etc/nft/panel.connect` 并重连 |
+| 补推 | 设置项 `pending_panel_redirect_url`：晚连上旧面板的 agent 在 hello 后也会被推送 |
+
+### 仅换 IP、面板一直用域名时
+
+只需改 DNS A 记录（或线路/落地的 CF「改 IP」），不必做整库迁移。
+
+### 单节点补救
+
+```bash
+sudo bash install.sh agent --panel-url https://新面板 --token <节点Token>
+```
 
 ---
 

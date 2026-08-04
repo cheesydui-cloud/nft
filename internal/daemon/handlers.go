@@ -41,12 +41,14 @@ type Daemon struct {
 	// dialer is atomic so unix-socket handlers running on their own
 	// goroutines can safely read it (e.g. to push tui_segment_changed)
 	// without coordinating with Run's lifecycle code.
-	connectURL          string
-	connectTok          string
-	portRange           string
-	declaredRelayHost   string
-	declaredRelayHostV6 string
-	dialer              atomic.Pointer[Dialer]
+	connectURL           string
+	connectTok           string
+	connectFile          string
+	allowInsecureConnect bool
+	portRange            string
+	declaredRelayHost    string
+	declaredRelayHostV6  string
+	dialer               atomic.Pointer[Dialer]
 
 	// reconcileMu serializes the data-plane reconcile/close calls against the
 	// DNS refresh and write paths. setOwnerRuleset reconciles while holding

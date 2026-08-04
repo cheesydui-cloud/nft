@@ -14,25 +14,27 @@ import (
 // Type constants. Strings (not iota) so the wire is self-describing
 // when debugging with `wscat`/`websocat`.
 const (
-	TypeHello        = "hello"
-	TypeHelloAck     = "hello_ack"
-	TypeApplyRuleset = "apply_ruleset"
-	TypeApplyAck     = "apply_ack"
-	TypeCounters     = "counters"
-	TypeRuleHopEdit  = "rule_hop_edit"
-	TypeRuleDelete   = "rule_delete"
-	TypeRuleCmdAck   = "rule_cmd_ack"
-	TypeRuleCreate   = "rule_create"
-	TypeRuleUpdate   = "rule_update"
-	TypeMigrateRules = "migrate_rules"
-	TypeUpgrade      = "upgrade"
-	TypeUpgradeAck   = "upgrade_ack"
-	TypeProbe        = "probe"
-	TypeProbeAck     = "probe_ack"
-	TypePing         = "ping"
-	TypePong         = "pong"
-	TypeError        = "error"
-	TypeConfigUpdate = "config_update"
+	TypeHello            = "hello"
+	TypeHelloAck         = "hello_ack"
+	TypeApplyRuleset     = "apply_ruleset"
+	TypeApplyAck         = "apply_ack"
+	TypeCounters         = "counters"
+	TypeRuleHopEdit      = "rule_hop_edit"
+	TypeRuleDelete       = "rule_delete"
+	TypeRuleCmdAck       = "rule_cmd_ack"
+	TypeRuleCreate       = "rule_create"
+	TypeRuleUpdate       = "rule_update"
+	TypeMigrateRules     = "migrate_rules"
+	TypeUpgrade          = "upgrade"
+	TypeUpgradeAck       = "upgrade_ack"
+	TypeProbe            = "probe"
+	TypeProbeAck         = "probe_ack"
+	TypePing             = "ping"
+	TypePong             = "pong"
+	TypeError            = "error"
+	TypeConfigUpdate     = "config_update"
+	TypePanelRedirect    = "panel_redirect"
+	TypePanelRedirectAck = "panel_redirect_ack"
 )
 
 // Envelope wraps every frame. ID is required for req/resp pairs
@@ -220,4 +222,19 @@ type Error struct {
 
 type ConfigUpdate struct {
 	PoolSize int `json:"pool_size"`
+}
+
+// PanelRedirect asks an agent to switch its control-plane connect URL (panel
+// host migration). PanelURL may be https://… or wss://…/v1/agents; agents
+// normalize and persist it before reconnecting. Force is reserved for future
+// use (e.g. re-push even if the agent already reports the same URL).
+type PanelRedirect struct {
+	PanelURL string `json:"panel_url"`
+	Force    bool   `json:"force,omitempty"`
+}
+
+// PanelRedirectAck is the agent's reply to PanelRedirect (matched by Envelope.ID).
+type PanelRedirectAck struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }

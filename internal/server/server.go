@@ -30,7 +30,9 @@ type Server struct {
 	Landing    *landing.Fetcher
 	// DocsDir is where uploaded doc images are stored (typically
 	// <db-dir>/docs-assets). Empty disables uploads.
-	DocsDir           string
+	DocsDir string
+	// DBPath is the live SQLite path (for migrate export). Empty disables export.
+	DBPath            string
 	loginLimiter      *loginLimiter
 	stopExpiry        chan struct{}
 	stopCycle         chan struct{}
@@ -48,6 +50,12 @@ func New(d *sql.DB) (*Server, error) {
 
 // NewWithDocsDir is like New but sets the directory used for doc image assets.
 func NewWithDocsDir(d *sql.DB, docsDir string) (*Server, error) {
+	return NewWithPaths(d, docsDir, "")
+}
+
+// NewWithPaths is like NewWithDocsDir but also records the SQLite path used for
+// admin migrate/export.
+func NewWithPaths(d *sql.DB, docsDir, dbPath string) (*Server, error) {
 	if _, err := EnsureSelfNode(d); err != nil {
 		return nil, fmt.Errorf("ensure self node: %w", err)
 	}
@@ -60,7 +68,7 @@ func NewWithDocsDir(d *sql.DB, docsDir string) (*Server, error) {
 	disp := &Dispatcher{DB: d, Hub: hub}
 	s := &Server{
 		DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
-		DocsDir:      docsDir,
+		DocsDir: docsDir, DBPath: dbPath,
 		loginLimiter: newLoginLimiter(),
 		stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
 		stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
@@ -691,6 +699,10 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/settings", s.apiGetSettings)
 			r.Post("/settings", s.apiSaveSettings)
+			r.Get("/migrate/export", s.apiMigrateExport)
+			r.Get("/migrate/status", s.apiMigrateStatus)
+			r.Post("/migrate/redirect", s.apiMigrateRedirect)
+			r.Post("/migrate/clear-pending", s.apiMigrateClearPending)
 			r.Post("/node-roles", s.apiSetNodeRoles)
 
 			r.Get("/rules", s.apiListRules)

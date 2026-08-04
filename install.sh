@@ -197,14 +197,14 @@ do_uninstall() {
           || echo "警告: 未能通过 daemon API 降级 panel→tui 段（daemon 可能已停）" >&2
       fi
       write_daemon_unit ""
-      rm -f /etc/nft/panel.token
+      rm -f /etc/nft/panel.token /etc/nft/panel.connect
       systemctl daemon-reload
       systemctl restart nft-daemon.service
       if [[ "$purge" -eq 1 ]]; then
         rm -rf /etc/nft/
         ok "已卸载 agent 角色 + 清 /etc/nft/ 与 daemon panel 段"
       else
-        ok "已卸载 agent 角色（daemon 保留；panel 段已迁回 tui 段，token 文件已删）"
+        ok "已卸载 agent 角色（daemon 保留；panel 段已迁回 tui 段，token/connect 文件已删）"
       fi
       ;;
     daemon)
@@ -892,6 +892,9 @@ EOF
     umask 077
     printf '%s' "$token" > /etc/nft/panel.token
     chmod 600 /etc/nft/panel.token
+    # Durable connect URL (overrides unit --connect after panel_redirect).
+    printf '%s\n' "$panel_url" > /etc/nft/panel.connect
+    chmod 600 /etc/nft/panel.connect
     range_arg=""
     [[ -n "$port_range" ]] && range_arg=" --port-range $port_range"
     relay_arg=""
@@ -908,6 +911,7 @@ EOF
 
 $(ok "===== Agent 安装完成 =====")
 daemon 已通过 WebSocket 连向 $panel_url
+连接地址另存于 /etc/nft/panel.connect（面板迁移时会自动改写，无需重装）
 本机不再暴露任何 HTTP 端口给 panel；如要排查，查看
   journalctl -u nft-daemon.service -f
 

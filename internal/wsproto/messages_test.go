@@ -165,6 +165,24 @@ func TestNewTypeConstants(t *testing.T) {
 	if TypeRuleCreate != "rule_create" || TypeRuleUpdate != "rule_update" || TypeMigrateRules != "migrate_rules" {
 		t.Fatalf("unexpected new type constants: %q %q %q", TypeRuleCreate, TypeRuleUpdate, TypeMigrateRules)
 	}
+	if TypePanelRedirect != "panel_redirect" || TypePanelRedirectAck != "panel_redirect_ack" {
+		t.Fatalf("redirect types: %q %q", TypePanelRedirect, TypePanelRedirectAck)
+	}
+}
+
+func TestPanelRedirectRoundtrip(t *testing.T) {
+	in := PanelRedirect{PanelURL: "https://new.example.com", Force: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got PanelRedirect
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PanelURL != in.PanelURL || !got.Force {
+		t.Fatalf("got %+v", got)
+	}
 }
 
 func TestRuleCommandFramesRoundtrip(t *testing.T) {

@@ -63,10 +63,58 @@ type Hub struct {
 	mu         sync.RWMutex
 	conns      map[int64]*agentConn
 	speedCache *speedCache
+
+	// redirectAck tracks last panel_redirect outcome per node (migrate UI).
+	redirectMu  sync.Mutex
+	redirectAck map[int64]redirectAckEntry
+}
+
+type redirectAckEntry struct {
+	OK        bool
+	Error     string
+	At        int64
+	PanelURL  string
+	Attempted bool
 }
 
 func NewHub(d *sql.DB) *Hub {
-	return &Hub{DB: d, conns: make(map[int64]*agentConn), speedCache: newSpeedCache()}
+	return &Hub{
+		DB: d, conns: make(map[int64]*agentConn), speedCache: newSpeedCache(),
+		redirectAck: make(map[int64]redirectAckEntry),
+	}
+}
+
+// OnlineNodeIDs returns currently connected agent node IDs.
+func (h *Hub) OnlineNodeIDs() []int64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]int64, 0, len(h.conns))
+	for id := range h.conns {
+		out = append(out, id)
+	}
+	return out
+}
+
+func (h *Hub) noteRedirectAck(nodeID int64, url string, ok bool, errMsg string) {
+	h.redirectMu.Lock()
+	defer h.redirectMu.Unlock()
+	if h.redirectAck == nil {
+		h.redirectAck = make(map[int64]redirectAckEntry)
+	}
+	h.redirectAck[nodeID] = redirectAckEntry{
+		OK: ok, Error: errMsg, At: time.Now().Unix(), PanelURL: url, Attempted: true,
+	}
+}
+
+// RedirectAcks returns a copy of redirect ack state for the migrate status API.
+func (h *Hub) RedirectAcks() map[int64]redirectAckEntry {
+	h.redirectMu.Lock()
+	defer h.redirectMu.Unlock()
+	out := make(map[int64]redirectAckEntry, len(h.redirectAck))
+	for k, v := range h.redirectAck {
+		out[k] = v
+	}
+	return out
 }
 
 type agentConn struct {
@@ -180,6 +228,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// the kernel state converges on reconnect instead of drifting until the next
 	// mutation. The rev check keeps this a no-op when the node is already in sync.
 	h.reconcileOnConnect(node.ID, hello.LastAppliedRev)
+	// If an admin started a panel host migration, late-connecting agents still
+	// on the old panel get redirected once they hello here.
+	h.maybePushPendingRedirect(node.ID)
 
 	go h.writerLoop(ac)
 	h.readerLoop(ctx, ac)
@@ -331,7 +382,7 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 			}
 			ackP, _ := json.Marshal(ack)
 			ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeRuleCmdAck, ID: env.ID, Payload: ackP})
-		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck:
+		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck:
 			ac.dispatchAck(env)
 		default:
 			log.Printf("hub: node %d unknown frame type %q", ac.nodeID, env.Type)
@@ -447,6 +498,98 @@ func (h *Hub) BroadcastConfigUpdate(poolSize int) {
 	for _, ac := range conns {
 		ac.enqueueWrite(env)
 	}
+}
+
+const panelRedirectAckTimeout = 15 * time.Second
+
+// SendPanelRedirect pushes a panel_redirect frame and waits for ack.
+// Connection close after dispatch is treated as success (agent is switching).
+func (h *Hub) SendPanelRedirect(nodeID int64, panelURL string, force bool) error {
+	h.mu.RLock()
+	ac, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("节点未连接")
+	}
+
+	id := ac.nextID()
+	ch := make(chan json.RawMessage, 1)
+	ac.pendMu.Lock()
+	ac.pending[id] = ch
+	ac.pendMu.Unlock()
+	defer func() {
+		ac.pendMu.Lock()
+		delete(ac.pending, id)
+		ac.pendMu.Unlock()
+	}()
+
+	payload, _ := json.Marshal(wsproto.PanelRedirect{PanelURL: panelURL, Force: force})
+	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypePanelRedirect, ID: id, Payload: payload})
+
+	select {
+	case raw := <-ch:
+		var ack wsproto.PanelRedirectAck
+		if err := json.Unmarshal(raw, &ack); err != nil {
+			h.noteRedirectAck(nodeID, panelURL, false, "malformed ack")
+			return fmt.Errorf("malformed panel_redirect_ack: %w", err)
+		}
+		if !ack.OK {
+			h.noteRedirectAck(nodeID, panelURL, false, ack.Error)
+			return fmt.Errorf("%s", ack.Error)
+		}
+		h.noteRedirectAck(nodeID, panelURL, true, "")
+		return nil
+	case <-time.After(panelRedirectAckTimeout):
+		h.noteRedirectAck(nodeID, panelURL, false, "timeout")
+		return fmt.Errorf("panel_redirect 应答超时")
+	case <-ac.closed:
+		// Agent typically drops the old session after accepting redirect.
+		h.noteRedirectAck(nodeID, panelURL, true, "connection closed after dispatch")
+		return nil
+	}
+}
+
+// BroadcastPanelRedirect best-effort notifies every online agent. Returns
+// per-node error strings (empty = ok / closed-as-ok).
+func (h *Hub) BroadcastPanelRedirect(panelURL string, force bool) map[int64]string {
+	ids := h.OnlineNodeIDs()
+	out := make(map[int64]string, len(ids))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, id := range ids {
+		id := id
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := h.SendPanelRedirect(id, panelURL, force)
+			mu.Lock()
+			if err != nil {
+				out[id] = err.Error()
+			} else {
+				out[id] = ""
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+// maybePushPendingRedirect sends panel_redirect after hello when the admin
+// left a pending migration URL in settings.
+func (h *Hub) maybePushPendingRedirect(nodeID int64) {
+	url, err := db.GetSetting(h.DB, "pending_panel_redirect_url")
+	if err != nil || strings.TrimSpace(url) == "" {
+		return
+	}
+	url = strings.TrimSpace(url)
+	go func() {
+		// Small delay so the agent finishes post-hello setup (migrate_rules, etc.).
+		time.Sleep(500 * time.Millisecond)
+		if err := h.SendPanelRedirect(nodeID, url, false); err != nil {
+			log.Printf("hub: pending panel_redirect node %d: %v", nodeID, err)
+		}
+	}()
 }
 
 // Helpers --------------------------------------------------------------

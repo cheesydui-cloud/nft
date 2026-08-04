@@ -106,6 +106,15 @@ func runDaemon(args []string) int {
 		}
 	}
 
+	// /etc/nft/panel.connect (written by install / panel_redirect) overrides
+	// the unit --connect flag so host migrations do not need unit rewrites.
+	resolved, err := daemon.ResolveConnectURL(daemon.DefaultConnectFile, connectURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "读取 panel.connect:", err)
+		return 1
+	}
+	connectURL = resolved
+
 	if connectURL != "" {
 		if err := validateConnectURL(connectURL, allowInsecure); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -114,14 +123,16 @@ func runDaemon(args []string) int {
 	}
 
 	cfg := daemon.Config{
-		SocketPath:          socketPath,
-		StatePath:           statePath,
-		GroupName:           groupName,
-		Iface:               iface,
-		ConnectURL:          connectURL,
-		PortRange:           portRange,
-		DeclaredRelayHost:   relayHost,
-		DeclaredRelayHostV6: relayHostV6,
+		SocketPath:           socketPath,
+		StatePath:            statePath,
+		GroupName:            groupName,
+		Iface:                iface,
+		ConnectURL:           connectURL,
+		ConnectFile:          daemon.DefaultConnectFile,
+		AllowInsecureConnect: allowInsecure,
+		PortRange:            portRange,
+		DeclaredRelayHost:    relayHost,
+		DeclaredRelayHostV6:  relayHostV6,
 	}
 	if connectURL != "" {
 		tok, err := os.ReadFile(panelTokenFile)

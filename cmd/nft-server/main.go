@@ -65,7 +65,7 @@ func runServer(args []string) int {
 	// Doc images live next to the SQLite file so backups/migrations of the
 	// data directory keep text and assets together.
 	docsDir := filepath.Join(filepath.Dir(dbPath), "docs-assets")
-	srv, err := server.NewWithDocsDir(d, docsDir)
+	srv, err := server.NewWithPaths(d, docsDir, dbPath)
 	if err != nil {
 		log.Fatalf("server: %v", err)
 	}

@@ -69,6 +69,12 @@ type DialerConfig struct {
 	AgentSHA     string
 	PortRange    string
 
+	// ConnectFile is where panel_redirect persists the new URL
+	// (default DefaultConnectFile). Empty disables durable write.
+	ConnectFile string
+	// AllowInsecure permits ws:// / http:// redirects (mirrors --insecure-connect).
+	AllowInsecure bool
+
 	// DeclaredRelayHost/DeclaredRelayHostV6 come from the daemon's
 	// --relay-host/--relay-host-v6 flags. Non-empty values are sent with
 	// every hello so the panel treats them as authoritative — see
@@ -101,10 +107,22 @@ type upgradeResult struct {
 	ack wsproto.UpgradeAck
 }
 
+type redirectResult struct {
+	id  string
+	ack wsproto.PanelRedirectAck
+	// dropSession forces the current WS session to end after the ack is sent
+	// so Run() re-dials the (possibly new) URL immediately.
+	dropSession bool
+}
+
 type Dialer struct {
 	cfg DialerConfig
 
-	upgradeCh chan upgradeResult
+	// urlMu guards cfg.URL for panel_redirect hot-swap.
+	urlMu sync.RWMutex
+
+	upgradeCh  chan upgradeResult
+	redirectCh chan redirectResult
 
 	cmdCh     chan wsproto.Envelope
 	pendMu    sync.Mutex
@@ -123,14 +141,32 @@ type Dialer struct {
 }
 
 func NewDialer(cfg DialerConfig) *Dialer {
-	return &Dialer{
-		cfg:       cfg,
-		upgradeCh: make(chan upgradeResult, 1),
-		cmdCh:     make(chan wsproto.Envelope, 16),
-		pending:   make(map[string]chan wsproto.RuleCmdAck),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+	if cfg.ConnectFile == "" {
+		cfg.ConnectFile = DefaultConnectFile
 	}
+	return &Dialer{
+		cfg:        cfg,
+		upgradeCh:  make(chan upgradeResult, 1),
+		redirectCh: make(chan redirectResult, 1),
+		cmdCh:      make(chan wsproto.Envelope, 16),
+		pending:    make(map[string]chan wsproto.RuleCmdAck),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
+	}
+}
+
+func (d *Dialer) connectURL() string {
+	d.urlMu.RLock()
+	defer d.urlMu.RUnlock()
+	return d.cfg.URL
+}
+
+// SetConnectURL updates the dial target for the next session (and current
+// reconnect loop). Does not itself close an active session.
+func (d *Dialer) SetConnectURL(u string) {
+	d.urlMu.Lock()
+	d.cfg.URL = strings.TrimSpace(u)
+	d.urlMu.Unlock()
 }
 
 func (d *Dialer) Stop() {
@@ -371,11 +407,12 @@ func (d *Dialer) runOnceSafe(ctx context.Context) (helloAcked bool, err error) {
 // reconnect backoff so long-lived sessions don't pay a minute-long penalty
 // after a single panel hiccup.
 func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
+	target := d.connectURL()
 	dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	ws, _, err := websocket.Dial(dctx, d.cfg.URL, dialOptions())
+	ws, _, err := websocket.Dial(dctx, target, dialOptions())
 	cancel()
 	if err != nil {
-		return false, fmt.Errorf("dial %s: %w", d.cfg.URL, err)
+		return false, fmt.Errorf("dial %s: %w", target, err)
 	}
 	// The panel may push the upgrade binary inline over WS (~13MB); the default
 	// read limit (32KB) would reject that frame and break upgrades.
@@ -622,6 +659,20 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				if d.cfg.OnConfigUpdate != nil {
 					d.cfg.OnConfigUpdate(cu.PoolSize)
 				}
+			case wsproto.TypePanelRedirect:
+				var pr wsproto.PanelRedirect
+				if err := json.Unmarshal(env.Payload, &pr); err != nil {
+					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+					continue
+				}
+				id := env.ID
+				safeGo(func() {
+					ack, drop := d.handlePanelRedirect(pr)
+					select {
+					case d.redirectCh <- redirectResult{id: id, ack: ack, dropSession: drop}:
+					default:
+					}
+				})
 			case wsproto.TypeRuleCmdAck:
 				var ack wsproto.RuleCmdAck
 				if err := json.Unmarshal(env.Payload, &ack); err != nil {
@@ -685,12 +736,48 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeUpgradeAck, ID: res.id, Payload: ap}); err != nil {
 				return helloAcked, err
 			}
+		case res := <-d.redirectCh:
+			ap, _ := json.Marshal(res.ack)
+			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypePanelRedirectAck, ID: res.id, Payload: ap}); err != nil {
+				return helloAcked, err
+			}
+			if res.dropSession && res.ack.OK {
+				// Give the write a moment to flush, then end the session so
+				// Run() dials the new panel URL.
+				time.Sleep(200 * time.Millisecond)
+				return helloAcked, fmt.Errorf("panel_redirect: switching connect url")
+			}
 		case env := <-d.cmdCh:
 			if err := writeOne(ctx, ws, env); err != nil {
 				return helloAcked, err
 			}
 		}
 	}
+}
+
+// handlePanelRedirect validates, persists, and hot-swaps the dial URL.
+// drop=true when the session should reconnect to a new target.
+func (d *Dialer) handlePanelRedirect(pr wsproto.PanelRedirect) (wsproto.PanelRedirectAck, bool) {
+	next, err := NormalizePanelConnectURL(pr.PanelURL, d.cfg.AllowInsecure)
+	if err != nil {
+		return wsproto.PanelRedirectAck{OK: false, Error: err.Error()}, false
+	}
+	cur := d.connectURL()
+	if next == cur && !pr.Force {
+		// Already pointed at the target; still re-persist so file and unit stay aligned.
+		if d.cfg.ConnectFile != "" {
+			_ = WriteConnectURL(d.cfg.ConnectFile, next)
+		}
+		return wsproto.PanelRedirectAck{OK: true}, false
+	}
+	if d.cfg.ConnectFile != "" {
+		if err := WriteConnectURL(d.cfg.ConnectFile, next); err != nil {
+			return wsproto.PanelRedirectAck{OK: false, Error: "write connect file: " + err.Error()}, false
+		}
+	}
+	d.SetConnectURL(next)
+	log.Printf("dialer: panel_redirect accepted → %s (was %s)", next, cur)
+	return wsproto.PanelRedirectAck{OK: true}, true
 }
 
 func readOne(ctx context.Context, ws *websocket.Conn, timeout time.Duration) (wsproto.Envelope, error) {
