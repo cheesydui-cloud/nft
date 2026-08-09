@@ -17,6 +17,9 @@ import UserDetail from './pages/users/Detail'
 import Announcements from './pages/Announcements'
 import NodeRepo from './pages/NodeRepo'
 import Docs from './pages/Docs'
+import ProxyServiceList from './pages/proxy-services/List'
+import ProxyServiceWizard from './pages/proxy-services/Wizard'
+import ProxyServiceDetail from './pages/proxy-services/Detail'
 
 import MyDashboard from './pages/my/Dashboard'
 import MyRules from './pages/my/Rules'
@@ -131,6 +134,9 @@ export default function App() {
           {/* Admin routes */}
           <Route path="/nodes" element={<AdminRoute><NodeList /></AdminRoute>} />
           <Route path="/nodes/:id" element={<AdminRoute><NodeDetail /></AdminRoute>} />
+          <Route path="/proxy-services" element={<AdminRoute><ProxyServiceList /></AdminRoute>} />
+          <Route path="/proxy-services/new" element={<AdminRoute><ProxyServiceWizard /></AdminRoute>} />
+          <Route path="/proxy-services/:id" element={<AdminRoute><ProxyServiceDetail /></AdminRoute>} />
           <Route path="/rules" element={<AdminRoute><RulesList /></AdminRoute>} />
           <Route path="/rules/:id" element={<AdminRoute><RulesDetail /></AdminRoute>} />
           <Route path="/users" element={<AdminRoute><UserList /></AdminRoute>} />

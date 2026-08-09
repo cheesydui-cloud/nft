@@ -223,6 +223,11 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 			_ = db.UpdateNodePortRange(h.DB, node.ID, hello.PortRange)
 		}
 	}
+	if len(hello.Cores) > 0 {
+		if b, err := json.Marshal(hello.Cores); err == nil {
+			_ = db.SetNodeCoresJSON(h.DB, node.ID, string(b))
+		}
+	}
 
 	// A node may have missed rule changes while it was offline. Reconcile now so
 	// the kernel state converges on reconnect instead of drifting until the next
@@ -382,7 +387,7 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 			}
 			ackP, _ := json.Marshal(ack)
 			ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeRuleCmdAck, ID: env.ID, Payload: ackP})
-		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck:
+		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck, wsproto.TypeProxyServiceApplyAck:
 			ac.dispatchAck(env)
 		default:
 			log.Printf("hub: node %d unknown frame type %q", ac.nodeID, env.Type)
@@ -448,6 +453,44 @@ func (h *Hub) SendApplyRuleset(nodeID int64, rules []nft.Rule, rev string) (stri
 		return "", errors.New("apply_ack timeout")
 	case <-ac.closed:
 		return "", errors.New("connection closed before ack")
+	}
+}
+
+const proxyServiceApplyAckTimeout = 30 * time.Second
+
+// SendProxyServiceApply pushes a proxy_service_apply frame and waits for ack.
+func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply) (wsproto.ProxyServiceApplyAck, error) {
+	h.mu.RLock()
+	ac, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return wsproto.ProxyServiceApplyAck{}, fmt.Errorf("node %d not connected", nodeID)
+	}
+	id := ac.nextID()
+	ch := make(chan json.RawMessage, 1)
+	ac.pendMu.Lock()
+	ac.pending[id] = ch
+	ac.pendMu.Unlock()
+	defer func() {
+		ac.pendMu.Lock()
+		delete(ac.pending, id)
+		ac.pendMu.Unlock()
+	}()
+
+	payload, _ := json.Marshal(req)
+	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeProxyServiceApply, ID: id, Payload: payload})
+
+	select {
+	case raw := <-ch:
+		var ack wsproto.ProxyServiceApplyAck
+		if err := json.Unmarshal(raw, &ack); err != nil {
+			return wsproto.ProxyServiceApplyAck{}, fmt.Errorf("malformed proxy_service_apply_ack: %w", err)
+		}
+		return ack, nil
+	case <-time.After(proxyServiceApplyAckTimeout):
+		return wsproto.ProxyServiceApplyAck{}, errors.New("proxy_service_apply_ack timeout")
+	case <-ac.closed:
+		return wsproto.ProxyServiceApplyAck{}, errors.New("connection closed")
 	}
 }
 

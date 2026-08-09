@@ -191,8 +191,11 @@ export function Layout({ children }) {
                 <NavGroup label="监控">
                   <SideLink to="/" icon={<IconDashboard />} end>运营概览</SideLink>
                 </NavGroup>
+                <NavGroup label="节点管理">
+                  <SideLink to="/nodes" icon={<IconNodes />}>节点</SideLink>
+                  <SideLink to="/proxy-services" icon={<IconProxy />}>代理服务</SideLink>
+                </NavGroup>
                 <NavGroup label="资源">
-                  <SideLink to="/nodes" icon={<IconNodes />}>线路监控</SideLink>
                   <SideLink to="/node-repo" icon={<IconRepo />}>落地仓库</SideLink>
                   <SideLink to="/rules" icon={<IconForwards />}>转发规则</SideLink>
                   <SideLink to="/users" icon={<IconUserGroup />}>用户管理</SideLink>

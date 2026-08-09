@@ -433,6 +433,7 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 		ProbedV6:            probedV6,
 		DeclaredRelayHost:   d.cfg.DeclaredRelayHost,
 		DeclaredRelayHostV6: d.cfg.DeclaredRelayHostV6,
+		Cores:               detectProxyCores(),
 	})
 	if err != nil {
 		return false, fmt.Errorf("marshal hello: %w", err)
@@ -670,6 +671,21 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					ack, drop := d.handlePanelRedirect(pr)
 					select {
 					case d.redirectCh <- redirectResult{id: id, ack: ack, dropSession: drop}:
+					default:
+					}
+				})
+			case wsproto.TypeProxyServiceApply:
+				var req wsproto.ProxyServiceApply
+				if err := json.Unmarshal(env.Payload, &req); err != nil {
+					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+					continue
+				}
+				id := env.ID
+				safeGo(func() {
+					ack := handleProxyServiceApply(req)
+					raw, _ := json.Marshal(ack)
+					select {
+					case d.cmdCh <- wsproto.Envelope{Type: wsproto.TypeProxyServiceApplyAck, ID: id, Payload: raw}:
 					default:
 					}
 				})

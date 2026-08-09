@@ -49,7 +49,8 @@ func TestHelloEncode(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got != h {
+	if got.NodeToken != h.NodeToken || got.AgentVersion != h.AgentVersion ||
+			got.OS != h.OS || got.Arch != h.Arch || got.LastAppliedRev != h.LastAppliedRev {
 		t.Fatalf("hello roundtrip mismatch: %+v != %+v", got, h)
 	}
 }

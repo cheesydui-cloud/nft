@@ -14,27 +14,29 @@ import (
 // Type constants. Strings (not iota) so the wire is self-describing
 // when debugging with `wscat`/`websocat`.
 const (
-	TypeHello            = "hello"
-	TypeHelloAck         = "hello_ack"
-	TypeApplyRuleset     = "apply_ruleset"
-	TypeApplyAck         = "apply_ack"
-	TypeCounters         = "counters"
-	TypeRuleHopEdit      = "rule_hop_edit"
-	TypeRuleDelete       = "rule_delete"
-	TypeRuleCmdAck       = "rule_cmd_ack"
-	TypeRuleCreate       = "rule_create"
-	TypeRuleUpdate       = "rule_update"
-	TypeMigrateRules     = "migrate_rules"
-	TypeUpgrade          = "upgrade"
-	TypeUpgradeAck       = "upgrade_ack"
-	TypeProbe            = "probe"
-	TypeProbeAck         = "probe_ack"
-	TypePing             = "ping"
-	TypePong             = "pong"
-	TypeError            = "error"
-	TypeConfigUpdate     = "config_update"
-	TypePanelRedirect    = "panel_redirect"
-	TypePanelRedirectAck = "panel_redirect_ack"
+	TypeHello                = "hello"
+	TypeHelloAck             = "hello_ack"
+	TypeApplyRuleset         = "apply_ruleset"
+	TypeApplyAck             = "apply_ack"
+	TypeCounters             = "counters"
+	TypeRuleHopEdit          = "rule_hop_edit"
+	TypeRuleDelete           = "rule_delete"
+	TypeRuleCmdAck           = "rule_cmd_ack"
+	TypeRuleCreate           = "rule_create"
+	TypeRuleUpdate           = "rule_update"
+	TypeMigrateRules         = "migrate_rules"
+	TypeUpgrade              = "upgrade"
+	TypeUpgradeAck           = "upgrade_ack"
+	TypeProbe                = "probe"
+	TypeProbeAck             = "probe_ack"
+	TypePing                 = "ping"
+	TypePong                 = "pong"
+	TypeError                = "error"
+	TypeConfigUpdate         = "config_update"
+	TypePanelRedirect        = "panel_redirect"
+	TypePanelRedirectAck     = "panel_redirect_ack"
+	TypeProxyServiceApply    = "proxy_service_apply"
+	TypeProxyServiceApplyAck = "proxy_service_apply_ack"
 )
 
 // Envelope wraps every frame. ID is required for req/resp pairs
@@ -97,6 +99,39 @@ type Hello struct {
 	// see hub.go's applyDeclaredRelayHosts.
 	DeclaredRelayHost   string `json:"declared_relay_host,omitempty"`
 	DeclaredRelayHostV6 string `json:"declared_relay_host_v6,omitempty"`
+	// Cores lists proxy cores detected on the agent host (xray / sing-box / mieru).
+	// Empty from agents that predate proxy services.
+	Cores []CoreInfo `json:"cores,omitempty"`
+}
+
+// CoreInfo is one installed proxy core reported in Hello.
+type CoreInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path,omitempty"`
+}
+
+// ProxyServiceApply asks the agent to configure one protocol inbound via a core.
+type ProxyServiceApply struct {
+	InstanceID int64           `json:"instance_id"`
+	ServiceID  int64           `json:"service_id"`
+	Protocol   string          `json:"protocol"`
+	Core       string          `json:"core"`
+	ListenPort int             `json:"listen_port"`
+	ShareHost  string          `json:"share_host"`
+	Name       string          `json:"name"`
+	Config     json.RawMessage `json:"config"`
+}
+
+// ProxyServiceApplyAck is the agent response after attempting deploy.
+type ProxyServiceApplyAck struct {
+	OK          bool   `json:"ok"`
+	Error       string `json:"error,omitempty"`
+	URI         string `json:"uri,omitempty"`
+	CoreVersion string `json:"core_version,omitempty"`
+	// DryRun true means agent accepted config but did not start a real core
+	// process (phase-1 skeleton / core missing).
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // HelloAck is the panel's response to Hello. Error == "" means the

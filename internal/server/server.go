@@ -782,6 +782,16 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/node-repo-folders/{id}", s.apiDeleteNodeRepoFolder)
 			r.Post("/users/{id}/assign-repo", s.apiAssignRepoToUser)
 
+			// Proxy services (Weir-style protocol publish on line nodes)
+			r.Get("/proxy-services", s.apiListProxyServices)
+			r.Post("/proxy-services", s.apiCreateProxyService)
+			r.Get("/proxy-services/gen-keys", s.apiProxyServiceGenKeys)
+			r.Get("/proxy-services/{id}", s.apiGetProxyService)
+			r.Patch("/proxy-services/{id}", s.apiUpdateProxyService)
+			r.Delete("/proxy-services/{id}", s.apiDeleteProxyService)
+			r.Post("/proxy-services/{id}/publish", s.apiPublishProxyService)
+			r.Post("/proxy-services/{id}/sync-repo", s.apiSyncProxyServiceToRepo)
+
 		})
 
 		// User routes

@@ -360,6 +360,13 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 	for _, n := range nodes {
 		normalizeAgentVersion(n, lv, latestAgentSHA)
 	}
+	// cores_json is not on Node struct — attach as parallel map for proxy-service UI.
+	nodeCores := map[int64][]db.NodeCore{}
+	for _, n := range nodes {
+		if cores, err := db.GetNodeCores(s.DB, n.ID); err == nil && len(cores) > 0 {
+			nodeCores[n.ID] = cores
+		}
+	}
 	jsonOK(w, map[string]any{
 		"nodes": nodes, "panel_url": panelURL, "panel_name": panelName,
 		"node_traffic":         nodeTraffic,
@@ -367,6 +374,7 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 		"latest_agent_version": lv,
 		"latest_agent_sha":     latestAgentSHA,
 		"show_rate_to_user":    showRate == "1",
+		"node_cores":           nodeCores,
 	})
 }
 
