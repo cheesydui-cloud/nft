@@ -302,7 +302,7 @@ nft 一键安装/卸载/升级脚本（nft-server 面板 + nft-agent 节点）
   sudo $0 reset-password                 # 交互重置面板 admin 密码
   sudo nft-upgrade                       # 等效于 update（latest）
   sudo nft-upgrade --release v6.5.1      # 指定版本升级（无需再选菜单）
-  sudo nft-upgrade update --release v6.6.0 --gh-proxy ''   # 直连 GitHub（清代理）
+  sudo nft-upgrade update --release v6.6.1 --gh-proxy ''   # 直连 GitHub（清代理）
   # 下载默认 HTTP/1.1 + 重试；gh-proxy 中断会自动回退直连 GitHub
 USAGE
 }
@@ -339,7 +339,9 @@ looks_like_installer() {
 }
 
 persist_script() {
-  if curl -fsSL "$(script_url)" -o "$tmp/upgrade.sh" 2>/dev/null; then
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl_fetch "$(script_url)" "$tmp/upgrade.sh" 2>/dev/null; then
     if looks_like_installer "$tmp/upgrade.sh"; then
       install -m 0755 "$tmp/upgrade.sh" "$SCRIPT_PATH"
       note "升级脚本已保存到 $SCRIPT_PATH（后续升级: sudo nft-upgrade）"
@@ -347,15 +349,19 @@ persist_script() {
       warn "下载的 install.sh 内容异常（疑似错误页/截断），已跳过保存升级脚本"
     fi
   fi
+  rm -rf "$tmp"
 }
+
 
 do_update_script() {
   local stmp surl
   surl="$(script_url)"
   stmp="$(mktemp -d)"
   note "下载最新 install.sh ..."
-  curl -fsSL "$surl" -o "$stmp/upgrade.sh" \
-    || { rm -rf "$stmp"; die "下载失败: $surl"; }
+  if ! curl_fetch "$surl" "$stmp/upgrade.sh"; then
+    rm -rf "$stmp"
+    die "下载失败: $surl"
+  fi
   if ! looks_like_installer "$stmp/upgrade.sh"; then
     rm -rf "$stmp"
     die "下载的 install.sh 内容异常（疑似错误页/截断），拒绝覆盖 $SCRIPT_PATH"
@@ -375,21 +381,40 @@ resolve_release_tag() {
   fi
   local resolved
 
-  # Method 1: follow the GitHub releases/latest redirect.
-  resolved="$(curl -fsSLI --http1.1 --max-time 20 -o /dev/null -w '%{url_effective}' "${GH_PROXY}https://github.com/$REPO/releases/latest" 2>/dev/null \
-              | sed -n 's#.*/releases/tag/##p' | tr -d '\r\n')"
-  if [[ -n "$resolved" ]]; then
-    echo "$resolved"
-    return 0
+  # Try proxied then direct (or direct only when no proxy).
+  local -a bases=()
+  if [[ -n "${GH_PROXY:-}" ]]; then
+    bases+=("${GH_PROXY}https://github.com/$REPO/releases/latest")
+    bases+=("https://github.com/$REPO/releases/latest")
+  else
+    bases+=("https://github.com/$REPO/releases/latest")
   fi
+  local u
+  for u in "${bases[@]}"; do
+    resolved="$(curl -fsSLI --http1.1 --max-time 20 -o /dev/null -w '%{url_effective}' "$u" 2>/dev/null \
+                | sed -n 's#.*/releases/tag/##p' | tr -d '\r\n')"
+    if [[ -n "$resolved" ]]; then
+      echo "$resolved"
+      return 0
+    fi
+  done
 
-  # Method 2: GitHub API (helps when the redirect is intercepted/blocked).
-  resolved="$(curl -fsSL --http1.1 --max-time 15 "${GH_PROXY}https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
-              | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-  if [[ -n "$resolved" ]]; then
-    echo "$resolved"
-    return 0
+  # Method 2: GitHub API.
+  local -a apis=()
+  if [[ -n "${GH_PROXY:-}" ]]; then
+    apis+=("${GH_PROXY}https://api.github.com/repos/$REPO/releases/latest")
+    apis+=("https://api.github.com/repos/$REPO/releases/latest")
+  else
+    apis+=("https://api.github.com/repos/$REPO/releases/latest")
   fi
+  for u in "${apis[@]}"; do
+    resolved="$(curl -fsSL --http1.1 --max-time 15 "$u" 2>/dev/null \
+                | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    if [[ -n "$resolved" ]]; then
+      echo "$resolved"
+      return 0
+    fi
+  done
 
   echo "latest"
 }
@@ -406,69 +431,126 @@ write_agent_identity() {
   printf '%s' "$sha" >"$ETC_DIR/agent.sha"
 }
 
-# curl_fetch downloads one URL to dest with HTTP/1.1, retries, and resume.
-# gh-proxy (and similar CDN frontends) often die mid-stream with HTTP/2
-# INTERNAL_ERROR; HTTP/1.1 + retry is far more reliable on reverse links.
-curl_fetch() {
-  local url="$1" dest="$2"
-  # -C - resumes partial files; --retry covers transient proxy/CDN drops.
-  curl -fL --http1.1 --retry 5 --retry-delay 2 --retry-all-errors \
-    --connect-timeout 20 --max-time 900 -C - --progress-bar \
-    -o "$dest" "$url"
+# ---- resilient GitHub / gh-proxy downloads ---------------------------------
+# gh-proxy (and similar) often dies mid-stream with HTTP/2 INTERNAL_ERROR, or
+# is simply slower than direct GitHub outside CN. We always:
+#   - force HTTP/1.1
+#   - retry transient failures
+#   - try the configured URL, then fall back to the other path (proxy↔direct)
+# --retry-all-errors needs curl ≥7.71; older curl (e.g. Ubuntu 20.04) omits it.
+
+curl_has_retry_all_errors() {
+  curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'
 }
 
-# Strip a known gh-proxy prefix so we can fall back to direct GitHub.
-strip_gh_proxy_url() {
-  local url="$1" pfx
+# Low-level single-URL fetch. No resume (-C): partial files after HTTP/2 kills
+# are often corrupt and make the next attempt hang or checksum-fail.
+curl_fetch_one() {
+  local url="$1" dest="$2"
+  rm -f "$dest"
+  if curl_has_retry_all_errors; then
+    curl -fL --http1.1 --retry 5 --retry-delay 2 --retry-all-errors \
+      --connect-timeout 15 --max-time 600 \
+      --progress-bar -o "$dest" "$url"
+  else
+    curl -fL --http1.1 --retry 5 --retry-delay 2 \
+      --connect-timeout 15 --max-time 600 \
+      --progress-bar -o "$dest" "$url"
+  fi
+}
+
+# Build the "other" URL for a github/raw URL (toggle gh-proxy prefix).
+alt_download_url() {
+  local url="$1" pfx direct
   pfx="${GH_PROXY:-}"
+  # If currently proxied → strip to direct.
   if [[ -n "$pfx" && "$url" == "$pfx"* ]]; then
     echo "${url#"$pfx"}"
     return 0
   fi
-  # Also strip common hard-coded prefixes if GH_PROXY was empty but URL still proxied.
-  for pfx in "https://gh-proxy.com/" "https://mirror.ghproxy.com/" "https://ghproxy.com/"; do
+  for pfx in "https://gh-proxy.com/" "https://mirror.ghproxy.com/" "https://ghproxy.com/" "https://ghfast.top/"; do
     if [[ "$url" == "$pfx"* ]]; then
       echo "${url#"$pfx"}"
       return 0
     fi
   done
-  echo "$url"
+  # If direct GitHub/raw and a proxy is configured → try proxied form.
+  if [[ -n "${GH_PROXY:-}" ]]; then
+    case "$url" in
+      https://github.com/*|https://raw.githubusercontent.com/*|https://api.github.com/*|https://release-assets.githubusercontent.com/*)
+        echo "${GH_PROXY}${url}"
+        return 0
+        ;;
+    esac
+  fi
+  # No alternate.
+  echo ""
 }
 
-# Download one release asset through the proxy and strong-verify it against the
-# release's SHA256SUMS. Echoes the verified sha256 hex on success.
+# Fetch url → dest; on failure try the alternate (proxy↔direct) once.
+curl_fetch() {
+  local url="$1" dest="$2" alt
+  if curl_fetch_one "$url" "$dest"; then
+    return 0
+  fi
+  alt="$(alt_download_url "$url")"
+  if [[ -n "$alt" && "$alt" != "$url" ]]; then
+    warn "下载失败，改试备用地址: $(echo "$alt" | sed 's#https://gh-proxy.com/##;s#https://##' | cut -c1-60)…"
+    if curl_fetch_one "$alt" "$dest"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# github_release_base returns the download root for a tag (or latest).
+# Prefer DIRECT GitHub first when no explicit proxy was requested this run
+# and the saved proxy looks like the default public gh-proxy (often slower
+# or broken on overseas VPS). Explicit --gh-proxy / NFTF_GH_PROXY always win.
+release_download_base() {
+  local tag="$1" direct proxied
+  if [[ -n "${NFTF_RELEASE_BASE_URL:-}" ]]; then
+    echo "$NFTF_RELEASE_BASE_URL"
+    return 0
+  fi
+  if [[ "$tag" == "latest" ]]; then
+    direct="https://github.com/$REPO/releases/latest/download"
+  else
+    direct="https://github.com/$REPO/releases/download/$tag"
+  fi
+  if [[ -n "${GH_PROXY:-}" ]]; then
+    proxied="${GH_PROXY}${direct}"
+    # Explicit flag/env this invocation → honor proxy as primary.
+    if [[ -n "${GH_PROXY_EXPLICIT:-}" || -n "${NFTF_GH_PROXY:-}" ]]; then
+      echo "$proxied"
+      return 0
+    fi
+    # Saved-only proxy (from /etc/nft/gh-proxy): try DIRECT first on upgrade.
+    # Overseas nodes commonly inherit a CN mirror that breaks with HTTP/2.
+    # fetch still falls back to proxied via alt_download_url.
+    echo "$direct"
+    return 0
+  fi
+  echo "$direct"
+}
+
+# Download one release asset and strong-verify against SHA256SUMS.
+# Echoes the verified sha256 hex on success.
 #   $1 = base URL (releases/download root), $2 = asset name, $3 = dest path
-#   $4 = "strict" to hard-fail when SHA256SUMS is unavailable (binaries), or
-#        "soft" to warn and skip (legacy tolerance for optional fetches)
-# On proxy failure, automatically retries the direct GitHub URL once.
+#   $4 = "strict" | "soft"
 fetch_and_verify() {
   local base="$1" asset="$2" dest="$3" strictness="${4:-strict}"
-  local url="$base/$asset" direct
-  rm -f "$dest"
+  local url="$base/$asset" ddir sums_ok=0
+  note "  · $asset"
   if ! curl_fetch "$url" "$dest"; then
-    direct="$(strip_gh_proxy_url "$url")"
-    if [[ "$direct" != "$url" ]]; then
-      warn "代理下载失败，改直连 GitHub: $asset"
-      rm -f "$dest"
-      curl_fetch "$direct" "$dest" || die "下载失败: $url （直连亦失败: $direct）"
-      # Prefer direct base for SHA256SUMS as well.
-      base="$(dirname "$direct")"
-    else
-      die "下载失败: $url"
-    fi
+    die "下载失败: $url"
   fi
-  local ddir sums_url sums_direct
   ddir="$(dirname "$dest")"
-  sums_url="$base/SHA256SUMS"
-  if ! curl_fetch "$sums_url" "$ddir/SHA256SUMS" 2>/dev/null; then
-    sums_direct="$(strip_gh_proxy_url "$sums_url")"
-    if [[ "$sums_direct" != "$sums_url" ]]; then
-      curl_fetch "$sums_direct" "$ddir/SHA256SUMS" 2>/dev/null || true
-    fi
+  if curl_fetch "$base/SHA256SUMS" "$ddir/SHA256SUMS" 2>/dev/null; then
+    sums_ok=1
   fi
-  if [[ -s "$ddir/SHA256SUMS" ]]; then
-    # Verification chatter must go to stderr — stdout carries only the hash the
-    # caller captures into the identity file.
+  if [[ "$sums_ok" -eq 1 && -s "$ddir/SHA256SUMS" ]]; then
+    # Verification chatter must go to stderr — stdout carries only the hash.
     (cd "$ddir" && grep -E "  $asset\$" SHA256SUMS | sha256sum -c - >&2) \
       || die "sha256 校验失败: $asset"
   elif [[ "$strictness" == "strict" ]]; then
@@ -516,7 +598,12 @@ do_update() {
   local tag agent_sha
   tag="$(resolve_release_tag)"
 
+  # Prefer concrete tag in the download base when resolved from "latest".
+  if [[ "$RELEASE" == "latest" && "$tag" != "latest" && -z "${NFTF_RELEASE_BASE_URL:-}" ]]; then
+    base="$(release_download_base "$tag")"
+  fi
   note "[1/5] 下载二进制 ($tag) ..."
+  note "  源: $base"
   agent_sha="$(fetch_and_verify "$base" nft-agent "$_update_tmp/nft-agent" strict)"
   if [[ "$want_server" -eq 1 ]]; then
     fetch_and_verify "$base" nft-server "$_update_tmp/nft-server" strict >/dev/null
@@ -815,10 +902,8 @@ fi
 if [[ "$mode" == "update" ]]; then
   if [[ -n "${NFTF_RELEASE_BASE_URL:-}" ]]; then
     base="$NFTF_RELEASE_BASE_URL"
-  elif [[ "$RELEASE" == "latest" ]]; then
-    base="${GH_PROXY}https://github.com/$REPO/releases/latest/download"
   else
-    base="${GH_PROXY}https://github.com/$REPO/releases/download/$RELEASE"
+    base="$(release_download_base "$RELEASE")"
   fi
   do_update
   exit 0
@@ -830,10 +915,8 @@ remove_legacy_units
 
 if [[ -n "${NFTF_RELEASE_BASE_URL:-}" ]]; then
   base="$NFTF_RELEASE_BASE_URL"
-elif [[ "$RELEASE" == "latest" ]]; then
-  base="${GH_PROXY}https://github.com/$REPO/releases/latest/download"
 else
-  base="${GH_PROXY}https://github.com/$REPO/releases/download/$RELEASE"
+  base="$(release_download_base "$RELEASE")"
 fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
