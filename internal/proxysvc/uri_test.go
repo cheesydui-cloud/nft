@@ -44,16 +44,30 @@ func TestEnsureSecretsAndBuildSS(t *testing.T) {
 	}
 }
 
-func TestEnsureSecretsAndBuildMieru(t *testing.T) {
-	raw, err := EnsureSecrets("mieru", json.RawMessage(`{}`))
-	if err != nil {
-		t.Fatal(err)
+	func TestEnsureSecretsAndBuildMieru(t *testing.T) {
+		raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", 443, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Official simple share link for `mieru import config`.
+		if !strings.HasPrefix(uri, "mierus://") {
+			t.Fatalf("bad uri scheme: %s", uri)
+		}
+		if !strings.Contains(uri, "profile=m1") {
+			t.Fatalf("missing profile: %s", uri)
+		}
+		if !strings.Contains(uri, "port=443") {
+			t.Fatalf("missing port: %s", uri)
+		}
+		if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
+			t.Fatalf("missing protocols: %s", uri)
+		}
+		// Host must not embed :port in simple form (port is a query param).
+		if strings.Contains(uri, "9.9.9.9:443") {
+			t.Fatalf("host should not include listen port: %s", uri)
+		}
 	}
-	uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", 443, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(uri, "mieru://") {
-		t.Fatalf("bad uri: %s", uri)
-	}
-}

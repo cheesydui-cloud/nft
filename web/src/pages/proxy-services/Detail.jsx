@@ -84,11 +84,15 @@ export default function ProxyServiceDetail() {
             <h3 className="text-sm font-bold">覆盖实例（{instances.length}）</h3>
             <Link to="/proxy-services/new" className="text-sm text-emerald-600 font-semibold">发布到更多节点…</Link>
           </div>
+          <p className="text-[12.5px] text-ink-mut mb-3">
+            一期为 dry-run：面板生成可导入的分享链接（mieru 为官方 <span className="font-mono">mierus://</span> 格式），
+            但 agent 尚未在节点上真正拉起 xray / sing-box / mita 进程。链接可导入客户端，需节点侧已安装并手动配置对应核心后才能通。
+          </p>
           <TableScroll>
             {instances.length === 0 ? (
               <Empty title="尚未部署到节点" desc="请通过发布向导选择节点。" />
             ) : (
-              <table className="data-table">
+              <table className="tbl">
                 <thead>
                   <tr>
                     <th>节点</th>

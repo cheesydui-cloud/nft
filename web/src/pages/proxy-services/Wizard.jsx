@@ -396,7 +396,7 @@ export default function ProxyServiceWizard() {
                 仅显示线路节点。具备核心 <span className="font-mono">{core}</span> 的优先；未检测到核心也可选（发布为 dry-run，面板生成 URI）。
               </p>
               <div className="border border-line rounded-xl overflow-hidden">
-                <table className="data-table">
+                <table className="tbl">
                   <thead>
                     <tr>
                       <th className="w-10"></th>
@@ -463,7 +463,7 @@ export default function ProxyServiceWizard() {
               <h3 className="text-sm font-bold mb-3">完成</h3>
               {result?.results && (
                 <div className="border border-line rounded-xl overflow-hidden mb-4">
-                  <table className="data-table">
+                  <table className="tbl">
                     <thead>
                       <tr>
                         <th>节点 ID</th>

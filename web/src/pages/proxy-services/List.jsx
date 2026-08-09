@@ -68,7 +68,7 @@ export default function ProxyServiceList() {
             ) : filtered.length === 0 ? (
               <Empty title="无匹配服务" desc="试试别的关键词。" />
             ) : (
-              <table className="data-table">
+              <table className="tbl">
                 <thead>
                   <tr>
                     <th>名称</th>

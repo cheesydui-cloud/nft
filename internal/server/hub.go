@@ -218,11 +218,10 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	applyDeclaredRelayHosts(h.DB, node, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
 	fillNodeRelayHosts(h.DB, node, connectIP, hello.ProbedV4, hello.ProbedV6, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
-	if hello.PortRange != "" {
-		if err := db.ValidatePortRange(hello.PortRange); err == nil {
-			_ = db.UpdateNodePortRange(h.DB, node.ID, hello.PortRange)
-		}
-	}
+	// Port range is panel-owned: admin edits via /nodes/{id}/port-range must stick.
+	// Agent still reports hello.PortRange for diagnostics, but we must not overwrite
+	// the DB with the unit file's --port-range on every reconnect (that made UI
+	// saves appear to "revert" after the next hello).
 	if len(hello.Cores) > 0 {
 		if b, err := json.Marshal(hello.Cores); err == nil {
 			_ = db.SetNodeCoresJSON(h.DB, node.ID, string(b))

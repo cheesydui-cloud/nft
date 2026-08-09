@@ -227,27 +227,47 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		}
 		return u.String(), nil
 	case "mieru":
-		var c MieruConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return "", err
-		}
-		// Provisional share form: mieru://user:pass@host:port?transport=TCP,UDP#name
-		// Adjust when official mbox share format is wired in agent deploy.
-		q := url.Values{}
-		if len(c.Transports) > 0 {
-			q.Set("transport", strings.Join(c.Transports, ","))
-		}
-		if c.TrafficPattern != "" {
-			q.Set("traffic_pattern", c.TrafficPattern)
-		}
-		u := url.URL{
-			Scheme:   "mieru",
-			User:     url.UserPassword(c.Username, c.Password),
-			Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
-			RawQuery: q.Encode(),
-			Fragment: name,
-		}
-		return u.String(), nil
+			var c MieruConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return "", err
+			}
+			if c.Username == "" || c.Password == "" {
+				return "", fmt.Errorf("mieru username/password missing")
+			}
+			// Official simple share link (client: mieru import config <URL>):
+			//   mierus://user:pass@host?profile=NAME&port=P&protocol=TCP&port=P&protocol=UDP
+			// See https://github.com/enfein/mieru docs (client-install.md).
+			// profile is required once; port/protocol pair by position (multiples OK).
+			profile := name
+			if profile == "" {
+				profile = "default"
+			}
+			transports := c.Transports
+			if len(transports) == 0 {
+				transports = []string{"TCP", "UDP"}
+			}
+			q := url.Values{}
+			q.Set("profile", profile)
+			for _, t := range transports {
+				proto := strings.ToUpper(strings.TrimSpace(t))
+				if proto == "" {
+					continue
+				}
+				// Keep port/protocol counts equal so clients associate by position.
+				q.Add("port", strconv.Itoa(listenPort))
+				q.Add("protocol", proto)
+			}
+			if c.TrafficPattern != "" {
+				// Official param is hyphenated; value is opaque base64 protobuf.
+				q.Set("traffic-pattern", c.TrafficPattern)
+			}
+			u := url.URL{
+				Scheme:   "mierus",
+				User:     url.UserPassword(c.Username, c.Password),
+				Host:     host, // simple form: host only; port is a query param
+				RawQuery: q.Encode(),
+			}
+			return u.String(), nil
 	default:
 		return "", fmt.Errorf("unknown protocol %s", protocol)
 	}
