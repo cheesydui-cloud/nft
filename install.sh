@@ -300,7 +300,9 @@ nft 一键安装/卸载/升级脚本（nft-server 面板 + nft-agent 节点）
   sudo $0 uninstall server               # 仅卸面板，保留 daemon
   sudo $0 uninstall daemon --purge       # 完整擦除 daemon 残留
   sudo $0 reset-password                 # 交互重置面板 admin 密码
-  sudo nft-upgrade               # 等效于 sudo $0 update（安装后可用）
+  sudo nft-upgrade                       # 等效于 update（latest）
+  sudo nft-upgrade --release v6.5.1      # 指定版本升级（无需再选菜单）
+  sudo nft-upgrade update --release v6.5.1 --gh-proxy ''   # 直连 GitHub（清代理）
 USAGE
 }
 
@@ -587,11 +589,6 @@ do_reset_password() {
   echo "旧会话已全部失效，请用新密码重新登录。"
 }
 
-# 当以 nft-upgrade 调用时，默认 update 模式
-if [[ "$(basename "$0")" == "nft-upgrade" && $# -eq 0 ]]; then
-  set -- update
-fi
-
 # 参数解析（--help 不需要 root）
 mode=""
 panel_url=""
@@ -603,10 +600,19 @@ addr=""
 purge=0
 RESET_PW=""
 allow_insecure="${NFTF_ALLOW_INSECURE:-}"
+# nft-upgrade always defaults to update — including when only flags like
+# --release are passed. Previously only bare `nft-upgrade` (argc==0) defaulted,
+# so `nft-upgrade --release vX` fell into the interactive menu.
+if [[ "$(basename "$0")" == "nft-upgrade" ]]; then
+  mode=update
+fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     tui|server|agent|update|update-script|uninstall|reset-password)
       if [[ -z "$mode" ]]; then
+        mode="$1"
+      elif [[ "$(basename "$0")" == "nft-upgrade" ]]; then
+        # Explicit mode on the wrapper overrides the update default.
         mode="$1"
       elif [[ "$mode" == "uninstall" ]]; then
         UNINSTALL_TARGET="$1"
@@ -660,7 +666,8 @@ case "$arch" in
   *) die "目前仅 amd64 二进制可用（当前: $arch）。请等待后续 release 或自行交叉编译。" ;;
 esac
 
-# Mode selection (interactive when no TTY arg).
+# Mode selection (interactive when no TTY arg). nft-upgrade already defaults
+# to update above, so this menu only appears for bare install.sh.
 if [[ -z "$mode" ]]; then
   [[ -t 0 ]] || die "未指定模式。管道用法: curl ... | bash -s <tui|server|agent>；详见 --help"
   echo "请选择安装模式:"
@@ -672,6 +679,9 @@ if [[ -z "$mode" ]]; then
   echo "  6) uninstall       卸载（再问要卸哪个角色）"
   echo "  7) reset-password  重置面板 admin 密码"
   read -rp "输入数字或名称: " choice
+  # Tolerate pasted comments / trailing junk: take first token, strip #...
+  choice="${choice%%#*}"
+  choice="$(printf '%s' "$choice" | awk '{print $1}')"
   case "$choice" in
     1|tui)       mode=tui ;;
     2|server)    mode=server ;;

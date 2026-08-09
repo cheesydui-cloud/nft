@@ -66,28 +66,36 @@ export default function ProxyServiceDetail() {
 
         <div className="grid lg:grid-cols-3 gap-4 mb-4">
           <Panel>
-            <div className="text-[12px] text-ink-mut">协议</div>
-            <div className="font-semibold mt-0.5">{svc.protocol}</div>
+            <div className="px-5 py-4">
+              <div className="text-[12px] text-ink-mut">协议</div>
+              <div className="font-semibold mt-0.5">{svc.protocol}</div>
+            </div>
           </Panel>
           <Panel>
-            <div className="text-[12px] text-ink-mut">核心</div>
-            <div className="font-mono font-semibold mt-0.5">{svc.core}</div>
+            <div className="px-5 py-4">
+              <div className="text-[12px] text-ink-mut">核心</div>
+              <div className="font-mono font-semibold mt-0.5">{svc.core}</div>
+            </div>
           </Panel>
           <Panel>
-            <div className="text-[12px] text-ink-mut">订阅可见</div>
-            <div className="font-semibold mt-0.5">{svc.sub_visible ? '是' : '否'}</div>
+            <div className="px-5 py-4">
+              <div className="text-[12px] text-ink-mut">订阅可见</div>
+              <div className="font-semibold mt-0.5">{svc.sub_visible ? '是' : '否'}</div>
+            </div>
           </Panel>
         </div>
 
         <Panel fill>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold">覆盖实例（{instances.length}）</h3>
-            <Link to="/proxy-services/new" className="text-sm text-emerald-600 font-semibold">发布到更多节点…</Link>
+          <div className="px-5 pt-4 pb-2">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold">覆盖实例（{instances.length}）</h3>
+              <Link to="/proxy-services/new" className="text-sm text-emerald-600 font-semibold">发布到更多节点…</Link>
+            </div>
+            <p className="text-[12.5px] text-ink-mut mb-3">
+              一期为 dry-run：面板生成可导入的分享链接（mieru 为官方 <span className="font-mono">mierus://</span> 格式），
+              但 agent 尚未在节点上真正拉起 xray / sing-box / mita 进程。链接可导入客户端，需节点侧已安装并手动配置对应核心后才能通。
+            </p>
           </div>
-          <p className="text-[12.5px] text-ink-mut mb-3">
-            一期为 dry-run：面板生成可导入的分享链接（mieru 为官方 <span className="font-mono">mierus://</span> 格式），
-            但 agent 尚未在节点上真正拉起 xray / sing-box / mita 进程。链接可导入客户端，需节点侧已安装并手动配置对应核心后才能通。
-          </p>
           <TableScroll>
             {instances.length === 0 ? (
               <Empty title="尚未部署到节点" desc="请通过发布向导选择节点。" />

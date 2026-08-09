@@ -229,6 +229,9 @@ export default function ProxyServiceWizard() {
         </div>
 
         <Panel>
+          {/* Panel uses overflow-hidden + rounded corners; without padding the
+              first label/control is clipped at the card edge (looks like「协议」→「议」). */}
+          <div className="px-6 py-5">
           {step === 0 && (
             <div>
               <h3 className="text-sm font-bold mb-3">选协议模板</h3>
@@ -503,6 +506,7 @@ export default function ProxyServiceWizard() {
               </div>
             </div>
           )}
+          </div>
         </Panel>
       </div>
     </Layout>
