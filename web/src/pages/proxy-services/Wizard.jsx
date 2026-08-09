@@ -262,13 +262,15 @@ export default function ProxyServiceWizard() {
 
   return (
     <Layout>
-      <div className="h-full flex flex-col max-w-5xl">
+      {/* min-h-0 + flex-1: fill main column; internal scroll so long VLESS form
+          is not clipped by Panel's overflow-hidden. Sticky footer keeps 下一步 visible. */}
+      <div className="h-full min-h-0 flex flex-col max-w-5xl">
         <PageHeader title={isEdit ? '编辑代理服务' : '发布服务'}
           actions={<button type="button" className="btn-secondary" onClick={() => navigate('/proxy-services')}>返回列表</button>}
         />
 
         {/* Steps */}
-        <div className="flex flex-wrap gap-2 mb-5">
+        <div className="flex flex-wrap gap-2 mb-4 shrink-0">
           {STEPS.map((label, i) => (
             <button key={label} type="button"
               onClick={() => { if (i < step || (i <= 1 && serviceId)) setStep(i) }}
@@ -284,10 +286,8 @@ export default function ProxyServiceWizard() {
           ))}
         </div>
 
-        <Panel>
-          {/* Panel uses overflow-hidden + rounded corners; without padding the
-              first label/control is clipped at the card edge (looks like「协议」→「议」). */}
-          <div className="px-6 py-5">
+        <Panel fill className="min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
           {step === 0 && (
             <div>
               <h3 className="text-sm font-bold mb-3">选协议模板</h3>
@@ -570,13 +570,6 @@ export default function ProxyServiceWizard() {
                 <input type="checkbox" checked={subVisible} onChange={e => setSubVisible(e.target.checked)} />
                 订阅可见性
               </label>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" className="btn-secondary" onClick={() => setStep(0)}>上一步</button>
-                <button type="button" className="btn-primary" onClick={async () => {
-                  if (await saveConfig()) setStep(2)
-                }}>下一步</button>
-              </div>
             </div>
           )}
 
@@ -619,12 +612,6 @@ export default function ProxyServiceWizard() {
                   </tbody>
                 </table>
               </div>
-              <div className="flex justify-end gap-2 mt-4">
-                <button type="button" className="btn-secondary" onClick={() => setStep(1)}>上一步</button>
-                <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={() => setStep(3)}>
-                  下一步（已选 {selected.size}）
-                </button>
-              </div>
             </div>
           )}
 
@@ -640,12 +627,6 @@ export default function ProxyServiceWizard() {
               <p className="text-[12.5px] text-ink-mut mb-4">
                 发布后 agent 会在节点启动核心：VLESS 需 xray、Shadowsocks 需 sing-box、mieru 需 mita（服务端）。请放行监听端口；VLESS 务必填写 server-name（REALITY 回源）。
               </p>
-              <div className="flex justify-end gap-2">
-                <button type="button" className="btn-secondary" onClick={() => setStep(2)}>上一步</button>
-                <button type="button" className="btn-primary" disabled={publishing} onClick={publish}>
-                  {publishing ? '发布中…' : '发布'}
-                </button>
-              </div>
             </div>
           )}
 
@@ -695,6 +676,37 @@ export default function ProxyServiceWizard() {
             </div>
           )}
           </div>
+
+          {/* Sticky step actions — always visible; form body scrolls above */}
+          {step === 0 && (
+            <div className="shrink-0 border-t border-line px-6 py-3 bg-surface flex justify-end gap-2">
+              <span className="text-[12px] text-ink-mut mr-auto self-center">选择协议模板后进入配置</span>
+            </div>
+          )}
+          {step === 1 && (
+            <div className="shrink-0 border-t border-line px-6 py-3 bg-surface flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setStep(0)}>上一步</button>
+              <button type="button" className="btn-primary" onClick={async () => {
+                if (await saveConfig()) setStep(2)
+              }}>下一步</button>
+            </div>
+          )}
+          {step === 2 && (
+            <div className="shrink-0 border-t border-line px-6 py-3 bg-surface flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setStep(1)}>上一步</button>
+              <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={() => setStep(3)}>
+                下一步（已选 {selected.size}）
+              </button>
+            </div>
+          )}
+          {step === 3 && (
+            <div className="shrink-0 border-t border-line px-6 py-3 bg-surface flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setStep(2)}>上一步</button>
+              <button type="button" className="btn-primary" disabled={publishing} onClick={publish}>
+                {publishing ? '发布中…' : '发布'}
+              </button>
+            </div>
+          )}
         </Panel>
       </div>
     </Layout>
