@@ -92,18 +92,54 @@ func normProto(scheme string) string {
 
 // parseAuthority handles the common scheme://[userinfo@]host:port?query#name
 // shape (vless, trojan, tuic, hysteria2, ...). A numeric port is required, so
-// portless URLs (e.g. http://host) are rejected by the caller's port check.
+// portless URLs (e.g. http://host) are rejected by the caller's port check —
+// except mieru/mierus simple share links, which put the listen port in the
+// query (?port=P&protocol=TCP) and only host in the authority.
 func parseAuthority(uri, proto string) (Node, bool) {
 	u, err := url.Parse(uri)
 	if err != nil {
 		return Node{}, false
 	}
 	host := u.Hostname()
-	port, err := strconv.Atoi(u.Port())
-	if err != nil || host == "" || port < 1 || port > 65535 {
+	if host == "" {
 		return Node{}, false
 	}
+	port := 0
+	if u.Port() != "" {
+		p, err := strconv.Atoi(u.Port())
+		if err != nil || p < 1 || p > 65535 {
+			return Node{}, false
+		}
+		port = p
+	} else if isMieruProto(proto) {
+		// Official simple share: mierus://user:pass@host?profile=…&port=P&protocol=TCP
+		// Multiple port= values are allowed (one per transport); first wins for
+		// host:port identity used by the landing index.
+		for _, p := range u.Query()["port"] {
+			n, err := strconv.Atoi(strings.TrimSpace(p))
+			if err == nil && n >= 1 && n <= 65535 {
+				port = n
+				break
+			}
+		}
+	}
+	if port < 1 || port > 65535 {
+		return Node{}, false
+	}
+	// Normalize protocol label: mierus scheme → mieru.
+	if proto == "mierus" {
+		proto = "mieru"
+	}
 	return Node{Name: u.Fragment, Protocol: proto, Host: host, Port: port, URI: uri}, true
+}
+
+func isMieruProto(proto string) bool {
+	switch strings.ToLower(proto) {
+	case "mieru", "mierus":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseSnell handles Surge-style snell config lines:
@@ -185,6 +221,12 @@ func parseSS(uri string) (Node, bool) {
 // RewriteEndpoint returns uri with its connection host:port replaced by
 // newHost:newPort, preserving every other component byte-for-byte where
 // possible (vmess/ss-legacy must re-encode their payload).
+//
+// mieru/mierus simple share links are special: the official form keeps the
+// authority as host-only and lists listen ports in query params
+// (?port=P&protocol=TCP&port=P&protocol=UDP). Rewriting only the authority
+// would leave the landing port in the query, so clients would dial the
+// landing port instead of the relay entry port.
 func RewriteEndpoint(uri, newHost string, newPort int) (string, error) {
 	idx := strings.Index(uri, "://")
 	if idx <= 0 {
@@ -195,9 +237,69 @@ func RewriteEndpoint(uri, newHost string, newPort int) (string, error) {
 		return rewriteVMess(uri, newHost, newPort)
 	case "ss":
 		return rewriteSS(uri, newHost, newPort)
+	case "mieru", "mierus":
+		return rewriteMieru(uri, newHost, newPort)
 	default:
 		return rewriteAuthority(uri, newHost, newPort)
 	}
+}
+
+// rewriteMieru rewrites an official simple mieru share link:
+//
+//	mierus://user:pass@host?profile=NAME&port=OLD&protocol=TCP&port=OLD&protocol=UDP
+//
+// becomes host=newHost and every port= query value = newPort. Credentials,
+// profile, protocols and traffic-pattern are preserved. If the URI already
+// has host:port in the authority (non-simple form), that is rewritten too.
+func rewriteMieru(uri, newHost string, newPort int) (string, error) {
+	if newPort < 1 || newPort > 65535 || strings.TrimSpace(newHost) == "" {
+		return "", errInvalid
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	// Official simple form: authority is host only; ports live in query.
+	// Always rewrite query port= values so clients dial the relay entry port.
+	if strings.Contains(u.RawQuery, "port=") || len(u.Query()["port"]) > 0 {
+		u.Host = newHost
+		u.RawQuery = rebuildMieruQuery(u.RawQuery, newPort)
+		return u.String(), nil
+	}
+	// Non-simple / legacy: host:port in authority.
+	u.Host = net.JoinHostPort(newHost, strconv.Itoa(newPort))
+	return u.String(), nil
+}
+
+// rebuildMieruQuery walks the original raw query and rewrites every port=
+// value to newPort, preserving key order and other params (profile, protocol,
+// traffic-pattern). port/protocol pairing by position is kept.
+func rebuildMieruQuery(raw string, newPort int) string {
+	if raw == "" {
+		return "port=" + strconv.Itoa(newPort)
+	}
+	parts := strings.Split(raw, "&")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(p, "=")
+		if !ok {
+			out = append(out, p)
+			continue
+		}
+		k, err := url.QueryUnescape(key)
+		if err != nil {
+			k = key
+		}
+		if strings.EqualFold(k, "port") {
+			out = append(out, key+"="+strconv.Itoa(newPort))
+			continue
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, "&")
 }
 
 // rewriteAuthority replaces the host:port of an authority-style URI without

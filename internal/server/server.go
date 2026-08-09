@@ -676,6 +676,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/cf", s.apiSetNodeCF)
 			r.Post("/nodes/{id}/backend-ip", s.apiSetNodeBackendIP)
 			r.Post("/nodes/{id}/cf-resync", s.apiResyncNodeCF)
+			r.Post("/nodes/{id}/cf-import", s.apiImportNodeCF)
 			r.Post("/nodes/{id}/port-range", s.apiUpdateNodePortRange)
 			r.Post("/nodes/{id}/resync", s.apiResyncNode)
 			r.Post("/nodes/{id}/reset-token", s.apiResetNodeToken)

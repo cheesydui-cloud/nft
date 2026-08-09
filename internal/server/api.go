@@ -1316,6 +1316,278 @@ func (s *Server) apiResyncNodeCF(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult})
 }
 
+// apiImportNodeCF pulls existing Cloudflare A records into this node so the
+// operator does not retype a domain already configured on CF for the line IP.
+//
+// Modes:
+//  1. body.record_name set → import that A (optionally zone_id), fill relay_host /
+//     backend_ip / cf fields, optionally push (enable_sync default true).
+//  2. body.record_name empty → list A records whose content matches body.ip
+//     (or node public IPv4 / backend_ip). One match → auto-import; many →
+//     return candidates for the UI to pick.
+func (s *Server) apiImportNodeCF(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	node, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if node.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点请在入口物理节点上配置 CF")
+		return
+	}
+	var body struct {
+		IP         string `json:"ip"`
+		ZoneID     string `json:"zone_id"`
+		RecordName string `json:"record_name"`
+		// Apply when true (default) writes relay_host + CF fields after a unique match.
+		Apply *bool `json:"apply"`
+		// EnableSync defaults true when applying.
+		EnableSync *bool `json:"enable_sync"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
+			return
+		}
+	}
+	apply := true
+	if body.Apply != nil {
+		apply = *body.Apply
+	}
+	enableSync := true
+	if body.EnableSync != nil {
+		enableSync = *body.EnableSync
+	}
+
+	token, _ := db.GetSetting(s.DB, "cf_api_token")
+	if strings.TrimSpace(token) == "" {
+		jsonErr(w, http.StatusBadRequest, "未配置 Cloudflare API Token（请到系统设置填写）")
+		return
+	}
+	cli := &cloudflare.Client{Token: token}
+	if base, _ := db.GetSetting(s.DB, "cf_api_base"); strings.TrimSpace(base) != "" {
+		cli.BaseURL = strings.TrimSpace(base)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	// Resolve zone.
+	zoneID := strings.TrimSpace(body.ZoneID)
+	if zoneID == "" {
+		zoneID = strings.TrimSpace(node.CFZoneID)
+	}
+	zoneName := ""
+	if zoneID == "" {
+		zoneName, _ = db.GetSetting(s.DB, "cf_zone_name")
+		zoneName = strings.TrimSpace(zoneName)
+		if zoneName == "" {
+			jsonErr(w, http.StatusBadRequest, "未指定 Zone：请填 Zone ID 或在系统设置配置默认 Zone")
+			return
+		}
+		zid, err := cli.ResolveZoneID(ctx, zoneName)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		zoneID = zid
+	}
+
+	recordName := strings.TrimSpace(strings.ToLower(body.RecordName))
+	ip := strings.TrimSpace(body.IP)
+	if ip == "" {
+		ip = preferNodePublicV4(node)
+	}
+
+	// Explicit record: look up by name.
+	if recordName != "" {
+		rec, err := cli.FindARecordByName(ctx, zoneID, recordName)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if rec == nil {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("Zone 中未找到 A 记录 %q", recordName))
+			return
+		}
+		if !apply {
+			jsonOK(w, map[string]any{
+				"ok": true, "zone_id": zoneID, "candidates": []map[string]any{
+					{"name": rec.Name, "content": rec.Content, "proxied": rec.Proxied, "ttl": rec.TTL},
+				},
+			})
+			return
+		}
+		node, cfResult, err := s.applyNodeCFImport(ctx, u.ID, node, zoneID, rec.Name, rec.Content, enableSync)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult, "imported": map[string]any{
+			"name": rec.Name, "content": rec.Content, "zone_id": zoneID,
+		}})
+		return
+	}
+
+	// By IP content: list matching A records.
+	if !cloudflare.IsIPv4(ip) {
+		// Fallback: if relay_host is already a domain, fetch its A.
+		host := strings.TrimSpace(node.RelayHost)
+		if host != "" && net.ParseIP(host) == nil {
+			rec, err := cli.FindARecordByName(ctx, zoneID, host)
+			if err != nil {
+				jsonErr(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			if rec == nil {
+				jsonErr(w, http.StatusBadRequest, "无法确定查询 IP，且中继域名在 CF 上没有 A 记录；请填写「当前 IP」或记录名")
+				return
+			}
+			if !apply {
+				jsonOK(w, map[string]any{"ok": true, "zone_id": zoneID, "candidates": []map[string]any{
+					{"name": rec.Name, "content": rec.Content, "proxied": rec.Proxied, "ttl": rec.TTL},
+				}})
+				return
+			}
+			node, cfResult, err := s.applyNodeCFImport(ctx, u.ID, node, zoneID, rec.Name, rec.Content, enableSync)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult, "imported": map[string]any{
+				"name": rec.Name, "content": rec.Content, "zone_id": zoneID,
+			}})
+			return
+		}
+		jsonErr(w, http.StatusBadRequest, "请提供要匹配的 IPv4（节点连接 IP / 当前 IP）或记录名")
+		return
+	}
+
+	recs, err := cli.ListARecords(ctx, zoneID, ip)
+	if err != nil {
+		jsonErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	// Filter proxied orange-cloud? Keep them but mark; still importable.
+	cands := make([]map[string]any, 0, len(recs))
+	for _, rec := range recs {
+		if rec.Content != ip {
+			continue
+		}
+		cands = append(cands, map[string]any{
+			"name": rec.Name, "content": rec.Content, "proxied": rec.Proxied, "ttl": rec.TTL,
+		})
+	}
+	if len(cands) == 0 {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("Zone 中没有指向 %s 的 A 记录", ip))
+		return
+	}
+	if len(cands) > 1 || !apply {
+		jsonOK(w, map[string]any{
+			"ok": true, "zone_id": zoneID, "ip": ip, "candidates": cands,
+			"need_pick": len(cands) > 1,
+		})
+		return
+	}
+	// Unique match → import.
+	name, _ := cands[0]["name"].(string)
+	content, _ := cands[0]["content"].(string)
+	node, cfResult, err := s.applyNodeCFImport(ctx, u.ID, node, zoneID, name, content, enableSync)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true, "node": node, "cf_sync": cfResult, "imported": map[string]any{
+		"name": name, "content": content, "zone_id": zoneID,
+	}})
+}
+
+// preferNodePublicV4 picks an IPv4 to search on CF: backend_ip, then public
+// connect address, then relay_host when it is a literal IPv4.
+func preferNodePublicV4(n *db.Node) string {
+	if n == nil {
+		return ""
+	}
+	if cloudflare.IsIPv4(n.BackendIP) {
+		return strings.TrimSpace(n.BackendIP)
+	}
+	if cloudflare.IsIPv4(n.Address) {
+		ip := net.ParseIP(strings.TrimSpace(n.Address))
+		if ip != nil && !ip.IsPrivate() && !ip.IsLoopback() {
+			return ip.String()
+		}
+		// Still return private IPv4 — may be what's on CF in lab setups.
+		if ip != nil && ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	if cloudflare.IsIPv4(n.RelayHost) {
+		return strings.TrimSpace(n.RelayHost)
+	}
+	return ""
+}
+
+// applyNodeCFImport writes domain as relay_host (when not daemon-declared),
+// backend_ip, zone, record name, enables CF sync, and optionally pushes A.
+func (s *Server) applyNodeCFImport(ctx context.Context, adminID int64, node *db.Node, zoneID, recordName, content string, enableSync bool) (*db.Node, cfSyncResult, error) {
+	recordName = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(recordName)), ".")
+	content = strings.TrimSpace(content)
+	if recordName == "" {
+		return nil, cfSyncResult{}, fmt.Errorf("记录名为空")
+	}
+	if !cloudflare.IsIPv4(content) {
+		return nil, cfSyncResult{}, fmt.Errorf("A 记录内容不是 IPv4: %s", content)
+	}
+	// Domain goes into relay_host so users dial the name; IP is backend_ip.
+	if !node.RelayHostDeclared {
+		if err := db.UpdateNodeRelayHost(s.DB, node.ID, recordName); err != nil {
+			return nil, cfSyncResult{}, err
+		}
+		node.RelayHost = recordName
+	} else if node.RelayHost != recordName {
+		// Daemon-owned relay: still import CF fields / backend_ip but keep relay.
+		// Surface as soft note via message.
+	}
+	cf := db.NodeCFFields{
+		BackendIP:    content,
+		CFSync:       enableSync,
+		CFZoneID:     strings.TrimSpace(zoneID),
+		CFRecordName: recordName,
+	}
+	if err := validateNodeCF(node.RelayHost, cf); err != nil {
+		// If relay still looks like IP (declared), allow storing CF fields with
+		// domain only in record name — validate requires domain when sync on.
+		if enableSync && net.ParseIP(strings.TrimSpace(node.RelayHost)) != nil {
+			return nil, cfSyncResult{}, fmt.Errorf("中继地址由 daemon 固定为 IP，无法把域名写入中继；请去掉 --relay-host 后重试，或手动把中继改为域名")
+		}
+		return nil, cfSyncResult{}, err
+	}
+	if err := db.UpdateNodeCFFields(s.DB, node.ID, cf); err != nil {
+		return nil, cfSyncResult{}, err
+	}
+	node, _ = db.GetNode(s.DB, node.ID)
+	var cfResult cfSyncResult
+	if enableSync {
+		cfResult = s.maybeSyncNodeCF(ctx, adminID, node)
+		node, _ = db.GetNode(s.DB, node.ID)
+	} else {
+		cfResult = cfSyncResult{Attempted: false, Skipped: true, Message: "已导入，未开启同步"}
+	}
+	db.WriteAudit(s.DB, adminID, "node.cf_import", strconv.FormatInt(node.ID, 10),
+		fmt.Sprintf("%s → %s", recordName, content))
+	// Rewire rules so entry endpoints pick up new domain relay_host.
+	ruleIDs, _ := db.RulesReferencingNode(s.DB, node.ID)
+	if len(ruleIDs) > 0 {
+		s.apiRewireRules(ruleIDs)
+	}
+	return node, cfResult, nil
+}
+
 func (s *Server) apiUpdateNodePortRange(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	id, err := urlParamInt64(r, "id")

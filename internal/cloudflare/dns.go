@@ -219,6 +219,58 @@ func dnsNamesEqual(a, b string) bool {
 	return a == b
 }
 
+// ListARecords returns A records in a zone (up to 100). Optional contentFilter
+// (IPv4) keeps only records whose content matches exactly.
+func (c *Client) ListARecords(ctx context.Context, zoneID, contentFilter string) ([]DNSRecord, error) {
+	zoneID = strings.TrimSpace(zoneID)
+	if zoneID == "" {
+		return nil, fmt.Errorf("Zone ID 不能为空")
+	}
+	path := fmt.Sprintf("/zones/%s/dns_records?type=A&per_page=100", zoneID)
+	contentFilter = strings.TrimSpace(contentFilter)
+	if contentFilter != "" {
+		path += "&content=" + urlQueryEscape(contentFilter)
+	}
+	var recs []DNSRecord
+	if err := c.do(ctx, http.MethodGet, path, nil, &recs); err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+// FindARecordByName returns the A record for an exact DNS name, or nil.
+func (c *Client) FindARecordByName(ctx context.Context, zoneID, name string) (*DNSRecord, error) {
+	return c.findARecord(ctx, zoneID, name)
+}
+
+// ResolveZoneIDForName tries settings default zone first, then walks parent
+// labels of fqdn (sub.example.com → example.com → com) against ListZones.
+func ResolveZoneForHostname(ctx context.Context, c *Client, fqdn, hintZoneID, defaultZoneName string) (zoneID, zoneName string, err error) {
+	fqdn = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(fqdn)), ".")
+	if hintZoneID != "" {
+		return strings.TrimSpace(hintZoneID), "", nil
+	}
+	if defaultZoneName != "" {
+		id, e := c.ResolveZoneID(ctx, defaultZoneName)
+		if e == nil && id != "" {
+			return id, defaultZoneName, nil
+		}
+	}
+	// Walk parents: a.b.example.com → b.example.com → example.com
+	parts := strings.Split(fqdn, ".")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("无法从 %q 推断 Zone，请填写 Zone ID", fqdn)
+	}
+	for i := 0; i <= len(parts)-2; i++ {
+		candidate := strings.Join(parts[i:], ".")
+		id, e := c.ResolveZoneID(ctx, candidate)
+		if e == nil && id != "" {
+			return id, candidate, nil
+		}
+	}
+	return "", "", fmt.Errorf("未找到与 %q 匹配的 Zone（请在系统设置配置默认 Zone 或手动填 Zone ID）", fqdn)
+}
+
 func (c *Client) findARecord(ctx context.Context, zoneID, name string) (*DNSRecord, error) {
 	// Prefer filtered list; fall back to scanning A records if filter returns empty
 	// (CF name matching can be picky about FQDN vs relative forms).

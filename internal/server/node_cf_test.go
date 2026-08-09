@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -277,5 +278,70 @@ func TestListNodesIncludesCFDefaults(t *testing.T) {
 		if n.CFSync {
 			t.Fatalf("default cf_sync should be false for %s", n.Name)
 		}
+	}
+}
+
+func TestNodeCFImportByIPAndByName(t *testing.T) {
+	d := openDB(t)
+	s := newServer(t, d)
+	admin := loginAsAdmin(t, d)
+
+	var listed bool
+	cfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/zones") && !strings.Contains(r.URL.Path, "dns_records"):
+			fmt.Fprintf(w, `{"success":true,"errors":[],"result":[{"id":"zone-imp","name":"example.com"}]}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "dns_records") && r.URL.Query().Get("content") == "203.0.113.88":
+			listed = true
+			fmt.Fprintf(w, `{"success":true,"errors":[],"result":[{"id":"r1","type":"A","name":"line.example.com","content":"203.0.113.88","ttl":1,"proxied":false}]}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "dns_records"):
+			fmt.Fprintf(w, `{"success":true,"errors":[],"result":[{"id":"r1","type":"A","name":"line.example.com","content":"203.0.113.88","ttl":1,"proxied":false}]}`)
+		case r.Method == "POST" || r.Method == "PUT":
+			fmt.Fprintf(w, `{"success":true,"errors":[],"result":{"id":"r1","type":"A","name":"line.example.com","content":"203.0.113.88","ttl":1,"proxied":false}}`)
+		default:
+			fmt.Fprintf(w, `{"success":true,"errors":[],"result":[]}`)
+		}
+	}))
+	t.Cleanup(cfSrv.Close)
+
+	_ = db.SetSetting(d, "cf_api_token", "tok")
+	_ = db.SetSetting(d, "cf_api_base", cfSrv.URL)
+	_ = db.SetSetting(d, "cf_zone_name", "example.com")
+	_ = db.SetSetting(d, "cf_ttl", "1")
+
+	n, err := db.CreateNode(d, "line-1", "203.0.113.88", "tok-line")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.UpdateNodeRelayHost(d, n.ID, "203.0.113.88")
+
+	body, _ := json.Marshal(map[string]any{"ip": "203.0.113.88", "apply": true})
+	req := newTestRequest("POST", "/api/nodes/"+itoa(n.ID)+"/cf-import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(admin)
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("import status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !listed {
+		t.Fatal("expected CF list by content")
+	}
+	got, err := db.GetNode(d, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RelayHost != "line.example.com" {
+		t.Fatalf("relay_host=%q want line.example.com", got.RelayHost)
+	}
+	if got.BackendIP != "203.0.113.88" {
+		t.Fatalf("backend_ip=%q", got.BackendIP)
+	}
+	if !got.CFSync {
+		t.Fatal("cf_sync should be on")
+	}
+	if got.CFZoneID == "" {
+		t.Fatal("zone id should be stored")
 	}
 }

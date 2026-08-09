@@ -260,7 +260,53 @@ export function rewriteEndpoint(uri, host, port) {
   const scheme = uri.slice(0, i).toLowerCase()
   if (scheme === 'vmess') return rewriteVMess(uri, host, port)
   if (scheme === 'ss') return rewriteSS(uri, host, port)
+  // mierus simple share puts listen port in query (?port=), not authority.
+  // Must rewrite every port= or clients keep dialing the landing port.
+  if (scheme === 'mieru' || scheme === 'mierus') return rewriteMieru(uri, host, port)
   return rewriteAuthority(uri, host, port)
+}
+
+function rewriteMieru(uri, newHost, newPort) {
+  const i = uri.indexOf('://')
+  if (i <= 0) return null
+  const prefix = uri.slice(0, i + 3)
+  let rest = uri.slice(i + 3)
+  let frag = ''
+  const hash = rest.indexOf('#')
+  if (hash >= 0) { frag = rest.slice(hash); rest = rest.slice(0, hash) }
+  let query = ''
+  const q = rest.indexOf('?')
+  let authority
+  if (q >= 0) {
+    authority = rest.slice(0, q)
+    query = rest.slice(q + 1)
+  } else {
+    // no query — fall back to host:port authority rewrite
+    return rewriteAuthority(uri, newHost, newPort)
+  }
+  let userinfo = ''
+  const at = authority.lastIndexOf('@')
+  if (at >= 0) userinfo = authority.slice(0, at + 1)
+  // Official simple form: host only (no :port) in authority.
+  const hostPart = String(newHost).includes(':') ? `[${newHost}]` : String(newHost)
+  const newQuery = rewriteMieruQueryPorts(query, newPort)
+  return prefix + userinfo + hostPart + '?' + newQuery + frag
+}
+
+function rewriteMieruQueryPorts(query, newPort) {
+  if (!query) return 'port=' + String(newPort)
+  return query.split('&').map(part => {
+    if (!part) return part
+    const eq = part.indexOf('=')
+    if (eq < 0) return part
+    let k = part.slice(0, eq)
+    try {
+      if (decodeURIComponent(k).toLowerCase() === 'port') return k + '=' + String(newPort)
+    } catch {
+      if (k.toLowerCase() === 'port') return k + '=' + String(newPort)
+    }
+    return part
+  }).join('&')
 }
 
 export function tryParseURI(uri) {
@@ -365,17 +411,43 @@ function parseAuthority(uri, proto) {
   let name = ''
   const h = rest.indexOf('#')
   if (h >= 0) { name = safeDecode(rest.slice(h + 1)); rest = rest.slice(0, h) }
+  let query = ''
   let end = rest.length
   for (let j = 0; j < rest.length; j++) {
     const c = rest[j]
-    if (c === '/' || c === '?') { end = j; break }
+    if (c === '?') { end = j; query = rest.slice(j + 1); break }
+    if (c === '/') { end = j; break }
   }
   let authority = rest.slice(0, end)
   const at = authority.lastIndexOf('@')
   if (at >= 0) authority = authority.slice(at + 1)
-  const hp = splitHostPort(authority)
+  let hp = splitHostPort(authority)
+  // mieru/mierus official simple share: host only in authority, ports in
+  // ?port=P&protocol=TCP (may repeat). Without this, landing index cannot
+  // match exit_host:exit_port and relay rewrite leaves landing port= intact.
+  const scheme = (proto || '').toLowerCase()
+  const isMieru = scheme === 'mieru' || scheme === 'mierus'
+  if (!hp && isMieru && authority && !authority.includes(':')) {
+    const port = firstQueryPort(query)
+    if (port) hp = { host: authority, port }
+  }
   if (!hp) return null
-  return { name, protocol: proto, host: hp.host, port: hp.port, uri }
+  return { name, protocol: isMieru ? 'mieru' : proto, host: hp.host, port: hp.port, uri }
+}
+
+function firstQueryPort(query) {
+  if (!query) return 0
+  for (const part of query.split('&')) {
+    const eq = part.indexOf('=')
+    if (eq < 0) continue
+    let k = part.slice(0, eq)
+    let v = part.slice(eq + 1)
+    try { k = decodeURIComponent(k) } catch { /* keep */ }
+    if (k.toLowerCase() !== 'port') continue
+    const n = Number(v)
+    if (Number.isInteger(n) && n >= 1 && n <= 65535) return n
+  }
+  return 0
 }
 
 function parseVMess(uri) {

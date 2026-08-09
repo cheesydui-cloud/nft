@@ -315,3 +315,45 @@ func TestRewriteNameMalformed(t *testing.T) {
 		t.Fatal("undecodable vmess must error")
 	}
 }
+
+func TestParseAndRewriteMieruSimpleShare(t *testing.T) {
+	in := "mierus://user:pass@82.22.26.185?profile=test2&port=15645&protocol=TCP&port=15645&protocol=UDP"
+	nodes := ParseURIs([]string{in})
+	if len(nodes) != 1 {
+		t.Fatalf("parse: got %d nodes", len(nodes))
+	}
+	n := nodes[0]
+	if n.Host != "82.22.26.185" || n.Port != 15645 {
+		t.Fatalf("host:port = %s:%d, want 82.22.26.185:15645", n.Host, n.Port)
+	}
+	if n.Protocol != "mieru" {
+		t.Fatalf("protocol = %q, want mieru", n.Protocol)
+	}
+
+	out, err := RewriteEndpoint(in, "211.136.162.184", 10477)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Authority host rewritten; every port= becomes entry listen port.
+	if !strings.Contains(out, "211.136.162.184") {
+		t.Fatalf("host not rewritten: %s", out)
+	}
+	if strings.Contains(out, "15645") {
+		t.Fatalf("landing port still present: %s", out)
+	}
+	if !strings.Contains(out, "port=10477") {
+		t.Fatalf("entry port missing: %s", out)
+	}
+	// Multi-transport: both port= slots rewritten, protocols kept.
+	if strings.Count(out, "port=10477") < 2 {
+		t.Fatalf("expected 2 port=10477 for TCP+UDP, got %s", out)
+	}
+	if !strings.Contains(out, "protocol=TCP") || !strings.Contains(out, "protocol=UDP") {
+		t.Fatalf("protocols lost: %s", out)
+	}
+	// Re-parse rewritten URI should yield entry host:port.
+	nodes2 := ParseURIs([]string{out})
+	if len(nodes2) != 1 || nodes2[0].Host != "211.136.162.184" || nodes2[0].Port != 10477 {
+		t.Fatalf("rewritten parse = %+v", nodes2)
+	}
+}

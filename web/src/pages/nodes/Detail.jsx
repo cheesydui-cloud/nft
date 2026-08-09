@@ -58,6 +58,10 @@ export default function NodeDetail() {
   const [changeIPOpen, setChangeIPOpen] = useState(false)
   const [changeIPVal, setChangeIPVal] = useState('')
   const [cfBusy, setCfBusy] = useState(false)
+  const [cfImportOpen, setCfImportOpen] = useState(false)
+  const [cfImportIP, setCfImportIP] = useState('')
+  const [cfImportRecord, setCfImportRecord] = useState('')
+  const [cfImportCands, setCfImportCands] = useState(null)
   // revealedSecret holds the one-time plaintext token returned by a reset; it
   // is never persisted server-side and is cleared when the reveal modal closes.
   const [revealedSecret, setRevealedSecret] = useState('')
@@ -169,6 +173,49 @@ export default function NodeDetail() {
       else load()
     } catch (err) { toast(err.message, 'error') }
     finally { setCfBusy(false) }
+  }
+
+  const openCFImport = () => {
+    const n = data?.node
+    const isV4 = (s) => /^\d{1,3}(\.\d{1,3}){3}$/.test(String(s || '').trim())
+    const addr = n?.backend_ip || ''
+    const conn = n?.address || ''
+    const relay = n?.relay_host || ''
+    setCfImportIP(isV4(addr) ? addr : (isV4(conn) ? conn : (isV4(relay) ? relay : '')))
+    setCfImportRecord('')
+    setCfImportCands(null)
+    setCfImportOpen(true)
+  }
+
+  const runCFImport = async (opts = {}) => {
+    setCfBusy(true)
+    try {
+      const body = {
+        ip: String(opts.ip ?? cfImportIP ?? '').trim() || undefined,
+        zone_id: cfZoneID.trim() || undefined,
+        record_name: String(opts.record_name ?? cfImportRecord ?? '').trim() || undefined,
+        apply: opts.apply !== false,
+        enable_sync: true,
+      }
+      const res = await api.post(`/nodes/${id}/cf-import`, body)
+      if (res?.candidates && (res.need_pick || !res.imported)) {
+        setCfImportCands(res.candidates || [])
+        if (res.zone_id && !cfZoneID) setCfZoneID(res.zone_id)
+        toast(res.need_pick ? `找到 ${res.candidates.length} 条 A 记录，请选择` : '请选择要导入的记录')
+        return
+      }
+      if (res?.imported) {
+        toast(`已从 CF 导入 ${res.imported.name} → ${res.imported.content}`)
+      }
+      notifyCF(res?.cf_sync)
+      setCfImportOpen(false)
+      setCfImportCands(null)
+      load()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setCfBusy(false)
+    }
   }
   const submitChangeIP = async (e) => {
     e.preventDefault()
@@ -536,6 +583,9 @@ export default function NodeDetail() {
                   )}
                   <div className="flex flex-wrap gap-2">
                     <button type="submit" className="btn-primary px-5" disabled={cfBusy}>{cfBusy ? '保存中…' : '保存 CF 配置'}</button>
+                    <button type="button" className="btn-secondary px-4" disabled={cfBusy} onClick={openCFImport}>
+                      从 CF 同步
+                    </button>
                     {node.cf_sync && (
                       <>
                         <button type="button" className="btn-secondary px-4" disabled={cfBusy}
@@ -714,6 +764,51 @@ export default function NodeDetail() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal open={cfImportOpen} onClose={() => { if (!cfBusy) { setCfImportOpen(false); setCfImportCands(null) } }} title="从 Cloudflare 同步 DNS">
+        <div className="space-y-4 text-sm">
+          <p className="m-0 text-ink-soft text-[13px] leading-relaxed">
+            若该线路 IP 已在 Cloudflare 建过灰云 A 记录，可一键拉取域名与 IP，写入本节点的中继地址与 CF 配置，无需手填。
+            需先在「系统设置」配置 API Token 与默认 Zone（或在下方使用本页 Zone ID）。
+          </p>
+          <div>
+            <label className="block text-[12px] font-semibold text-ink-soft mb-1">匹配 IP（可选）</label>
+            <input className="input-field font-mono text-sm w-full" value={cfImportIP}
+              onChange={e => setCfImportIP(e.target.value)}
+              placeholder="默认用当前 IP / 连接 IP" />
+            <p className="text-[11px] text-ink-mut mt-1 m-0">按 A 记录 content 查找指向该 IP 的域名</p>
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名（可选）</label>
+            <input className="input-field font-mono text-sm w-full" value={cfImportRecord}
+              onChange={e => setCfImportRecord(e.target.value)}
+              placeholder="已知完整域名时可直接填，如 line.example.com" />
+          </div>
+          {Array.isArray(cfImportCands) && cfImportCands.length > 0 && (
+            <div className="rounded-[10px] border border-line bg-[#f7f9fc] p-3 space-y-2">
+              <div className="text-[12px] font-semibold text-ink">选择要导入的 A 记录</div>
+              {cfImportCands.map((c) => (
+                <button key={c.name + c.content} type="button" disabled={cfBusy}
+                  className="w-full text-left px-3 py-2 rounded-lg border border-line bg-white hover:border-emerald-500 hover:bg-emerald-50 transition-colors"
+                  onClick={() => runCFImport({ record_name: c.name, ip: c.content, apply: true })}>
+                  <div className="font-mono text-[13px] font-semibold text-ink">{c.name}</div>
+                  <div className="text-[12px] text-ink-mut font-mono">{c.content}{c.proxied ? ' · 橙云代理' : ' · 灰云'}</div>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button type="button" className="btn-primary px-5" disabled={cfBusy}
+              onClick={() => runCFImport({ apply: true })}>
+              {cfBusy ? '同步中…' : '查询并导入'}
+            </button>
+            <button type="button" className="btn-secondary px-4" disabled={cfBusy}
+              onClick={() => { setCfImportOpen(false); setCfImportCands(null) }}>
+              取消
+            </button>
+          </div>
+        </div>
       </Modal>
     </Layout>
   )
