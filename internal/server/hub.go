@@ -220,7 +220,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	applyDeclaredRelayHosts(h.DB, node, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
 	// Use connectIP (already de-noised) for seeding; still pass probes so the
 	// other address family can be filled when this WS only covers one family.
-	fillNodeRelayHosts(h.DB, node, connectIP, hello.ProbedV4, hello.ProbedV6, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
+	fillNodeRelayHosts(h.DB, node, connectIP, observedIP, hello.ProbedV4, hello.ProbedV6, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
 	// Port range is panel-owned: admin edits via /nodes/{id}/port-range must stick.
 	// Agent still reports hello.PortRange for diagnostics, but we must not overwrite
 	// the DB with the unit file's --port-range on every reconnect (that made UI
@@ -759,17 +759,20 @@ func ipStrNonPublic(s string) bool {
 }
 
 // panelSelfAddresses returns IPs that identify the panel host itself so we
-// never store them as a remote node's connect/relay address. Sources:
-// settings.panel_url host (when literal IP), and the self node row.
+// never store them as a remote node's connect/relay address.
+//
+// Sources:
+//  1. All non-loopback addresses on local interfaces (panel public/private NICs)
+//  2. settings.panel_url host when it is a literal IP
+//  3. DNS A/AAAA for panel_url hostname (domain installs)
 func panelSelfAddresses(d *sql.DB) map[string]bool {
-	out := map[string]bool{}
+	out := localHostIPSet()
 	if d == nil {
 		return out
 	}
 	if v, err := db.GetSetting(d, "panel_url"); err == nil {
 		v = strings.TrimSpace(v)
 		if v != "" {
-			// Accept bare host:port or URL.
 			host := v
 			if strings.Contains(v, "://") {
 				if u, err := parseURLHost(v); err == nil {
@@ -781,13 +784,95 @@ func panelSelfAddresses(d *sql.DB) map[string]bool {
 			host = strings.Trim(host, "[]")
 			if ip := net.ParseIP(host); ip != nil {
 				out[ip.String()] = true
+			} else if host != "" {
+				// Domain panel_url: resolve so reverse-proxy XFF of the panel
+				// public IP is recognized as self even when not on a local NIC
+				// (e.g. floating IP / LB VIP only in DNS).
+				for _, ip := range resolveHostIPs(host) {
+					out[ip] = true
+				}
 			}
 		}
 	}
-	// Optional: collect literal IPs already stored on any node that look like
-	// the panel (rare). Primary signal is settings.panel_url above.
 	return out
 }
+
+// localHostIPSet returns every IP configured on this host (minus loopback /
+// unspecified / link-local). Used to recognize the panel when agents connect
+// through a reverse proxy that stamps the panel's own public address into
+// X-Forwarded-For / X-Real-IP.
+func localHostIPSet() map[string]bool {
+	out := map[string]bool{}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return out
+	}
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		// Normalize IPv4-mapped form.
+		if v4 := ip.To4(); v4 != nil {
+			out[v4.String()] = true
+		} else {
+			out[ip.String()] = true
+		}
+	}
+	return out
+}
+
+// resolveHostIPs looks up A/AAAA for host. Best-effort; empty on failure.
+// Results are cached briefly so frequent hellos do not hammer the resolver.
+func resolveHostIPs(host string) []string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil
+	}
+	resolveHostIPsMu.Lock()
+	if t, ok := resolveHostIPsAt[host]; ok && time.Since(t) < 5*time.Minute {
+		out := append([]string(nil), resolveHostIPsCache[host]...)
+		resolveHostIPsMu.Unlock()
+		return out
+	}
+	resolveHostIPsMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range ips {
+		ip := a.IP
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		if v4 := ip.To4(); v4 != nil {
+			out = append(out, v4.String())
+		} else {
+			out = append(out, ip.String())
+		}
+	}
+	resolveHostIPsMu.Lock()
+	resolveHostIPsCache[host] = out
+	resolveHostIPsAt[host] = time.Now()
+	resolveHostIPsMu.Unlock()
+	return append([]string(nil), out...)
+}
+
+var (
+	resolveHostIPsMu    sync.Mutex
+	resolveHostIPsCache = map[string][]string{}
+	resolveHostIPsAt    = map[string]time.Time{}
+)
 
 func parseURLHost(raw string) (string, error) {
 	// Minimal parse without importing net/url at call sites repeatedly —
@@ -810,23 +895,26 @@ func parseURLHost(raw string) (string, error) {
 	return strings.Trim(host, "[]"), nil
 }
 
-// resolveNodeConnectIP chooses the address stored as nodes.address (UI「连接 IP」)
-// and used when seeding relay_host.
+// resolveNodeConnectIP chooses the address stored as nodes.address (UI「连接 IP」).
+// IPv4 is primary for the data plane.
 //
-// Rules:
-//  1. Public observed WS client IP that is NOT the panel itself → use it.
-//  2. Observed is empty or equals the panel (broken reverse-proxy X-Real-IP) →
-//     prefer agent-probed public addresses.
-//  3. Otherwise keep the observed peer (including private/loopback for lab/tests).
-//  4. Last resort: any probe.
+// Priority:
+//  1. Agent-probed public IPv4
+//  2. Public observed WS peer (v4) that is NOT the panel itself
+//  3. Agent-probed public IPv6
+//  4. Public observed WS peer (v6) that is NOT the panel
+//  5. Private/loopback observed (lab / direct dial)
+//  6. Any remaining probe string
+//
+// Reverse proxies commonly stamp the panel public IP into X-Forwarded-For /
+// X-Real-IP; those must never beat a real agent probe or a non-self peer.
 func resolveNodeConnectIP(d *sql.DB, observed, probedV4, probedV6 string) string {
 	self := panelSelfAddresses(d)
 	obs := strings.Trim(strings.TrimSpace(observed), "[]")
 	obsIP := net.ParseIP(obs)
 	obsSelf := obsIP != nil && self[obsIP.String()]
-	obsPublic := obsIP != nil && !ipNonPublic(obsIP)
 
-	publicProbe := func(s string) string {
+	publicCand := func(s string) string {
 		s = strings.Trim(strings.TrimSpace(s), "[]")
 		if s == "" {
 			return ""
@@ -838,28 +926,31 @@ func resolveNodeConnectIP(d *sql.DB, observed, probedV4, probedV6 string) string
 		return s
 	}
 
-	if obs != "" && !obsSelf && obsPublic {
-		return obs
+	// 1) public IPv4 from agent
+	if p := publicCand(probedV4); p != "" {
+		return p
 	}
-	// Broken proxy: XFF/X-Real-IP is the panel, or missing entirely.
-	if obs == "" || obsSelf {
-		if p := publicProbe(probedV4); p != "" {
-			return p
-		}
-		if p := publicProbe(probedV6); p != "" {
+	// 2) public IPv4 observed (real peer, not panel)
+	if !obsSelf && obsIP != nil && obsIP.To4() != nil {
+		if p := publicCand(obs); p != "" {
 			return p
 		}
 	}
-	// Lab / direct dial: private observed peer is still the real client.
+	// 3) public IPv6 from agent
+	if p := publicCand(probedV6); p != "" {
+		return p
+	}
+	// 4) public IPv6 observed
+	if !obsSelf && obsIP != nil && obsIP.To4() == nil {
+		if p := publicCand(obs); p != "" {
+			return p
+		}
+	}
+	// 5) private/loopback observed peer (lab)
 	if obs != "" && !obsSelf {
 		return obs
 	}
-	if p := publicProbe(probedV4); p != "" {
-		return p
-	}
-	if p := publicProbe(probedV6); p != "" {
-		return p
-	}
+	// 6) last resort: any probe (even private)
 	if s := strings.TrimSpace(probedV4); s != "" {
 		return s
 	}
@@ -869,7 +960,7 @@ func resolveNodeConnectIP(d *sql.DB, observed, probedV4, probedV6 string) string
 	return obs
 }
 
-func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, probedV4, probedV6, declaredV4, declaredV6 string) {
+func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, observedIP, probedV4, probedV6, declaredV4, declaredV6 string) {
 	self := panelSelfAddresses(d)
 	pickV4 := func(cands ...string) string {
 		var private string
@@ -936,30 +1027,74 @@ func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, probedV4, probedV6,
 		node.RelayHost = ""
 	}
 
-	// Heal mistaken panel-IP auto-fill (not operator-declared).
+	// Heal mistaken auto-fill (not operator-declared / not --relay-host):
+	//  - panel self address (reverse-proxy noise)
+	//  - private IP when agent now reports a public probe
+	// Do NOT overwrite a different public IP / hostname the operator set in UI.
+	publicProbeV4 := ""
+	if p := pickV4(probedV4); p != "" {
+		if ip := net.ParseIP(p); ip != nil && !ipNonPublic(ip) {
+			publicProbeV4 = p
+		}
+	}
+	publicProbeV6 := ""
+	if p := pickV6(probedV6); p != "" {
+		if ip := net.ParseIP(p); ip != nil && !ipNonPublic(ip) {
+			publicProbeV6 = p
+		}
+	}
+
 	if node.RelayHost != "" && !node.RelayHostDeclared {
-		if ip := net.ParseIP(node.RelayHost); ip != nil && self[ip.String()] {
+		ip := net.ParseIP(node.RelayHost)
+		shouldClear := false
+		if ip != nil && self[ip.String()] {
+			shouldClear = true
+		} else if publicProbeV4 != "" && ip != nil && ip.To4() != nil && ipNonPublic(ip) {
+			shouldClear = true
+		} else if publicProbeV4 != "" && ip != nil && ip.To4() != nil {
+			// Relay was auto-seeded from a bad observed/XFF hop (same as this
+			// connection's observed IP) and agent now reports a different public
+			// egress — heal even when panelSelfAddresses missed the panel IP
+			// (domain panel_url + DNS failure, floating IP not on NIC, etc.).
+			obs := strings.Trim(strings.TrimSpace(observedIP), "[]")
+			if obs != "" && ip.String() == obs && ip.String() != publicProbeV4 {
+				shouldClear = true
+			}
+		}
+		if shouldClear {
 			_ = db.UpdateNodeRelayHost(d, node.ID, "")
 			node.RelayHost = ""
 		}
 	}
 	if node.RelayHostV6 != "" && !node.RelayHostV6Declared {
-		if ip := net.ParseIP(node.RelayHostV6); ip != nil && self[ip.String()] {
+		ip := net.ParseIP(node.RelayHostV6)
+		shouldClear := false
+		if ip != nil && self[ip.String()] {
+			shouldClear = true
+		} else if publicProbeV6 != "" && ip != nil && ip.To4() == nil && ipNonPublic(ip) {
+			shouldClear = true
+		} else if publicProbeV6 != "" && ip != nil && ip.To4() == nil {
+			obs := strings.Trim(strings.TrimSpace(observedIP), "[]")
+			if obs != "" && ip.String() == obs && ip.String() != publicProbeV6 {
+				shouldClear = true
+			}
+		}
+		if shouldClear {
 			_ = db.UpdateNodeRelayHostV6(d, node.ID, "")
 			node.RelayHostV6 = ""
 		}
 	}
 
 	if node.RelayHost == "" && declaredV4 == "" {
-		// Prefer public connectIP, then agent probe, then private.
-		v4 := pickV4(connectIP, probedV4)
+		// Prefer public agent probe, then connectIP, then observed peer, then private.
+		v4 := pickV4(probedV4, connectIP, observedIP)
 		if v4 != "" {
 			_ = db.UpdateNodeRelayHost(d, node.ID, v4)
 			node.RelayHost = v4
 		}
 	}
 	if node.RelayHostV6 == "" && declaredV6 == "" {
-		v6 := pickV6(connectIP, probedV6)
+		v6 := pickV6(probedV6, connectIP, observedIP)
 		if v6 != "" {
 			_ = db.UpdateNodeRelayHostV6(d, node.ID, v6)
 			node.RelayHostV6 = v6

@@ -812,10 +812,63 @@ func TestResolveNodeConnectIPIgnoresPanelSelf(t *testing.T) {
 	if got2 != "127.0.0.1" {
 		t.Fatalf("got %q, want keep private observed", got2)
 	}
-	// Public observed wins over probe.
+	// Agent public probe always wins over observed (proxy headers are untrusted).
 	got3 := resolveNodeConnectIP(d, "203.0.113.8", "198.51.100.20", "")
-	if got3 != "203.0.113.8" {
-		t.Fatalf("got %q, want public observed", got3)
+	if got3 != "198.51.100.20" {
+		t.Fatalf("got %q, want agent probe over observed", got3)
+	}
+	// IPv4 probe preferred over IPv6 probe.
+	got4 := resolveNodeConnectIP(d, "10.0.0.1", "198.51.100.9", "2001:db8::9")
+	if got4 != "198.51.100.9" {
+		t.Fatalf("got %q, want v4 probe first", got4)
+	}
+	// No v4 probe → public v6 probe.
+	got5 := resolveNodeConnectIP(d, "10.0.0.1", "10.1.2.3", "2001:db8::aa")
+	if got5 != "2001:db8::aa" {
+		t.Fatalf("got %q, want public v6 when v4 probe is private", got5)
+	}
+}
+
+func TestFillNodeRelayHostsDualStackFromProbes(t *testing.T) {
+	d := openDB(t)
+	n, err := db.CreateNode(d, "dual", "", "tok-dual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed wrong panel IP as auto-fill (not declared).
+	_ = db.SetSetting(d, "panel_url", "https://107.174.202.136:7788")
+	_ = db.UpdateNodeRelayHost(d, n.ID, "107.174.202.136")
+	n, _ = db.GetNode(d, n.ID)
+
+	fillNodeRelayHosts(d, n, "107.174.202.136", "107.174.202.136", "198.51.100.50", "2001:db8::50", "", "")
+	got, err := db.GetNode(d, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RelayHost != "198.51.100.50" {
+		t.Fatalf("RelayHost=%q want agent v4 probe", got.RelayHost)
+	}
+	if got.RelayHostV6 != "2001:db8::50" {
+		t.Fatalf("RelayHostV6=%q want agent v6 probe", got.RelayHostV6)
+	}
+}
+
+func TestFillNodeRelayHostsKeepsManualPublicIP(t *testing.T) {
+	d := openDB(t)
+	n, err := db.CreateNode(d, "manual", "", "tok-manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Operator saved a public IP that differs from probe — must not clobber.
+	_ = db.UpdateNodeRelayHost(d, n.ID, "203.0.113.77")
+	n, _ = db.GetNode(d, n.ID)
+	fillNodeRelayHosts(d, n, "10.0.0.1", "10.0.0.1", "198.51.100.50", "2001:db8::50", "", "")
+	got, _ := db.GetNode(d, n.ID)
+	if got.RelayHost != "203.0.113.77" {
+		t.Fatalf("RelayHost=%q want keep manual public", got.RelayHost)
+	}
+	if got.RelayHostV6 != "2001:db8::50" {
+		t.Fatalf("RelayHostV6=%q want filled from probe", got.RelayHostV6)
 	}
 }
 

@@ -869,11 +869,76 @@ func probeOutboundIP(network, target string) string {
 	return host
 }
 
-// probeOutboundIPs returns this host's best-guess v4/v6 outbound addresses.
-// Re-probed fresh on every call (cheap — no packets sent) so a network change
-// between reconnects is picked up without an agent restart.
+// firstPublicInterfaceIP returns the first global-unicast address of the
+// requested family (wantV4=true → IPv4) on a non-loopback interface.
+// Used when the UDP route probe is missing or only yields a private/link-local
+// address so dual-stack VPS still report their public NICs.
+func firstPublicInterfaceIP(wantV4 bool) string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
+				continue
+			}
+			if wantV4 {
+				if v4 := ip.To4(); v4 != nil {
+					return v4.String()
+				}
+				continue
+			}
+			if ip.To4() == nil {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
+func isNonPublicIPString(s string) bool {
+	ip := net.ParseIP(strings.Trim(strings.TrimSpace(s), "[]"))
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+// probeOutboundIPs returns this host's best-guess public v4/v6 addresses for
+// the panel to seed 连接 IP / 中继地址 / IPv6 中继.
+// Re-probed on every hello (cheap) so dual-stack changes are picked up.
 func probeOutboundIPs() (v4, v6 string) {
-	return probeOutboundIP("udp4", probeV4Target), probeOutboundIP("udp6", probeV6Target)
+	v4 = probeOutboundIP("udp4", probeV4Target)
+	v6 = probeOutboundIP("udp6", probeV6Target)
+	// Prefer a real public NIC address when the route probe is private/empty
+	// (common on some cloud images where default route uses a private hop).
+	if v4 == "" || isNonPublicIPString(v4) {
+		if p := firstPublicInterfaceIP(true); p != "" {
+			v4 = p
+		}
+	}
+	if v6 == "" || isNonPublicIPString(v6) {
+		if p := firstPublicInterfaceIP(false); p != "" {
+			v6 = p
+		}
+	}
+	return v4, v6
 }
 
 // dialOptions enables TCP keepalive on the underlying connection so silent
