@@ -108,3 +108,72 @@ func TestEnsureSecretsRealityRealKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBuildXrayVLESSConfigShortIDsStrict(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd1234", Security: "reality", Network: "tcp",
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(cfg, &m); err != nil {
+		t.Fatal(err)
+	}
+	in := m["inbounds"].([]any)[0].(map[string]any)
+	ss := in["streamSettings"].(map[string]any)
+	rs := ss["realitySettings"].(map[string]any)
+	ids := rs["shortIds"].([]any)
+	if len(ids) != 1 || ids[0] != "abcd1234" {
+		t.Fatalf("strict shortIds=%v", ids)
+	}
+}
+
+func TestBuildXrayVLESSConfigWS(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "ab", Security: "reality",
+		Network: "ws", Path: "/ray", Host: "www.example.com", Flow: "xtls-rprx-vision",
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, `"wsSettings"`) || !strings.Contains(s, "/ray") {
+		t.Fatalf("missing ws settings: %s", s)
+	}
+	// flow must be stripped on non-tcp
+	if strings.Contains(s, "xtls-rprx-vision") {
+		t.Fatal("vision should not appear on ws")
+	}
+}
+
+func TestEnsureSecretsKeyPairAlwaysMatched(t *testing.T) {
+	// Only private provided → both replaced with a matched pair
+	raw, err := EnsureSecrets("vless", json.RawMessage(`{"server_name":"a.com","private_key":"only-priv"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c VLESSConfig
+	_ = json.Unmarshal(raw, &c)
+	if c.PrivateKey == "only-priv" || c.PublicKey == "" {
+		t.Fatalf("expected full pair regen, got priv=%q pub=%q", c.PrivateKey, c.PublicKey)
+	}
+}
+
+func TestEnsureSecretsFlowNonePreserved(t *testing.T) {
+	raw, err := EnsureSecrets("vless", json.RawMessage(`{"server_name":"a.com","flow":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c VLESSConfig
+	_ = json.Unmarshal(raw, &c)
+	if c.Flow != "" {
+		t.Fatalf("flow none should clear, got %q", c.Flow)
+	}
+}

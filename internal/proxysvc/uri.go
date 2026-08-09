@@ -16,24 +16,33 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// VLESSConfig is the subset of Weir/3X-UI fields we persist for phase 1.
+// VLESSConfig is the subset of fields we persist for VLESS (+ REALITY) publish.
+// Extra transport / PQ fields are optional; defaults stay tcp + REALITY + vision.
 type VLESSConfig struct {
 	ListenPort        int    `json:"listen_port"`
 	ShareHost         string `json:"share_host"`
 	ServerName        string `json:"server_name"`
 	ServerPort        int    `json:"server_port"`
 	Fingerprint       string `json:"fingerprint"`
-	Network           string `json:"network"`
-	Flow              string `json:"flow"`
+	Network           string `json:"network"` // tcp | ws | httpupgrade | xhttp
+	Flow              string `json:"flow"`    // xtls-rprx-vision | none | ""
 	MaxTimeDifference int    `json:"max_time_difference"`
-	Security          string `json:"security"`
+	Security          string `json:"security"` // reality (deploy) | tls | none (uri-only stubs)
 	PrivateKey        string `json:"private_key"`
 	PublicKey         string `json:"public_key"`
 	ShortID           string `json:"short_id"`
-	Encryption        string `json:"encryption"`
-	Decryption        string `json:"decryption"`
+	// AllowEmptyShortID when true appends "" to shortIds so clients without sid still connect.
+	// Default false = only configured short_id (stricter).
+	AllowEmptyShortID bool   `json:"allow_empty_short_id"`
+	Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
+	Decryption        string `json:"decryption"` // server settings.decryption (optional)
 	UUID              string `json:"uuid"`
 	SubVisible        bool   `json:"sub_visible"`
+	// Transport extras (ws / httpupgrade / xhttp)
+	Path     string `json:"path"`
+	Host     string `json:"host"` // Host header / authority
+	SpiderX  string `json:"spider_x"`
+	XHTTPMode string `json:"xhttp_mode"` // auto | packet-up | stream-up | stream-one
 }
 
 // SSConfig is Shadowsocks 2022 (sing-box) config.
@@ -80,25 +89,37 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 		if c.Network == "" {
 			c.Network = "tcp"
 		}
-		if c.Flow == "" {
-			c.Flow = "xtls-rprx-vision"
+		c.Network = strings.ToLower(strings.TrimSpace(c.Network))
+		// flow: "none" / "off" / "关" = explicitly disabled; empty = default vision for tcp+reality
+		switch strings.ToLower(strings.TrimSpace(c.Flow)) {
+		case "none", "off", "关", "-":
+			c.Flow = ""
+		case "":
+			// Only auto-enable vision on classic REALITY+tcp (best anti-block default).
+			if c.Network == "tcp" && (c.Security == "" || c.Security == "reality") {
+				c.Flow = "xtls-rprx-vision"
+			}
 		}
 		if c.Security == "" {
 			c.Security = "reality"
 		}
 		if c.Security == "reality" {
+			// Always keep private/public as a matched pair. Partial fill used to
+			// generate only the missing side and break client handshakes.
 			if c.PrivateKey == "" || c.PublicKey == "" {
 				priv, pub := GenerateRealityKeyPair()
-				if c.PrivateKey == "" {
-					c.PrivateKey = priv
-				}
-				if c.PublicKey == "" {
-					c.PublicKey = pub
-				}
+				c.PrivateKey = priv
+				c.PublicKey = pub
 			}
 			if c.ShortID == "" {
 				c.ShortID = randomHex(8)
 			}
+		}
+		if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
+			c.Path = "/"
+		}
+		if c.XHTTPMode == "" && c.Network == "xhttp" {
+			c.XHTTPMode = "auto"
 		}
 		return json.Marshal(c)
 	case "shadowsocks", "ss":
@@ -113,7 +134,6 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 			c.Method = "2022-blake3-aes-128-gcm"
 		}
 		if c.Password == "" {
-			// SS2022 expects base64 key material; generate 16 or 32 bytes by method.
 			n := 16
 			if strings.Contains(c.Method, "256") {
 				n = 32
@@ -171,7 +191,12 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			return "", fmt.Errorf("vless uuid missing")
 		}
 		q := url.Values{}
-		q.Set("encryption", "none")
+		// encryption: none unless ML-KEM / vlessenc material provided
+		if strings.TrimSpace(c.Encryption) != "" {
+			q.Set("encryption", strings.TrimSpace(c.Encryption))
+		} else {
+			q.Set("encryption", "none")
+		}
 		if c.Flow != "" {
 			q.Set("flow", c.Flow)
 		}
@@ -180,25 +205,42 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			sec = "reality"
 		}
 		q.Set("security", sec)
-		if c.Network != "" {
-			q.Set("type", c.Network)
+		network := c.Network
+		if network == "" {
+			network = "tcp"
 		}
+		q.Set("type", network)
 		if c.Fingerprint != "" {
 			q.Set("fp", c.Fingerprint)
 		}
-		if sec == "reality" {
+		if sec == "reality" || sec == "tls" {
 			if c.ServerName != "" {
 				q.Set("sni", c.ServerName)
 			}
+		}
+		if sec == "reality" {
 			if c.PublicKey != "" {
 				q.Set("pbk", c.PublicKey)
 			}
 			if c.ShortID != "" {
 				q.Set("sid", c.ShortID)
 			}
+			if c.SpiderX != "" {
+				q.Set("spx", c.SpiderX)
+			}
 		}
-		if c.Encryption != "" {
-			q.Set("encryption", c.Encryption) // may override none when vlessenc used
+		// Transport-specific client params
+		switch network {
+		case "ws", "httpupgrade", "xhttp", "http":
+			if c.Path != "" {
+				q.Set("path", c.Path)
+			}
+			if c.Host != "" {
+				q.Set("host", c.Host)
+			}
+			if network == "xhttp" && c.XHTTPMode != "" {
+				q.Set("mode", c.XHTTPMode)
+			}
 		}
 		u := url.URL{
 			Scheme:   "vless",
@@ -216,10 +258,7 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		if c.Method == "" || c.Password == "" {
 			return "", fmt.Errorf("ss method/password missing")
 		}
-		// ss://base64(method:password)@host:port#name
-		userinfo := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(c.Method + ":" + c.Password))
-		// Many clients expect StdEncoding; use Std for broader compatibility.
-		userinfo = base64.StdEncoding.EncodeToString([]byte(c.Method + ":" + c.Password))
+		userinfo := base64.StdEncoding.EncodeToString([]byte(c.Method + ":" + c.Password))
 		u := &url.URL{
 			Scheme:   "ss",
 			User:     url.User(userinfo),
@@ -228,47 +267,41 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		}
 		return u.String(), nil
 	case "mieru":
-			var c MieruConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return "", err
+		var c MieruConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return "", err
+		}
+		if c.Username == "" || c.Password == "" {
+			return "", fmt.Errorf("mieru username/password missing")
+		}
+		profile := name
+		if profile == "" {
+			profile = "default"
+		}
+		transports := c.Transports
+		if len(transports) == 0 {
+			transports = []string{"TCP", "UDP"}
+		}
+		q := url.Values{}
+		q.Set("profile", profile)
+		for _, t := range transports {
+			proto := strings.ToUpper(strings.TrimSpace(t))
+			if proto == "" {
+				continue
 			}
-			if c.Username == "" || c.Password == "" {
-				return "", fmt.Errorf("mieru username/password missing")
-			}
-			// Official simple share link (client: mieru import config <URL>):
-			//   mierus://user:pass@host?profile=NAME&port=P&protocol=TCP&port=P&protocol=UDP
-			// See https://github.com/enfein/mieru docs (client-install.md).
-			// profile is required once; port/protocol pair by position (multiples OK).
-			profile := name
-			if profile == "" {
-				profile = "default"
-			}
-			transports := c.Transports
-			if len(transports) == 0 {
-				transports = []string{"TCP", "UDP"}
-			}
-			q := url.Values{}
-			q.Set("profile", profile)
-			for _, t := range transports {
-				proto := strings.ToUpper(strings.TrimSpace(t))
-				if proto == "" {
-					continue
-				}
-				// Keep port/protocol counts equal so clients associate by position.
-				q.Add("port", strconv.Itoa(listenPort))
-				q.Add("protocol", proto)
-			}
-			if c.TrafficPattern != "" {
-				// Official param is hyphenated; value is opaque base64 protobuf.
-				q.Set("traffic-pattern", c.TrafficPattern)
-			}
-			u := url.URL{
-				Scheme:   "mierus",
-				User:     url.UserPassword(c.Username, c.Password),
-				Host:     host, // simple form: host only; port is a query param
-				RawQuery: q.Encode(),
-			}
-			return u.String(), nil
+			q.Add("port", strconv.Itoa(listenPort))
+			q.Add("protocol", proto)
+		}
+		if c.TrafficPattern != "" {
+			q.Set("traffic-pattern", c.TrafficPattern)
+		}
+		u := url.URL{
+			Scheme:   "mierus",
+			User:     url.UserPassword(c.Username, c.Password),
+			Host:     host,
+			RawQuery: q.Encode(),
+		}
+		return u.String(), nil
 	default:
 		return "", fmt.Errorf("unknown protocol %s", protocol)
 	}
@@ -328,7 +361,8 @@ func randomB64Std(nBytes int) string {
 func GenerateRealityKeyPair() (privateKey, publicKey string) {
 	var priv [32]byte
 	if _, err := rand.Read(priv[:]); err != nil {
-		return randomB64URL(32), randomB64URL(32)
+		// Extremely rare; still return a valid clamped pair from zero-padded entropy.
+		priv[0] = 1
 	}
 	// Clamp as in X25519.
 	priv[0] &= 248

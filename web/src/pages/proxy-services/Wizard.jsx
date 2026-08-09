@@ -5,6 +5,7 @@ import { Layout, useToast } from '../../components/Layout'
 import { Loading, Badge, Select } from '../../components/ui'
 import { PageHeader, Panel } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
+import { REALITY_DOMAIN_POOL, REALITY_FP_OPTIONS, REALITY_NETWORK_OPTIONS } from '../../lib/realityDomains'
 
 const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完成']
 
@@ -32,9 +33,14 @@ const emptyVless = () => ({
   private_key: '',
   public_key: '',
   short_id: '',
+  allow_empty_short_id: false,
   encryption: '',
   decryption: '',
   uuid: '',
+  path: '/',
+  host: '',
+  spider_x: '',
+  xhttp_mode: 'auto',
 })
 
 const emptySS = () => ({
@@ -134,6 +140,10 @@ export default function ProxyServiceWizard() {
 
   const saveConfig = async () => {
     if (!name.trim()) { toast('请填写名称', 'error'); return false }
+    if (protocol === 'vless' && !(config.server_name || '').trim()) {
+      toast('请填写 server-name（REALITY 回源 SNI），可从域名池选择', 'error')
+      return false
+    }
     const body = {
       name: name.trim(),
       protocol,
@@ -283,32 +293,105 @@ export default function ProxyServiceWizard() {
                     <div>
                       <label className="fl block mb-1">server-name（回源 / REALITY SNI）</label>
                       <input className="input-field font-mono" value={config.server_name || ''} onChange={e => setCfg('server_name', e.target.value)} placeholder="cdn.example.com" />
+                      <p className="text-[11px] text-ink-mut mt-1">回源站 / REALITY SNI / TLS SNI</p>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">域名池</label>
+                      <Select
+                        value={config.server_name && REALITY_DOMAIN_POOL.some(d => d.domain === config.server_name) ? config.server_name : ''}
+                        onChange={v => { if (v) setCfg('server_name', v) }}
+                        options={[
+                          { value: '', label: '选择预置域名…' },
+                          ...REALITY_DOMAIN_POOL.map(d => ({
+                            value: d.domain,
+                            label: `${d.flag} ${d.domain} · ${d.label}`,
+                          })),
+                        ]}
+                      />
+                      <p className="text-[11px] text-ink-mut mt-1">按节点所在地区挑选；一个 inbound 只有一个 dest。上线前请在该节点实测 TLS1.3 + h2 + X25519</p>
                     </div>
                     <div>
                       <label className="fl block mb-1">server-port</label>
                       <input className="input-field font-mono" type="number" value={config.server_port || 443} onChange={e => setCfg('server_port', Number(e.target.value) || 443)} />
+                      <p className="text-[11px] text-ink-mut mt-1">回源端口，默认 443</p>
                     </div>
                     <div>
                       <label className="fl block mb-1">指纹</label>
                       <Select value={config.fingerprint || 'chrome'} onChange={v => setCfg('fingerprint', v)}
-                        options={['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random'].map(v => ({ value: v, label: v }))} />
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">传输层</label>
-                      <Select value={config.network || 'tcp'} onChange={v => setCfg('network', v)}
-                        options={[{ value: 'tcp', label: 'tcp（裸 TCP）' }]} />
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">flow</label>
-                      <Select value={config.flow || 'xtls-rprx-vision'} onChange={v => setCfg('flow', v)}
-                        options={[{ value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' }, { value: '', label: '（空）' }]} />
+                        options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
+                      <p className="text-[11px] text-ink-mut mt-1">客户端 ClientHello 伪装；默认 chrome 即可</p>
                     </div>
                     <div>
                       <label className="fl block mb-1">max_time_difference</label>
                       <input className="input-field font-mono" type="number" value={config.max_time_difference ?? 60000}
                         onChange={e => setCfg('max_time_difference', Number(e.target.value))} />
+                      <p className="text-[11px] text-ink-mut mt-1">毫秒整数，如 60000=1m，可空</p>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">传输层</label>
+                      <Select value={config.network || 'tcp'} onChange={v => {
+                        setCfg('network', v)
+                        // vision only valid on tcp
+                        if (v !== 'tcp' && config.flow === 'xtls-rprx-vision') setCfg('flow', 'none')
+                        if (v === 'tcp' && (!config.flow || config.flow === 'none')) setCfg('flow', 'xtls-rprx-vision')
+                      }} options={REALITY_NETWORK_OPTIONS} />
+                      <p className="text-[11px] text-ink-mut mt-1">抗封锁默认 tcp；ws/xhttp 会多一层 HTTP 特征，仅在需要时选用</p>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">flow</label>
+                      <Select value={config.flow === '' || config.flow === 'none' ? 'none' : (config.flow || 'xtls-rprx-vision')}
+                        onChange={v => setCfg('flow', v === 'none' ? 'none' : v)}
+                        options={[
+                          { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
+                          { value: 'none', label: '关' },
+                        ]} />
+                      <p className="text-[11px] text-ink-mut mt-1">仅 tcp 推荐 vision；其它传输层自动关闭</p>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">decryption（服务端）</label>
+                      <input className="input-field font-mono text-xs" value={config.decryption || ''} onChange={e => setCfg('decryption', e.target.value)}
+                        placeholder="none 或 mlkem…（高级）" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="fl block mb-1">encryption（客户端）</label>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input className="input-field font-mono text-xs flex-1 min-w-[200px]" value={config.encryption || ''} onChange={e => setCfg('encryption', e.target.value)}
+                          placeholder="留空 = none；可填 xray vlessenc 输出" />
+                        <button type="button" className="btn-secondary text-sm" onClick={() => {
+                          setCfg('encryption', '')
+                          setCfg('decryption', '')
+                          toast('已清空 encryption / decryption（使用 none）')
+                        }}>清空</button>
+                      </div>
+                      <p className="text-[11px] text-ink-mut mt-1">
+                        可选 ML-KEM / vlessenc：在 xray 生成后分别填入服务端 decryption 与客户端 encryption；两端版本需支持。留空即 none。
+                      </p>
                     </div>
                   </div>
+
+                  {(config.network === 'ws' || config.network === 'httpupgrade' || config.network === 'xhttp') && (
+                    <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                      <div className="text-sm font-bold">传输层参数 · {config.network}</div>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="fl block mb-1">path</label>
+                          <input className="input-field font-mono" value={config.path || '/'} onChange={e => setCfg('path', e.target.value || '/')} />
+                        </div>
+                        <div>
+                          <label className="fl block mb-1">host（可选）</label>
+                          <input className="input-field font-mono" value={config.host || ''} onChange={e => setCfg('host', e.target.value)} placeholder="默认与 SNI 一致时可留空" />
+                        </div>
+                        {config.network === 'xhttp' && (
+                          <div>
+                            <label className="fl block mb-1">xhttp mode</label>
+                            <Select value={config.xhttp_mode || 'auto'} onChange={v => setCfg('xhttp_mode', v)}
+                              options={['auto', 'packet-up', 'stream-up', 'stream-one'].map(v => ({ value: v, label: v }))} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
                     <div className="text-sm font-bold">安全层 · REALITY</div>
                     <div className="grid sm:grid-cols-2 gap-3">
@@ -325,10 +408,24 @@ export default function ProxyServiceWizard() {
                       <button type="button" className="btn-primary text-sm" onClick={() => genKeys('reality')}>生成密钥</button>
                       <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('short_id')}>生成 short_id</button>
                     </div>
-                    <div>
-                      <label className="fl block mb-1">short_id</label>
-                      <input className="input-field font-mono" value={config.short_id || ''} onChange={e => setCfg('short_id', e.target.value)} />
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="fl block mb-1">short_id</label>
+                        <input className="input-field font-mono" value={config.short_id || ''} onChange={e => setCfg('short_id', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">spiderX（可选）</label>
+                        <input className="input-field font-mono" value={config.spider_x || ''} onChange={e => setCfg('spider_x', e.target.value)} placeholder="/" />
+                      </div>
                     </div>
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.allow_empty_short_id}
+                        onChange={e => setCfg('allow_empty_short_id', e.target.checked)} />
+                      允许空 shortId（兼容旧客户端；默认关闭更严）
+                    </label>
+                    <p className="text-[11px] text-ink-mut m-0">
+                      密钥始终成对生成/覆盖。部署默认仅 REALITY；shortId 默认只接受已配置值。
+                    </p>
                   </div>
                 </div>
               )}
