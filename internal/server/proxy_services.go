@@ -229,32 +229,40 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Try live apply; fall back to dry-run ready if agent offline or old.
-		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
-		if applyRes.OK {
-			status := db.ProxyDeployReady
-			finalURI := uri
-			if applyRes.URI != "" {
-				finalURI = applyRes.URI
+		// Try live apply on agent.
+			applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
+			if applyRes.OK {
+				status := db.ProxyDeployReady
+				finalURI := uri
+				if applyRes.URI != "" {
+					finalURI = applyRes.URI
+				}
+				note := ""
+				if applyRes.DryRun {
+					// URI-only path (e.g. VLESS/SS phase-1): keep ready but surface note.
+					note = applyRes.Error
+					if note == "" {
+						note = "dry-run：仅生成链接，节点未启动核心进程"
+					}
+				}
+				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, status, finalURI, note, applyRes.CoreVersion)
+				results = append(results, map[string]any{
+					"node_id": nodeID, "ok": true, "uri": finalURI, "dry_run": applyRes.DryRun,
+					"instance_id": inst.ID, "warning": note,
+				})
+			} else {
+				// Real failure (e.g. mita missing / apply error): mark error so admin
+				// does not treat the share link as a live endpoint.
+				msg := applyRes.Error
+				if msg == "" {
+					msg = "agent 部署失败"
+				}
+				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, msg, "")
+				results = append(results, map[string]any{
+					"node_id": nodeID, "ok": false, "uri": uri, "dry_run": applyRes.DryRun,
+					"error": msg, "instance_id": inst.ID,
+				})
 			}
-			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, status, finalURI, "", applyRes.CoreVersion)
-			results = append(results, map[string]any{
-				"node_id": nodeID, "ok": true, "uri": finalURI, "dry_run": applyRes.DryRun,
-				"instance_id": inst.ID,
-			})
-		} else {
-			// Offline / timeout: still mark ready with panel-built URI so admin can
-			// sync to repo; note error for visibility.
-			msg := applyRes.Error
-			if msg == "" {
-				msg = "agent 未响应，已用面板生成 URI（dry-run）"
-			}
-			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployReady, uri, msg, "")
-			results = append(results, map[string]any{
-				"node_id": nodeID, "ok": true, "uri": uri, "dry_run": true,
-				"warning": msg, "instance_id": inst.ID,
-			})
-		}
 	}
 	_ = db.RecomputeProxyServiceStatus(s.DB, id)
 	svc, _ = db.GetProxyService(s.DB, id)

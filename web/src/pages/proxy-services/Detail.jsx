@@ -92,8 +92,9 @@ export default function ProxyServiceDetail() {
               <Link to="/proxy-services/new" className="text-sm text-emerald-600 font-semibold">发布到更多节点…</Link>
             </div>
             <p className="text-[12.5px] text-ink-mut mb-3">
-              一期为 dry-run：面板生成可导入的分享链接（mieru 为官方 <span className="font-mono">mierus://</span> 格式），
-              但 agent 尚未在节点上真正拉起 xray / sing-box / mita 进程。链接可导入客户端，需节点侧已安装并手动配置对应核心后才能通。
+              <strong>mieru</strong>：发布时 agent 会在节点上执行 <span className="font-mono">mita apply config</span> + <span className="font-mono">mita start</span>
+              （需已安装 <span className="font-mono">mita</span> 服务端，不是客户端 mieru）。链接为官方 <span className="font-mono">mierus://</span>。
+              VLESS / Shadowsocks 仍仅生成 URI，真实核心部署后续版本接入。状态为 error 时请看下方错误（常见：未装 mita、端口被占用、防火墙未放行）。
             </p>
           </div>
           <TableScroll>

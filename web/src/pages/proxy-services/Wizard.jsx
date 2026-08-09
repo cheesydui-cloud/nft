@@ -450,7 +450,7 @@ export default function ProxyServiceWizard() {
                 <li>节点数：{selected.size}</li>
               </ul>
               <p className="text-[12.5px] text-ink-mut mb-4">
-                一期：面板生成分享 URI；若 agent 在线会尝试下发（目前为 dry-run，不强制本机已装核心）。发布后可同步到落地仓库。
+                mieru 会在节点上真实调用 mita 部署；VLESS/SS 暂仅生成链接。节点需已安装对应核心（mieru 服务端二进制名为 mita），并放行监听端口。
               </p>
               <div className="flex justify-end gap-2">
                 <button type="button" className="btn-secondary" onClick={() => setStep(2)}>上一步</button>
