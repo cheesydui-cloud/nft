@@ -534,6 +534,11 @@ func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply)
 }
 
 func (h *Hub) SendProbe(nodeID int64, target string) (wsproto.ProbeAck, error) {
+	return h.SendProbeEx(nodeID, wsproto.Probe{Target: target})
+}
+
+// SendProbeEx sends a probe with optional mode (tcp|tls) and SNI.
+func (h *Hub) SendProbeEx(nodeID int64, req wsproto.Probe) (wsproto.ProbeAck, error) {
 	h.mu.RLock()
 	ac, ok := h.conns[nodeID]
 	h.mu.RUnlock()
@@ -551,9 +556,14 @@ func (h *Hub) SendProbe(nodeID int64, target string) (wsproto.ProbeAck, error) {
 		ac.pendMu.Unlock()
 	}()
 
-	payload, _ := json.Marshal(wsproto.Probe{Target: target})
+	payload, _ := json.Marshal(req)
 	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeProbe, ID: id, Payload: payload})
 
+	// TLS handshake can take longer than plain TCP dial.
+	timeout := 10 * time.Second
+	if strings.EqualFold(req.Mode, "tls") {
+		timeout = 15 * time.Second
+	}
 	select {
 	case raw := <-ch:
 		var ack wsproto.ProbeAck
@@ -561,7 +571,7 @@ func (h *Hub) SendProbe(nodeID int64, target string) (wsproto.ProbeAck, error) {
 			return wsproto.ProbeAck{}, fmt.Errorf("malformed probe_ack: %w", err)
 		}
 		return ack, nil
-	case <-time.After(10 * time.Second):
+	case <-time.After(timeout):
 		return wsproto.ProbeAck{}, errors.New("probe timeout")
 	case <-ac.closed:
 		return wsproto.ProbeAck{}, errors.New("connection closed")

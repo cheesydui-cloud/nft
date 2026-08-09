@@ -1,15 +1,18 @@
 package server
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"nft/internal/db"
+	"nft/internal/wsproto"
 )
 
 const probeTimeout = 5 * time.Second
@@ -19,6 +22,21 @@ type probeResult struct {
 	Latency int        `json:"latency_ms"`
 	Error   string     `json:"error,omitempty"`
 	Hops    []hopProbe `json:"hops,omitempty"`
+	// TLS dest fields (mode=tls)
+	TLSVersion   string   `json:"tls_version,omitempty"`
+	ALPN         string   `json:"alpn,omitempty"`
+	Cipher       string   `json:"cipher,omitempty"`
+	CertCN       string   `json:"cert_cn,omitempty"`
+	CertDNS      []string `json:"cert_dns,omitempty"`
+	CertNotAfter int64    `json:"cert_not_after,omitempty"`
+	SNIMatch     bool     `json:"sni_match,omitempty"`
+	TLS13        bool     `json:"tls13,omitempty"`
+	H2           bool     `json:"h2,omitempty"`
+	Score        string   `json:"score,omitempty"`
+	Summary      string   `json:"summary,omitempty"`
+	Mode         string   `json:"mode,omitempty"`
+	Target       string   `json:"target,omitempty"`
+	ServerName   string   `json:"server_name,omitempty"`
 }
 
 type hopProbe struct {
@@ -36,6 +54,15 @@ func (s *Server) probeEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "tcp"
+	}
+	serverName := strings.TrimSpace(r.URL.Query().Get("server_name"))
+	if serverName == "" {
+		serverName = strings.TrimSpace(r.URL.Query().Get("sni"))
+	}
 
 	actor := userFromCtx(r.Context())
 
@@ -61,15 +88,21 @@ func (s *Server) probeEndpoint(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if n.NodeType == "composite" {
+			// TLS dest probe on composite: only exit hop (same as TCP).
+			if mode == "tls" {
+				s.probeCompositeTLS(w, nodeID, target, serverName)
+				return
+			}
 			s.probeCompositeToTarget(w, nodeID, target)
 			return
 		}
-		ack, err := s.Hub.SendProbe(nodeID, target)
+		req := wsproto.Probe{Target: target, Mode: mode, ServerName: serverName}
+		ack, err := s.Hub.SendProbeEx(nodeID, req)
 		if err != nil {
-			json.NewEncoder(w).Encode(probeResult{Error: err.Error()})
+			json.NewEncoder(w).Encode(probeResult{Error: err.Error(), Mode: mode, Target: target, ServerName: serverName})
 			return
 		}
-		json.NewEncoder(w).Encode(probeResult{OK: ack.OK, Latency: ack.Latency, Error: ack.Error})
+		json.NewEncoder(w).Encode(probeAckToResult(ack, mode, target, serverName))
 		return
 	}
 
@@ -82,15 +115,60 @@ func (s *Server) probeEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if mode == "tls" {
+		// Local panel TLS probe (admin only) — same checks without a node.
+		ack := localTLSProbe(target, serverName)
+		json.NewEncoder(w).Encode(probeAckToResult(ack, mode, target, serverName))
+		return
+	}
+
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", target, probeTimeout)
 	elapsed := time.Since(start)
 	if err != nil {
-		json.NewEncoder(w).Encode(probeResult{Error: err.Error()})
+		json.NewEncoder(w).Encode(probeResult{Error: err.Error(), Mode: mode, Target: target})
 		return
 	}
 	conn.Close()
-	json.NewEncoder(w).Encode(probeResult{OK: true, Latency: int(elapsed.Milliseconds())})
+	json.NewEncoder(w).Encode(probeResult{OK: true, Latency: int(elapsed.Milliseconds()), Mode: mode, Target: target, Score: "ok", Summary: "TCP 可达"})
+}
+
+func probeAckToResult(ack wsproto.ProbeAck, mode, target, serverName string) probeResult {
+	return probeResult{
+		OK:           ack.OK,
+		Latency:      ack.Latency,
+		Error:        ack.Error,
+		TLSVersion:   ack.TLSVersion,
+		ALPN:         ack.ALPN,
+		Cipher:       ack.Cipher,
+		CertCN:       ack.CertCN,
+		CertDNS:      ack.CertDNS,
+		CertNotAfter: ack.CertNotAfter,
+		SNIMatch:     ack.SNIMatch,
+		TLS13:        ack.TLS13,
+		H2:           ack.H2,
+		Score:        ack.Score,
+		Summary:      ack.Summary,
+		Mode:         mode,
+		Target:       target,
+		ServerName:   serverName,
+	}
+}
+
+// probeCompositeTLS probes only the last hop with TLS mode.
+func (s *Server) probeCompositeTLS(w http.ResponseWriter, compositeID int64, target, serverName string) {
+	hops, err := db.ListNodeHops(s.DB, compositeID)
+	if err != nil || len(hops) == 0 {
+		json.NewEncoder(w).Encode(probeResult{Error: "no hops", Mode: "tls", Target: target})
+		return
+	}
+	last := hops[len(hops)-1]
+	ack, err := s.Hub.SendProbeEx(last.HopNodeID, wsproto.Probe{Target: target, Mode: "tls", ServerName: serverName})
+	if err != nil {
+		json.NewEncoder(w).Encode(probeResult{Error: err.Error(), Mode: "tls", Target: target, ServerName: serverName})
+		return
+	}
+	json.NewEncoder(w).Encode(probeAckToResult(ack, "tls", target, serverName))
 }
 
 func (s *Server) probeCompositeToTarget(w http.ResponseWriter, compositeID int64, target string) {
@@ -224,4 +302,86 @@ func (s *Server) probeChainEndpoint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	json.NewEncoder(w).Encode(probeResult{OK: allOK, Latency: total, Hops: results})
+}
+
+// localTLSProbe runs the same TLS dest checks from the panel process (admin-only path).
+func localTLSProbe(target, serverName string) wsproto.ProbeAck {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		host = target
+		port = "443"
+		target = net.JoinHostPort(host, port)
+	}
+	_ = port
+	sni := serverName
+	if sni == "" {
+		sni = host
+	}
+	dialer := &net.Dialer{Timeout: probeTimeout}
+	start := time.Now()
+	raw, err := dialer.Dial("tcp", target)
+	if err != nil {
+		return wsproto.ProbeAck{Error: err.Error(), Score: "fail", Summary: "TCP 不通: " + err.Error()}
+	}
+	cfg := &tls.Config{
+		ServerName:         sni,
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"h2", "http/1.1"},
+		MinVersion:         tls.VersionTLS12,
+	}
+	tlsConn := tls.Client(raw, cfg)
+	_ = tlsConn.SetDeadline(time.Now().Add(probeTimeout))
+	err = tlsConn.Handshake()
+	elapsed := time.Since(start)
+	if err != nil {
+		_ = raw.Close()
+		return wsproto.ProbeAck{Error: err.Error(), Latency: int(elapsed.Milliseconds()), Score: "fail", Summary: "TLS 握手失败: " + err.Error()}
+	}
+	st := tlsConn.ConnectionState()
+	_ = tlsConn.Close()
+	ver := "TLS?"
+	switch st.Version {
+	case tls.VersionTLS13:
+		ver = "TLS1.3"
+	case tls.VersionTLS12:
+		ver = "TLS1.2"
+	case tls.VersionTLS11:
+		ver = "TLS1.1"
+	case tls.VersionTLS10:
+		ver = "TLS1.0"
+	}
+	alpn := st.NegotiatedProtocol
+	var certCN string
+	var certDNS []string
+	var notAfter int64
+	sniMatch := false
+	if len(st.PeerCertificates) > 0 {
+		leaf := st.PeerCertificates[0]
+		certCN = leaf.Subject.CommonName
+		certDNS = append([]string{}, leaf.DNSNames...)
+		notAfter = leaf.NotAfter.Unix()
+		if sni != "" {
+			if err := leaf.VerifyHostname(sni); err == nil {
+				sniMatch = true
+			}
+		}
+	}
+	tls13 := st.Version == tls.VersionTLS13
+	h2 := alpn == "h2"
+	score, summary := "poor", ver
+	if tls13 && h2 {
+		score, summary = "good", "TLS1.3 + h2 · 适合 REALITY dest"
+	} else if tls13 {
+		score, summary = "ok", "TLS1.3 · 无 h2（可用但次优）"
+	} else if st.Version >= tls.VersionTLS12 {
+		score, summary = "poor", ver+" · 建议换支持 TLS1.3 的 dest"
+	} else {
+		score, summary = "fail", ver+" · 过旧"
+	}
+	return wsproto.ProbeAck{
+		OK: true, Latency: int(elapsed.Milliseconds()),
+		TLSVersion: ver, ALPN: alpn, Cipher: tls.CipherSuiteName(st.CipherSuite),
+		CertCN: certCN, CertDNS: certDNS, CertNotAfter: notAfter,
+		SNIMatch: sniMatch, TLS13: tls13, H2: h2, Score: score, Summary: summary,
+	}
 }

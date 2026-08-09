@@ -251,14 +251,31 @@ type UpgradeAck struct {
 	Error string `json:"error,omitempty"`
 }
 
+// Probe asks an agent to dial target. Mode ""|"tcp" is plain TCP latency;
+// mode "tls" performs a TLS handshake (REALITY dest check) with ServerName as SNI.
 type Probe struct {
-	Target string `json:"target"`
+	Target     string `json:"target"`
+	Mode       string `json:"mode,omitempty"`        // tcp | tls
+	ServerName string `json:"server_name,omitempty"` // SNI for tls mode
 }
 
 type ProbeAck struct {
 	OK      bool   `json:"ok"`
 	Latency int    `json:"latency_ms"`
 	Error   string `json:"error,omitempty"`
+	// TLS / REALITY dest fields (mode=tls)
+	TLSVersion   string   `json:"tls_version,omitempty"`
+	ALPN         string   `json:"alpn,omitempty"`
+	Cipher       string   `json:"cipher,omitempty"`
+	CertCN       string   `json:"cert_cn,omitempty"`
+	CertDNS      []string `json:"cert_dns,omitempty"`
+	CertNotAfter int64    `json:"cert_not_after,omitempty"`
+	SNIMatch     bool     `json:"sni_match,omitempty"`
+	TLS13        bool     `json:"tls13,omitempty"`
+	H2           bool     `json:"h2,omitempty"`
+	// Score: good (TLS1.3+h2) | ok (TLS1.3) | poor | fail
+	Score   string `json:"score,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type Ping struct {

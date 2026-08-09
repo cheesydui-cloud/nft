@@ -241,38 +241,38 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 
 		// Try live apply on agent.
 		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
-			if applyRes.OK {
-				status := db.ProxyDeployReady
-				finalURI := uri
-				if applyRes.URI != "" {
-					finalURI = applyRes.URI
-				}
-				note := ""
-				if applyRes.DryRun {
-					// URI-only path (e.g. VLESS/SS phase-1): keep ready but surface note.
-					note = applyRes.Error
-					if note == "" {
-						note = "dry-run：仅生成链接，节点未启动核心进程"
-					}
-				}
-				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, status, finalURI, note, applyRes.CoreVersion)
-				results = append(results, map[string]any{
-					"node_id": nodeID, "ok": true, "uri": finalURI, "dry_run": applyRes.DryRun,
-					"instance_id": inst.ID, "warning": note,
-				})
-			} else {
-				// Real failure (e.g. mita missing / apply error): mark error so admin
-				// does not treat the share link as a live endpoint.
-				msg := applyRes.Error
-				if msg == "" {
-					msg = "agent 部署失败"
-				}
-				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, msg, "")
-				results = append(results, map[string]any{
-					"node_id": nodeID, "ok": false, "uri": uri, "dry_run": applyRes.DryRun,
-					"error": msg, "instance_id": inst.ID,
-				})
+		if applyRes.OK {
+			status := db.ProxyDeployReady
+			finalURI := uri
+			if applyRes.URI != "" {
+				finalURI = applyRes.URI
 			}
+			note := ""
+			if applyRes.DryRun {
+				// URI-only path (e.g. VLESS/SS phase-1): keep ready but surface note.
+				note = applyRes.Error
+				if note == "" {
+					note = "dry-run：仅生成链接，节点未启动核心进程"
+				}
+			}
+			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, status, finalURI, note, applyRes.CoreVersion)
+			results = append(results, map[string]any{
+				"node_id": nodeID, "ok": true, "uri": finalURI, "dry_run": applyRes.DryRun,
+				"instance_id": inst.ID, "warning": note,
+			})
+		} else {
+			// Real failure (e.g. mita missing / apply error): mark error so admin
+			// does not treat the share link as a live endpoint.
+			msg := applyRes.Error
+			if msg == "" {
+				msg = "agent 部署失败"
+			}
+			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, msg, "")
+			results = append(results, map[string]any{
+				"node_id": nodeID, "ok": false, "uri": uri, "dry_run": applyRes.DryRun,
+				"error": msg, "instance_id": inst.ID,
+			})
+		}
 	}
 	_ = db.RecomputeProxyServiceStatus(s.DB, id)
 	svc, _ = db.GetProxyService(s.DB, id)
@@ -506,11 +506,24 @@ func (s *Server) apiSyncProxyServiceToRepo(w http.ResponseWriter, r *http.Reques
 }
 
 // apiProxyServiceGenKeys generates REALITY key material for the wizard UI.
+// kind=reality (default) | short_id | vlessenc
 func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) {
-	kind := r.URL.Query().Get("kind")
+	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
 	switch kind {
 	case "short_id":
 		jsonOK(w, map[string]any{"short_id": proxysvc.GenerateShortID()})
+	case "vlessenc", "mlkem", "encryption":
+		enc, dec, ver, err := generateVlessEncPair()
+		if err != nil {
+			jsonErr(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		jsonOK(w, map[string]any{
+			"encryption":   enc,
+			"decryption":   dec,
+			"xray_version": ver,
+			"kind":         "vlessenc",
+		})
 	default:
 		priv, pub := proxysvc.GenerateRealityKeyPair()
 		jsonOK(w, map[string]any{"private_key": priv, "public_key": pub})

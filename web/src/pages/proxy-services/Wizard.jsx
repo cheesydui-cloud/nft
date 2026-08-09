@@ -126,16 +126,62 @@ export default function ProxyServiceWizard() {
 
   const setCfg = (key, val) => setConfig(c => ({ ...c, [key]: val }))
 
+  const [probeNodeId, setProbeNodeId] = useState('')
+  const [probingDest, setProbingDest] = useState(false)
+  const [destProbe, setDestProbe] = useState(null)
+  const [genEncBusy, setGenEncBusy] = useState(false)
+
+  const onlineNodes = useMemo(
+    () => nodes.filter(n => n.online === 1 || n.online === true),
+    [nodes],
+  )
+
   const genKeys = async (kind) => {
     try {
+      if (kind === 'vlessenc') setGenEncBusy(true)
       const d = await api.get(`/proxy-services/gen-keys?kind=${kind || 'reality'}`)
-      if (kind === 'short_id') setCfg('short_id', d.short_id)
-      else {
+      if (kind === 'short_id') {
+        setCfg('short_id', d.short_id)
+        toast('已生成 short_id')
+      } else if (kind === 'vlessenc') {
+        setCfg('encryption', d.encryption || '')
+        setCfg('decryption', d.decryption || '')
+        toast(d.xray_version ? `已生成 vlessenc（xray ${d.xray_version}）` : '已生成 vlessenc')
+      } else {
         setCfg('private_key', d.private_key)
         setCfg('public_key', d.public_key)
+        toast('已生成 REALITY 密钥对')
       }
-      toast('已生成')
     } catch (err) { toast(err.message, 'error') }
+    finally { if (kind === 'vlessenc') setGenEncBusy(false) }
+  }
+
+  const probeDest = async () => {
+    const sni = (config.server_name || '').trim()
+    if (!sni) { toast('请先填写 server-name（SNI / dest）', 'error'); return }
+    const port = Number(config.server_port) || 443
+    const target = `${sni}:${port}`
+    const nodeId = probeNodeId || (onlineNodes[0] && String(onlineNodes[0].id)) || ''
+    setProbingDest(true)
+    setDestProbe(null)
+    try {
+      const q = new URLSearchParams({ target, mode: 'tls', server_name: sni })
+      if (nodeId) q.set('node', nodeId)
+      const d = await api.get(`/probe?${q.toString()}`)
+      setDestProbe(d)
+      if (d.ok && (d.score === 'good' || d.score === 'ok')) {
+        toast(d.summary || 'dest 探测通过', 'success')
+      } else if (d.ok) {
+        toast(d.summary || 'dest 可用但非最优', 'error')
+      } else {
+        toast(d.error || d.summary || 'dest 探测失败', 'error')
+      }
+    } catch (err) {
+      setDestProbe({ ok: false, error: err.message, score: 'fail' })
+      toast(err.message, 'error')
+    } finally {
+      setProbingDest(false)
+    }
   }
 
   const saveConfig = async () => {
@@ -357,6 +403,8 @@ export default function ProxyServiceWizard() {
                       <div className="flex flex-wrap gap-2 items-center">
                         <input className="input-field font-mono text-xs flex-1 min-w-[200px]" value={config.encryption || ''} onChange={e => setCfg('encryption', e.target.value)}
                           placeholder="留空 = none；可填 xray vlessenc 输出" />
+                        <button type="button" className="btn-primary text-sm" disabled={genEncBusy}
+                          onClick={() => genKeys('vlessenc')}>{genEncBusy ? '生成中…' : '生成 vlessenc'}</button>
                         <button type="button" className="btn-secondary text-sm" onClick={() => {
                           setCfg('encryption', '')
                           setCfg('decryption', '')
@@ -364,9 +412,52 @@ export default function ProxyServiceWizard() {
                         }}>清空</button>
                       </div>
                       <p className="text-[11px] text-ink-mut mt-1">
-                        可选 ML-KEM / vlessenc：在 xray 生成后分别填入服务端 decryption 与客户端 encryption；两端版本需支持。留空即 none。
+                        可选 ML-KEM / vlessenc：一键调用面板缓存的 xray 生成密钥对，写入 decryption（服务端）与 encryption（客户端）。需先在「代理核心缓存」拉取支持 vlessenc 的 xray。留空即 none。
                       </p>
                     </div>
+                  </div>
+
+                  <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                    <div className="text-sm font-bold">REALITY dest 探测</div>
+                    <p className="text-[12px] text-ink-mut m-0">
+                      从线路节点侧对 <span className="font-mono">server-name:server-port</span> 做 TLS 握手，检查 TLS1.3 / h2 / 证书与 SNI。比面板本机探测更接近真实回源路径。
+                    </p>
+                    <div className="grid sm:grid-cols-2 gap-3 items-end">
+                      <div>
+                        <label className="fl block mb-1">探测节点</label>
+                        <Select
+                          value={probeNodeId || (onlineNodes[0] ? String(onlineNodes[0].id) : '')}
+                          onChange={v => setProbeNodeId(v)}
+                          options={[
+                            ...(onlineNodes.length === 0 ? [{ value: '', label: '无在线节点（将用面板本机）' }] : []),
+                            ...onlineNodes.map(n => ({
+                              value: String(n.id),
+                              label: `${n.name || '#' + n.id}${n.region ? ' · ' + n.region : ''}`,
+                            })),
+                          ]}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className="btn-primary text-sm" disabled={probingDest}
+                          onClick={probeDest}>{probingDest ? '探测中…' : '探测 dest'}</button>
+                      </div>
+                    </div>
+                    {destProbe && (
+                      <div className={`text-[12.5px] rounded-lg border px-3 py-2 ${
+                        destProbe.score === 'good' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-700'
+                          : destProbe.score === 'ok' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100'
+                          : 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-900/20 dark:text-rose-200'
+                      }`}>
+                        <div className="font-semibold">{destProbe.summary || (destProbe.ok ? '完成' : (destProbe.error || '失败'))}</div>
+                        <div className="mt-1 font-mono text-[11px] opacity-90 space-y-0.5">
+                          {destProbe.latency_ms != null && <div>延迟 {destProbe.latency_ms} ms</div>}
+                          {destProbe.tls_version && <div>TLS {destProbe.tls_version}{destProbe.alpn ? ` · ALPN ${destProbe.alpn}` : ''}{destProbe.tls13 ? ' · TLS1.3✓' : ''}{destProbe.h2 ? ' · h2✓' : ''}</div>}
+                          {destProbe.cert_cn && <div>证书 CN {destProbe.cert_cn}{destProbe.sni_match ? ' · SNI 匹配' : ' · SNI 未匹配'}</div>}
+                          {destProbe.cipher && <div>套件 {destProbe.cipher}</div>}
+                          {destProbe.error && !destProbe.ok && <div className="text-rose-700 dark:text-rose-300">{destProbe.error}</div>}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {(config.network === 'ws' || config.network === 'httpupgrade' || config.network === 'xhttp') && (

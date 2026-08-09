@@ -238,19 +238,15 @@ type ghRelease struct {
 }
 
 func fetchGitHubRelease(repo, version string) (*ghRelease, error) {
-	var apiURL string
+	// "latest" must mean highest semver tag, not GitHub's sticky /releases/latest
+	// (which follows published_at; a re-touch of an older tag can pin latest wrongly).
 	if version == "" || version == "latest" {
-		apiURL = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	} else {
-		tag := version
-		if !strings.HasPrefix(tag, "v") {
-			// try as-is first via tags path; callers usually pass vX.Y.Z
-		}
-		apiURL = fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
+		return fetchGitHubLatestSemverRelease(repo)
 	}
+	tag := version
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
 	body, err := httpGetBytesLong(withGHProxy(apiURL), 60*time.Second)
 	if err != nil {
-		// retry without proxy if proxy failed and we used one
 		if pfx := ghProxyPrefix(); pfx != "" {
 			body, err = httpGetBytesLong(apiURL, 60*time.Second)
 		}
@@ -264,6 +260,77 @@ func fetchGitHubRelease(repo, version string) (*ghRelease, error) {
 	}
 	if rel.TagName == "" {
 		return nil, fmt.Errorf("github release empty for %s %s", repo, version)
+	}
+	return &rel, nil
+}
+
+// fetchGitHubLatestSemverRelease lists recent releases and returns the highest
+// non-draft, non-prerelease semver tag. Falls back to /releases/latest on error.
+func fetchGitHubLatestSemverRelease(repo string) (*ghRelease, error) {
+	listURL := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=30", repo)
+	body, err := httpGetBytesLong(withGHProxy(listURL), 60*time.Second)
+	if err != nil {
+		if pfx := ghProxyPrefix(); pfx != "" {
+			body, err = httpGetBytesLong(listURL, 60*time.Second)
+		}
+	}
+	if err == nil {
+		var list []struct {
+			TagName    string `json:"tag_name"`
+			Draft      bool   `json:"draft"`
+			Prerelease bool   `json:"prerelease"`
+			Assets     []struct {
+				Name               string `json:"name"`
+				BrowserDownloadURL string `json:"browser_download_url"`
+			} `json:"assets"`
+		}
+		if jerr := json.Unmarshal(body, &list); jerr == nil && len(list) > 0 {
+			var best *ghRelease
+			bestTag := ""
+			for i := range list {
+				item := list[i]
+				if item.Draft || item.Prerelease {
+					continue
+				}
+				tag := strings.TrimSpace(item.TagName)
+				if tag == "" || parseSemver(tag) == nil {
+					continue
+				}
+				// pick tag if none yet, or if tag is strictly newer than bestTag
+				if bestTag == "" || (tag != bestTag && !semverGE(bestTag, tag)) {
+					bestTag = tag
+					rel := &ghRelease{TagName: tag}
+					for _, a := range item.Assets {
+						rel.Assets = append(rel.Assets, struct {
+							Name               string `json:"name"`
+							BrowserDownloadURL string `json:"browser_download_url"`
+						}{Name: a.Name, BrowserDownloadURL: a.BrowserDownloadURL})
+					}
+					best = rel
+				}
+			}
+			if best != nil {
+				return best, nil
+			}
+		}
+	}
+	// Fallback: GitHub's /releases/latest
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	body, err = httpGetBytesLong(withGHProxy(apiURL), 60*time.Second)
+	if err != nil {
+		if pfx := ghProxyPrefix(); pfx != "" {
+			body, err = httpGetBytesLong(apiURL, 60*time.Second)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var rel ghRelease
+	if err := json.Unmarshal(body, &rel); err != nil {
+		return nil, fmt.Errorf("parse github release: %w", err)
+	}
+	if rel.TagName == "" {
+		return nil, fmt.Errorf("github release empty for %s latest", repo)
 	}
 	return &rel, nil
 }
@@ -715,4 +782,3 @@ func coreNeededForProtocol(protocol string) string {
 		return ""
 	}
 }
-

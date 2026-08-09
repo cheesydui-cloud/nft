@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -640,7 +641,7 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				}
 				id := env.ID
 				safeGo(func() {
-					ack := doProbe(p.Target)
+					ack := doProbeEx(p)
 					raw, _ := json.Marshal(ack)
 					select {
 					case d.cmdCh <- wsproto.Envelope{Type: wsproto.TypeProbeAck, ID: id, Payload: raw}:
@@ -841,14 +842,174 @@ func jitter(d time.Duration) time.Duration {
 }
 
 func doProbe(target string) wsproto.ProbeAck {
+	return doProbeEx(wsproto.Probe{Target: target})
+}
+
+func doProbeEx(p wsproto.Probe) wsproto.ProbeAck {
+	target := strings.TrimSpace(p.Target)
+	if target == "" {
+		return wsproto.ProbeAck{Error: "missing target", Score: "fail"}
+	}
+	mode := strings.ToLower(strings.TrimSpace(p.Mode))
+	if mode == "" || mode == "tcp" {
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", target, 5*time.Second)
+		elapsed := time.Since(start)
+		if err != nil {
+			return wsproto.ProbeAck{Error: err.Error(), Score: "fail", Summary: "TCP 不通"}
+		}
+		conn.Close()
+		return wsproto.ProbeAck{OK: true, Latency: int(elapsed.Milliseconds()), Score: "ok", Summary: "TCP 可达"}
+	}
+	if mode != "tls" {
+		return wsproto.ProbeAck{Error: "unsupported probe mode: " + mode, Score: "fail"}
+	}
+	return doTLSProbe(target, strings.TrimSpace(p.ServerName))
+}
+
+func doTLSProbe(target, serverName string) wsproto.ProbeAck {
+	// REALITY dest check: from this node, dial host:port and complete TLS handshake
+	// with SNI=serverName (or host if empty). Report TLS1.3 / ALPN h2 / cert SAN.
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		// allow bare host → :443
+		host = target
+		port = "443"
+		target = net.JoinHostPort(host, port)
+	}
+	sni := serverName
+	if sni == "" {
+		// strip brackets from IPv6 host for SNI fallback only if looks like domain
+		sni = host
+	}
+	// IP as SNI is useless for REALITY dest; still try handshake without name match.
+	dialer := &net.Dialer{Timeout: 8 * time.Second}
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", target, 5*time.Second)
+	raw, err := dialer.Dial("tcp", target)
+	if err != nil {
+		return wsproto.ProbeAck{
+			Error:   err.Error(),
+			Score:   "fail",
+			Summary: "TCP 不通: " + err.Error(),
+		}
+	}
+	cfg := &tls.Config{
+		ServerName:         sni,
+		InsecureSkipVerify: true, // we only care handshake + negotiated params / cert leaf
+		NextProtos:         []string{"h2", "http/1.1"},
+		MinVersion:         tls.VersionTLS12,
+	}
+	// Prefer TLS1.3 when possible by not forcing max
+	tlsConn := tls.Client(raw, cfg)
+	_ = tlsConn.SetDeadline(time.Now().Add(8 * time.Second))
+	err = tlsConn.Handshake()
 	elapsed := time.Since(start)
 	if err != nil {
-		return wsproto.ProbeAck{Error: err.Error()}
+		_ = raw.Close()
+		return wsproto.ProbeAck{
+			Error:   err.Error(),
+			Latency: int(elapsed.Milliseconds()),
+			Score:   "fail",
+			Summary: "TLS 握手失败: " + err.Error(),
+		}
 	}
-	conn.Close()
-	return wsproto.ProbeAck{OK: true, Latency: int(elapsed.Milliseconds())}
+	state := tlsConn.ConnectionState()
+	_ = tlsConn.Close()
+
+	ver := tlsVersionName(state.Version)
+	alpn := state.NegotiatedProtocol
+	cipher := tls.CipherSuiteName(state.CipherSuite)
+	var certCN string
+	var certDNS []string
+	var notAfter int64
+	sniMatch := false
+	if len(state.PeerCertificates) > 0 {
+		leaf := state.PeerCertificates[0]
+		certCN = leaf.Subject.CommonName
+		certDNS = append([]string{}, leaf.DNSNames...)
+		notAfter = leaf.NotAfter.Unix()
+		if sni != "" {
+			if err := leaf.VerifyHostname(sni); err == nil {
+				sniMatch = true
+			}
+			// also accept if CN equals sni
+			if !sniMatch && strings.EqualFold(certCN, sni) {
+				sniMatch = true
+			}
+			for _, d := range certDNS {
+				if strings.EqualFold(d, sni) || matchWildcard(d, sni) {
+					sniMatch = true
+					break
+				}
+			}
+		}
+	}
+	tls13 := state.Version == tls.VersionTLS13
+	h2 := alpn == "h2"
+	score := "poor"
+	summary := ver
+	if tls13 && h2 {
+		score = "good"
+		summary = "TLS1.3 + h2 · 适合 REALITY dest"
+	} else if tls13 {
+		score = "ok"
+		summary = "TLS1.3 · 无 h2（可用但次优）"
+	} else if state.Version >= tls.VersionTLS12 {
+		score = "poor"
+		summary = ver + " · 建议换支持 TLS1.3 的 dest"
+	} else {
+		score = "fail"
+		summary = ver + " · 过旧"
+	}
+	if sni != "" && !sniMatch && score != "fail" {
+		summary += " · 证书未匹配 SNI"
+	}
+	return wsproto.ProbeAck{
+		OK:           true,
+		Latency:      int(elapsed.Milliseconds()),
+		TLSVersion:   ver,
+		ALPN:         alpn,
+		Cipher:       cipher,
+		CertCN:       certCN,
+		CertDNS:      certDNS,
+		CertNotAfter: notAfter,
+		SNIMatch:     sniMatch,
+		TLS13:        tls13,
+		H2:           h2,
+		Score:        score,
+		Summary:      summary,
+	}
+}
+
+func tlsVersionName(v uint16) string {
+	switch v {
+	case tls.VersionTLS13:
+		return "TLS1.3"
+	case tls.VersionTLS12:
+		return "TLS1.2"
+	case tls.VersionTLS11:
+		return "TLS1.1"
+	case tls.VersionTLS10:
+		return "TLS1.0"
+	default:
+		return fmt.Sprintf("0x%04x", v)
+	}
+}
+
+// matchWildcard reports whether pattern like *.example.com matches host.
+func matchWildcard(pattern, host string) bool {
+	pattern = strings.ToLower(pattern)
+	host = strings.ToLower(host)
+	if !strings.HasPrefix(pattern, "*.") {
+		return pattern == host
+	}
+	suf := pattern[1:] // .example.com
+	if !strings.HasSuffix(host, suf) {
+		return false
+	}
+	// single label only
+	prefix := strings.TrimSuffix(host, suf)
+	return prefix != "" && !strings.Contains(prefix, ".")
 }
 
 // probeOutboundIP dials target over the given UDP network ("udp4" or "udp6")
