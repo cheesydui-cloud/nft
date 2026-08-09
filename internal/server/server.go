@@ -701,6 +701,10 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/settings", s.apiGetSettings)
 			r.Post("/settings", s.apiSaveSettings)
+			r.Get("/system/update", s.apiGetPanelUpdate)
+			r.Post("/system/update/check", s.apiCheckPanelUpdate)
+			r.Get("/system/update/status", s.apiGetPanelUpdateStatus)
+			r.Post("/system/update", s.apiApplyPanelUpdate)
 			r.Get("/migrate/export", s.apiMigrateExport)
 			r.Get("/migrate/status", s.apiMigrateStatus)
 			r.Post("/migrate/redirect", s.apiMigrateRedirect)

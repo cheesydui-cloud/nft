@@ -22,6 +22,7 @@ export function UserProvider({ children }) {
   const [user, setUser] = useState(undefined) // undefined = loading, null = not logged in
   const [panelName, setPanelName] = useState('')
   const [version, setVersion] = useState('')
+  const [komariUrl, setKomariUrl] = useState('')
   const [toasts, setToasts] = useState([])
   const idRef = useRef(0)
   const timersRef = useRef([])
@@ -32,6 +33,7 @@ export function UserProvider({ children }) {
       setUser(data?.user ?? null)
       setPanelName(data?.panel_name || '')
       setVersion(data?.version || '')
+      setKomariUrl(data?.komari_url || '')
       return data
     } catch {
       setUser(null)
@@ -82,10 +84,11 @@ export function UserProvider({ children }) {
     if (data.user !== undefined) setUser(data.user)
     if (data.panel_name !== undefined) setPanelName(data.panel_name || '')
     if (data.version !== undefined) setVersion(data.version || '')
+    if (data.komari_url !== undefined) setKomariUrl(data.komari_url || '')
   }, [])
 
   return (
-    <UserCtx.Provider value={{ user, setUser, panelName, version, refreshUser, applySession }}>
+    <UserCtx.Provider value={{ user, setUser, panelName, version, komariUrl, refreshUser, applySession }}>
       <ToastCtx.Provider value={toast}>
         {children}
         {/* Toast stack */}
@@ -108,7 +111,7 @@ export function UserProvider({ children }) {
 
 /* ---------- Layout (sidebar + content) ---------- */
 export function Layout({ children }) {
-  const { user, panelName, version } = useUser()
+  const { user, panelName, version, komariUrl } = useUser()
   const navigate = useNavigate()
   const [sideOpen, setSideOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('nf-sidebar') === '1')
@@ -190,9 +193,12 @@ export function Layout({ children }) {
               <>
                 <NavGroup label="监控">
                   <SideLink to="/" icon={<IconDashboard />} end>运营概览</SideLink>
+                  {komariUrl ? (
+                    <SideExtLink href={komariUrl} icon={<IconMonitor />}>服务监控</SideExtLink>
+                  ) : null}
                 </NavGroup>
                 <NavGroup label="节点管理">
-                  <SideLink to="/nodes" icon={<IconNodes />}>节点</SideLink>
+                  <SideLink to="/nodes" icon={<IconNodes />}>线路节点</SideLink>
                   <SideLink to="/proxy-services" icon={<IconProxy />}>代理服务</SideLink>
                 </NavGroup>
                 <NavGroup label="资源">
@@ -367,9 +373,23 @@ function SideLink({ to, icon, end, children }) {
   )
 }
 
+function SideExtLink({ href, icon, children }) {
+  const collapsed = useContext(SidebarCtx)
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" title={collapsed ? children : undefined}
+      className={`flex items-center ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-[9px] rounded-xl text-[13.5px] font-medium transition-all relative border sb-link`}>
+      <span className="w-[18px] h-[18px] flex-none opacity-90">{icon}</span>
+      {!collapsed && <span className="tracking-tight">{children}</span>}
+    </a>
+  )
+}
+
 /* ---------- Icons ---------- */
 function IconDashboard() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+}
+function IconMonitor() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
 }
 function IconNodes() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>

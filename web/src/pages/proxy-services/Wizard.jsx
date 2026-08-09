@@ -410,7 +410,7 @@ export default function ProxyServiceWizard() {
                   </thead>
                   <tbody>
                     {eligibleNodes.length === 0 ? (
-                      <tr><td colSpan={4} className="text-center text-ink-mut py-8">暂无节点，请先在「节点」中添加线路</td></tr>
+                      <tr><td colSpan={4} className="text-center text-ink-mut py-8">暂无节点，请先在「线路节点」中添加线路</td></tr>
                     ) : eligibleNodes.map(n => {
                       const cores = nodeCores[n.id] || []
                       const has = coreMatches(cores, core)

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
-import { Layout, useToast } from '../components/Layout'
+import { Layout, useToast, useUser } from '../components/Layout'
 import { Loading, useConfirm } from '../components/ui'
 
 export default function Settings() {
@@ -15,12 +15,19 @@ export default function Settings() {
     cf_clear_token: false,
     cf_zone_name: '',
     cf_ttl: 1,
+    komari_url: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const toast = useToast()
   const confirm = useConfirm()
+  const { version, refreshUser } = useUser()
+
+  // panel self-update
+  const [upd, setUpd] = useState(null)
+  const [updBusy, setUpdBusy] = useState(false)
+  const [updMsg, setUpdMsg] = useState('')
 
   // migrate
   const [migURL, setMigURL] = useState('')
@@ -52,6 +59,7 @@ export default function Settings() {
         cf_clear_token: false,
         cf_zone_name: data.cf_zone_name || '',
         cf_ttl: data.cf_ttl ?? 1,
+        komari_url: data.komari_url || '',
       }))
       if (data.panel_url) setMigURL(data.panel_url)
     }).catch(e => setError(e.message)).finally(() => setLoading(false))
@@ -62,6 +70,9 @@ export default function Settings() {
   }
   useEffect(() => { loadMigStatus() }, [])
   useEffect(() => { loadCores() }, [])
+  useEffect(() => {
+    api.get('/system/update').then(setUpd).catch(() => {})
+  }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -88,6 +99,7 @@ export default function Settings() {
         cf_zone_name: form.cf_zone_name,
         cf_ttl: ttl,
         cf_clear_token: !!form.cf_clear_token,
+        komari_url: form.komari_url,
       }
       if (!form.cf_clear_token && form.cf_api_token.trim()) {
         body.cf_api_token = form.cf_api_token.trim()
@@ -103,8 +115,70 @@ export default function Settings() {
         cf_clear_token: false,
         cf_zone_name: data.cf_zone_name || '',
         cf_ttl: data.cf_ttl ?? 1,
+        komari_url: data.komari_url || '',
       }))
+      refreshUser?.()
     } catch (err) { setError(err.message) } finally { setSaving(false) }
+  }
+
+  const checkPanelUpdate = async () => {
+    setUpdBusy(true)
+    setUpdMsg('')
+    try {
+      const d = await api.post('/system/update/check', {})
+      setUpd(d)
+      if (d.update_available) toast(`发现新版本 ${d.latest_version}`)
+      else toast(d.latest_version ? `已是最新（${d.latest_version}）` : '检查完成')
+      if (d.message) setUpdMsg(d.message)
+    } catch (err) {
+      toast(err.message, 'error')
+      setUpdMsg(err.message)
+    } finally {
+      setUpdBusy(false)
+    }
+  }
+
+  const applyPanelUpdate = async () => {
+    if (!(await confirm({
+      title: '更新面板',
+      message: '将下载并替换本机 nft-server / nft-agent，并重启面板服务（约数十秒）。节点 agent 需在「线路节点」单独推送。确定继续？',
+      confirmText: '立即更新',
+    }))) return
+    setUpdBusy(true)
+    setUpdMsg('已发起升级，面板即将重启…')
+    try {
+      const target = upd?.latest_version && upd?.update_available ? upd.latest_version : undefined
+      await api.post('/system/update', target ? { release: target } : {})
+      toast('升级已启动，等待面板重启…')
+      // Poll until version changes or timeout
+      const before = version || upd?.current_version || ''
+      const start = Date.now()
+      const poll = setInterval(async () => {
+        try {
+          const me = await api.get('/me')
+          const v = me?.version || ''
+          if (v && before && v !== before) {
+            clearInterval(poll)
+            setUpdBusy(false)
+            setUpdMsg('')
+            toast(`升级完成：${v}`)
+            refreshUser?.()
+            api.get('/system/update').then(setUpd).catch(() => {})
+          } else if (Date.now() - start > 180000) {
+            clearInterval(poll)
+            setUpdBusy(false)
+            setUpdMsg('等待超时：请刷新页面或 SSH 查看 journalctl -u nft-server')
+            toast('升级可能仍在进行，请刷新页面确认版本', 'error')
+          }
+        } catch {
+          // panel restarting — keep waiting
+        }
+      }, 2500)
+    } catch (err) {
+      toast(err.message, 'error')
+      setUpdMsg(err.message)
+      setUpdBusy(false)
+    }
   }
 
   const downloadExport = async () => {
@@ -318,10 +392,67 @@ export default function Settings() {
               <span className="text-[13px] text-ink-mut">秒；1 = Cloudflare Auto（推荐）</span>
             </div>
 
+            <div className="pt-[22px]">
+              <h3 className="text-[16px] font-bold text-ink mb-1">Komari 监控（并排）</h3>
+              <p className="text-[12px] text-ink-mut m-0 mb-[18px]">
+                独立部署 Komari 后填写访问地址；侧栏「监控」会出现「服务监控」外链（新标签打开）。不内嵌到本面板。
+                例：Docker 映射 <code className="font-mono text-[11px]">25774</code>，再反代到子域名。
+              </p>
+            </div>
+            <div className="flex items-center gap-6 pb-[22px] border-b border-line-soft">
+              <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">Komari 地址</label>
+              <div className="flex-1 max-w-[560px]">
+                <input className="input-field w-full" type="text" placeholder="https://monitor.example.com"
+                  value={form.komari_url} onChange={e => set('komari_url', e.target.value)} />
+                <p className="text-[12px] text-ink-mut mt-1.5 m-0">留空则隐藏侧栏入口。探针 agent 需在各 VPS 单独安装到 Komari。</p>
+              </div>
+            </div>
+
             <div className="flex items-center gap-4 mt-[22px]">
               <button type="submit" disabled={saving} className="btn-primary">{saving ? '保存中…' : '保存设置'}</button>
             </div>
           </form>
+        </div>
+      </div>
+
+      {/* 面板版本 / 自更新 */}
+      <div className="card mt-5" style={{ maxWidth: 980 }}>
+        <div className="card-header">
+          <h3 className="text-[16px] font-bold m-0">面板版本</h3>
+        </div>
+        <div className="px-6 py-[22px] space-y-3">
+          <p className="text-[13px] text-ink-soft m-0 leading-relaxed">
+            从 GitHub 发布通道检查更新；升级会替换本机 <code className="font-mono text-[12px]">nft-server</code>、
+            同步本地 agent 产物并重启服务。线路节点上的 agent 仍需在「线路节点」列表单独推送。
+          </p>
+          <div className="text-[14px] text-ink">
+            当前：<span className="font-mono font-semibold">{upd?.current_version || version || '—'}</span>
+            {upd?.arch_ok === false && <span className="text-amber-600 text-[12px] ml-2">（非 amd64，一键升级不可用）</span>}
+          </div>
+          <div className="text-[13px] text-ink-mut">
+            通道：GitHub <span className="font-mono">{upd?.repo || 'cheesydui-cloud/nft'}</span> latest
+            {upd?.gh_proxy ? <> · 代理 <span className="font-mono text-[12px]">{upd.gh_proxy}</span></> : null}
+          </div>
+          {upd?.update_available && (
+            <div className="text-[14px] text-emerald-700 font-semibold">
+              发现新版本 <span className="font-mono">{upd.latest_version}</span>
+            </div>
+          )}
+          {!upd?.update_available && upd?.latest_version && (
+            <div className="text-[13px] text-ink-mut">最新已发布：<span className="font-mono">{upd.latest_version}</span></div>
+          )}
+          {(updMsg || upd?.message) && (
+            <div className="text-[12px] text-ink-mut bg-slate-50 border border-line rounded-md px-3 py-2">{updMsg || upd?.message}</div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <button type="button" className="btn-primary" disabled={updBusy} onClick={checkPanelUpdate}>
+              {updBusy ? '处理中…' : '检查更新'}
+            </button>
+            <button type="button" className="btn-secondary" disabled={updBusy || upd?.can_apply === false} onClick={applyPanelUpdate}
+              title={upd?.can_apply === false ? (upd?.message || '当前环境无法一键升级') : '执行 nft-upgrade'}>
+              立即更新
+            </button>
+          </div>
         </div>
       </div>
 

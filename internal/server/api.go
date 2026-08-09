@@ -245,7 +245,14 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 			userView["has_landing_source"] = true
 		}
 	}
-	jsonOK(w, map[string]any{"user": userView, "panel_name": panelName, "version": serverVersion()})
+	out := map[string]any{"user": userView, "panel_name": panelName, "version": serverVersion()}
+	// Admin sidebar "服务监控" needs komari_url without a second /settings call.
+	if u.Role == "admin" {
+		if ku, _ := db.GetSetting(s.DB, "komari_url"); strings.TrimSpace(ku) != "" {
+			out["komari_url"] = strings.TrimSpace(ku)
+		}
+	}
+	jsonOK(w, out)
 }
 
 func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -2000,6 +2007,7 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 			cfPrefix = "****"
 		}
 	}
+	komariURL, _ := db.GetSetting(s.DB, "komari_url")
 	jsonOK(w, map[string]any{
 		"panel_url": panelURL, "panel_name": panelName,
 		"show_rate_to_user": showRate == "1", "pool_size": poolSize,
@@ -2007,6 +2015,7 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 		"cf_token_prefix":     cfPrefix,
 		"cf_zone_name":        cfZone,
 		"cf_ttl":              cfTTL,
+		"komari_url":          komariURL,
 	})
 }
 
@@ -2022,6 +2031,7 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		CFClearToken bool    `json:"cf_clear_token"`
 		CFZoneName   *string `json:"cf_zone_name"`
 		CFTTL        *int    `json:"cf_ttl"`
+		KomariURL    *string `json:"komari_url"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -2100,6 +2110,18 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+	if body.KomariURL != nil {
+		ku, err := normalizeKomariURL(*body.KomariURL)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := db.SetSetting(s.DB, "komari_url", ku); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "settings.komari_url", ku, "")
 	}
 	jsonOK(w, map[string]any{"ok": true})
 }
