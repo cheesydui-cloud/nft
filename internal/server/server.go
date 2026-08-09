@@ -641,6 +641,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/healthz", s.healthz)
 	r.HandleFunc("/v1/agents", s.Hub.ServeWS)
 	r.Get("/v1/binary", s.serveBinary)
+	r.Get("/v1/cores/{type}", s.serveCoreBinary)
 
 	// --- JSON API ---
 	r.Route("/api", func(r chi.Router) {
@@ -791,6 +792,11 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/proxy-services/{id}", s.apiDeleteProxyService)
 			r.Post("/proxy-services/{id}/publish", s.apiPublishProxyService)
 			r.Post("/proxy-services/{id}/sync-repo", s.apiSyncProxyServiceToRepo)
+
+			// Proxy core cache (Weir-style panel-side binary cache)
+			r.Get("/proxy-cores", s.apiListProxyCores)
+			r.Post("/proxy-cores/fetch", s.apiFetchProxyCores)
+			r.Delete("/proxy-cores/{type}/{arch}", s.apiDeleteProxyCore)
 
 		})
 

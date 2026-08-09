@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 // VLESSConfig is the subset of Weir/3X-UI fields we persist for phase 1.
@@ -86,13 +88,12 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 		}
 		if c.Security == "reality" {
 			if c.PrivateKey == "" || c.PublicKey == "" {
-				// Placeholder pair — real x25519 generation can replace later;
-				// panel UI also has "生成密钥". Keep non-empty so deploy can proceed in dry-run.
+				priv, pub := GenerateRealityKeyPair()
 				if c.PrivateKey == "" {
-					c.PrivateKey = randomB64URL(32)
+					c.PrivateKey = priv
 				}
 				if c.PublicKey == "" {
-					c.PublicKey = randomB64URL(32)
+					c.PublicKey = pub
 				}
 			}
 			if c.ShortID == "" {
@@ -322,10 +323,20 @@ func randomB64Std(nBytes int) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// GenerateRealityKeyPair returns placeholder private/public for UI "生成密钥".
-// Real X25519 can replace this without API change.
+// GenerateRealityKeyPair returns a REALITY X25519 key pair (raw base64url, no padding),
+// matching xray-core `xray x25519` output format used by clients as pbk.
 func GenerateRealityKeyPair() (privateKey, publicKey string) {
-	return randomB64URL(32), randomB64URL(32)
+	var priv [32]byte
+	if _, err := rand.Read(priv[:]); err != nil {
+		return randomB64URL(32), randomB64URL(32)
+	}
+	// Clamp as in X25519.
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
+	var pub [32]byte
+	curve25519.ScalarBaseMult(&pub, &priv)
+	return base64.RawURLEncoding.EncodeToString(priv[:]), base64.RawURLEncoding.EncodeToString(pub[:])
 }
 
 // GenerateShortID returns an 8-byte hex short_id.

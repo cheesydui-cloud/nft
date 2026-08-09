@@ -122,19 +122,16 @@ func probeCoreVersion(path string) string {
 }
 
 // handleProxyServiceApply deploys one proxy-service instance on this host.
-// mieru: real mita apply+start when mita is installed.
-// vless / shadowsocks: still dry-run until core merge is wired (return clear error).
+// mieru → mita; vless → xray; shadowsocks → sing-box. Missing core → error (not silent ready).
 func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
 	switch proto {
 	case "mieru":
 		return deployMieru(req)
-	case "vless", "shadowsocks", "ss":
-		return wsproto.ProxyServiceApplyAck{
-			OK:     true,
-			DryRun: true,
-			Error:  "一期仅生成 URI；" + proto + " 真实部署尚未接入（需 xray/sing-box 配置合并）",
-		}
+	case "vless":
+		return deployXrayVLESS(req)
+	case "shadowsocks", "ss":
+		return deploySingBoxSS(req)
 	default:
 		return wsproto.ProxyServiceApplyAck{
 			OK:    false,
@@ -151,7 +148,7 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		return wsproto.ProxyServiceApplyAck{
 			OK:     false,
 			DryRun: true,
-			Error:  "节点未安装 mita（mieru 服务端）。请先安装 mita 后再发布，否则链接可导入但无服务监听",
+			Error:  "节点未安装 mita（mieru 服务端）。请在面板「系统设置 → 代理核心缓存」下载 mita 后重新发布，或在节点本机安装 mita",
 		}
 	}
 	port := req.ListenPort

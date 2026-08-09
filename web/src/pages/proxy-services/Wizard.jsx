@@ -158,7 +158,7 @@ export default function ProxyServiceWizard() {
   const eligibleNodes = useMemo(() => {
     return nodes.filter(n => {
       const cores = nodeCores[n.id] || []
-      // Allow selecting even without cores (dry-run publish); prefer those with core.
+      // Allow selecting even without cores (panel may push core from cache); prefer those with core.
       return !n.disabled
     })
   }, [nodes, nodeCores])
@@ -396,7 +396,7 @@ export default function ProxyServiceWizard() {
             <div>
               <h3 className="text-sm font-bold mb-2">选择节点</h3>
               <p className="text-[12.5px] text-ink-mut mb-3">
-                仅显示线路节点。具备核心 <span className="font-mono">{core}</span> 的优先；未检测到核心也可选（发布为 dry-run，面板生成 URI）。
+                仅显示线路节点。具备核心 <span className="font-mono">{core}</span> 的优先；未检测时发布会尝试从面板「代理核心缓存」自动推送。
               </p>
               <div className="border border-line rounded-xl overflow-hidden">
                 <table className="tbl">
@@ -420,7 +420,7 @@ export default function ProxyServiceWizard() {
                           <td className="font-semibold">{n.name}</td>
                           <td>{n.online ? <Badge color="green">在线</Badge> : <Badge color="gray">离线</Badge>}</td>
                           <td className="text-[12px]">
-                            {has ? <Badge color="green">{core}</Badge> : <span className="text-ink-mut">未检测 / 可 dry-run</span>}
+                            {has ? <Badge color="green">{core}</Badge> : <span className="text-ink-mut">未检测（将尝试推送缓存）</span>}
                             {cores.length > 0 && (
                               <span className="text-ink-mut ml-2 font-mono">{cores.map(c => c.name).join(', ')}</span>
                             )}
@@ -450,7 +450,7 @@ export default function ProxyServiceWizard() {
                 <li>节点数：{selected.size}</li>
               </ul>
               <p className="text-[12.5px] text-ink-mut mb-4">
-                mieru 会在节点上真实调用 mita 部署；VLESS/SS 暂仅生成链接。节点需已安装对应核心（mieru 服务端二进制名为 mita），并放行监听端口。
+                发布后 agent 会在节点启动核心：VLESS 需 xray、Shadowsocks 需 sing-box、mieru 需 mita（服务端）。请放行监听端口；VLESS 务必填写 server-name（REALITY 回源）。
               </p>
               <div className="flex justify-end gap-2">
                 <button type="button" className="btn-secondary" onClick={() => setStep(2)}>上一步</button>
@@ -480,7 +480,7 @@ export default function ProxyServiceWizard() {
                           <td className="font-mono">{r.node_id}</td>
                           <td>
                             {r.ok
-                              ? <Badge color="green">{r.dry_run ? '就绪 (dry-run)' : '就绪'}</Badge>
+                              ? <Badge color="green">{r.dry_run ? '就绪（未启动进程）' : '就绪'}</Badge>
                               : <Badge color="red">失败</Badge>}
                             {r.warning && <div className="text-[11px] text-amber-600 mt-0.5">{r.warning}</div>}
                             {r.error && <div className="text-[11px] text-rose-600 mt-0.5">{r.error}</div>}

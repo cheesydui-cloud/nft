@@ -37,6 +37,8 @@ const (
 	TypePanelRedirectAck     = "panel_redirect_ack"
 	TypeProxyServiceApply    = "proxy_service_apply"
 	TypeProxyServiceApplyAck = "proxy_service_apply_ack"
+	TypeCoreInstall          = "core_install"
+	TypeCoreInstallAck       = "core_install_ack"
 )
 
 // Envelope wraps every frame. ID is required for req/resp pairs
@@ -132,6 +134,27 @@ type ProxyServiceApplyAck struct {
 	// DryRun true means agent accepted config but did not start a real core
 	// process (phase-1 skeleton / core missing).
 	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// CoreInstall asks the agent to download and install a proxy core binary from
+// the panel (HTTP pull, same pattern as Upgrade). Type is the core name
+// (xray / sing-box / mieru); Arch is the GOARCH the binary was built for.
+type CoreInstall struct {
+	Type       string `json:"type"`
+	Arch       string `json:"arch"`
+	Version    string `json:"version"`
+	SHA256     string `json:"sha256"`
+	Size       int64  `json:"size"`
+	DownloadAt string `json:"download_at"`
+}
+
+// CoreInstallAck is the agent response after installing (or failing to install)
+// a proxy core.
+type CoreInstallAck struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path,omitempty"`
 }
 
 // HelloAck is the panel's response to Hello. Error == "" means the

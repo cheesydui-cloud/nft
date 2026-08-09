@@ -113,7 +113,7 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 		g := &UserNode{UserID: userID}
 		var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
 		var localMigratedAt, lastSeen sql.NullInt64
-		var agentVersion sql.NullString
+		var agentVersion, agentArch sql.NullString
 		var ownerID sql.NullInt64
 		var luVersion, luStatus, luError sql.NullString
 		if err := rows.Scan(
@@ -126,6 +126,7 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
 			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
 			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+			&agentArch,
 			&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
 		); err != nil {
 			return nil, nil, err
@@ -153,6 +154,9 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 		}
 		if agentVersion.Valid {
 			n.AgentVersion = agentVersion.String
+		}
+		if agentArch.Valid {
+			n.AgentArch = agentArch.String
 		}
 		g.NodeID = n.ID
 		nodes = append(nodes, n)

@@ -92,9 +92,11 @@ export default function ProxyServiceDetail() {
               <Link to="/proxy-services/new" className="text-sm text-emerald-600 font-semibold">发布到更多节点…</Link>
             </div>
             <p className="text-[12.5px] text-ink-mut mb-3">
-              <strong>mieru</strong>：发布时 agent 会在节点上执行 <span className="font-mono">mita apply config</span> + <span className="font-mono">mita start</span>
-              （需已安装 <span className="font-mono">mita</span> 服务端，不是客户端 mieru）。链接为官方 <span className="font-mono">mierus://</span>。
-              VLESS / Shadowsocks 仍仅生成 URI，真实核心部署后续版本接入。状态为 error 时请看下方错误（常见：未装 mita、端口被占用、防火墙未放行）。
+              发布时 agent 会在节点真实拉起核心进程：
+              <strong> VLESS → xray</strong>（独立配置 <span className="font-mono">/var/lib/nft/cores/xray/</span>）、
+              <strong> Shadowsocks → sing-box</strong>（<span className="font-mono">/var/lib/nft/cores/sing-box/</span>）、
+              <strong> mieru → mita</strong>（<span className="font-mono">mita apply/start</span>）。
+              节点需已安装对应二进制；error 常见原因：未装核心、REALITY 缺 server-name、端口占用、防火墙未放行。
             </p>
           </div>
           <TableScroll>

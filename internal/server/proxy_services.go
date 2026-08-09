@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -229,8 +230,17 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
+		// Ensure proxy core is on the node (push from panel cache if needed).
+		if err := s.ensureCoreOnNode(node, svc.Protocol); err != nil {
+			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
+			results = append(results, map[string]any{
+				"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
+			})
+			continue
+		}
+
 		// Try live apply on agent.
-			applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
+		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
 			if applyRes.OK {
 				status := db.ProxyDeployReady
 				finalURI := uri
@@ -277,6 +287,109 @@ type applyOutcome struct {
 	URI         string
 	CoreVersion string
 	DryRun      bool
+}
+
+// ensureCoreOnNode pushes a cached core binary to the node when the agent
+// does not already report that core. Returns nil when the core is present or
+// was installed successfully.
+func (s *Server) ensureCoreOnNode(node *db.Node, protocol string) error {
+	need := coreNeededForProtocol(protocol)
+	if need == "" {
+		return nil
+	}
+	cores, _ := db.GetNodeCores(s.DB, node.ID)
+	if nodeCorePresent(cores, need) {
+		return nil
+	}
+	arch := sanitizeArch(node.AgentArch)
+	if arch == "" {
+		arch = "amd64"
+	}
+	meta, err := readCoreMeta(need, arch)
+	if err != nil {
+		label := need
+		if need == "mita" {
+			label = "mita（mieru 服务端）"
+		}
+		return fmt.Errorf("节点未安装 %s，且面板缓存无 %s/%s：请先在 系统设置 → 代理核心缓存 下载", label, need, arch)
+	}
+	if s.Hub == nil || !s.Hub.IsOnline(node.ID) {
+		return fmt.Errorf("节点离线，无法推送核心 %s", need)
+	}
+	panelURL, _ := db.GetSetting(s.DB, "panel_url")
+	base := normalizePanelBaseURL(panelURL)
+	if base == "" {
+		return fmt.Errorf("未配置面板地址 panel_url，无法生成核心下载链接")
+	}
+	dl := fmt.Sprintf("%s/v1/cores/%s?arch=%s", base, need, arch)
+	ack, err := s.Hub.SendCoreInstall(node.ID, wsproto.CoreInstall{
+		Type:       need,
+		Arch:       arch,
+		Version:    meta.Version,
+		SHA256:     meta.SHA256,
+		Size:       meta.Size,
+		DownloadAt: dl,
+	})
+	if err != nil {
+		return fmt.Errorf("推送核心 %s 失败: %w", need, err)
+	}
+	if !ack.OK {
+		msg := ack.Error
+		if msg == "" {
+			msg = "agent 安装核心失败"
+		}
+		return fmt.Errorf("安装核心 %s 失败: %s", need, msg)
+	}
+	updated := false
+	for i := range cores {
+		n := strings.ToLower(cores[i].Name)
+		if n == coreDetectName(need) || (need == "mita" && (n == "mieru" || n == "mita")) || n == need {
+			cores[i].Version = ack.Version
+			if ack.Path != "" {
+				cores[i].Path = ack.Path
+			}
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		cores = append(cores, db.NodeCore{Name: coreDetectName(need), Version: ack.Version, Path: ack.Path})
+	}
+	if b, err := json.Marshal(cores); err == nil {
+		_ = db.SetNodeCoresJSON(s.DB, node.ID, string(b))
+	}
+	return nil
+}
+
+func coreDetectName(cacheType string) string {
+	switch sanitizeCoreType(cacheType) {
+	case "mita":
+		return "mieru"
+	default:
+		return sanitizeCoreType(cacheType)
+	}
+}
+
+func nodeCorePresent(cores []db.NodeCore, cacheType string) bool {
+	want := sanitizeCoreType(cacheType)
+	for _, c := range cores {
+		n := strings.ToLower(strings.TrimSpace(c.Name))
+		switch want {
+		case "xray":
+			if n == "xray" {
+				return true
+			}
+		case "sing-box":
+			if n == "sing-box" || n == "singbox" {
+				return true
+			}
+		case "mita":
+			if n == "mieru" || n == "mita" || n == "mbox" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) applyProxyInstance(nodeID int64, svc *db.ProxyService, inst *db.ProxyServiceInstance, shareHost string, port int, cfg json.RawMessage) applyOutcome {

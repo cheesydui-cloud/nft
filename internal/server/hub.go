@@ -213,7 +213,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	connectIP := extractIP(r)
-	if err := db.MarkNodeOnline(h.DB, node.ID, hello.AgentVersion, hello.AgentSHA, connectIP); err != nil {
+	if err := db.MarkNodeOnline(h.DB, node.ID, hello.AgentVersion, hello.AgentSHA, connectIP, hello.Arch); err != nil {
 		log.Printf("hub: MarkNodeOnline: %v", err)
 	}
 	applyDeclaredRelayHosts(h.DB, node, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
@@ -386,7 +386,7 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 			}
 			ackP, _ := json.Marshal(ack)
 			ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeRuleCmdAck, ID: env.ID, Payload: ackP})
-		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck, wsproto.TypeProxyServiceApplyAck:
+		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck, wsproto.TypeProxyServiceApplyAck, wsproto.TypeCoreInstallAck:
 			ac.dispatchAck(env)
 		default:
 			log.Printf("hub: node %d unknown frame type %q", ac.nodeID, env.Type)
@@ -456,6 +456,43 @@ func (h *Hub) SendApplyRuleset(nodeID int64, rules []nft.Rule, rev string) (stri
 }
 
 const proxyServiceApplyAckTimeout = 30 * time.Second
+const coreInstallAckTimeout = 4 * time.Minute
+
+// SendCoreInstall pushes a core_install frame and waits for ack (download+install).
+func (h *Hub) SendCoreInstall(nodeID int64, req wsproto.CoreInstall) (wsproto.CoreInstallAck, error) {
+	h.mu.RLock()
+	ac, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return wsproto.CoreInstallAck{}, fmt.Errorf("node %d not connected", nodeID)
+	}
+	id := ac.nextID()
+	ch := make(chan json.RawMessage, 1)
+	ac.pendMu.Lock()
+	ac.pending[id] = ch
+	ac.pendMu.Unlock()
+	defer func() {
+		ac.pendMu.Lock()
+		delete(ac.pending, id)
+		ac.pendMu.Unlock()
+	}()
+
+	payload, _ := json.Marshal(req)
+	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeCoreInstall, ID: id, Payload: payload})
+
+	select {
+	case raw := <-ch:
+		var ack wsproto.CoreInstallAck
+		if err := json.Unmarshal(raw, &ack); err != nil {
+			return wsproto.CoreInstallAck{}, fmt.Errorf("malformed core_install_ack: %w", err)
+		}
+		return ack, nil
+	case <-time.After(coreInstallAckTimeout):
+		return wsproto.CoreInstallAck{}, errors.New("core_install_ack timeout")
+	case <-ac.closed:
+		return wsproto.CoreInstallAck{}, errors.New("connection closed")
+	}
+}
 
 // SendProxyServiceApply pushes a proxy_service_apply frame and waits for ack.
 func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply) (wsproto.ProxyServiceApplyAck, error) {

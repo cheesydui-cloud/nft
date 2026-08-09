@@ -28,6 +28,16 @@ export default function Settings() {
   const [migStatus, setMigStatus] = useState(null)
   const [migGuideOpen, setMigGuideOpen] = useState(true)
 
+  // proxy core cache
+  const [cores, setCores] = useState([])
+  const [coreForm, setCoreForm] = useState({ type: 'xray', version: '', url: '', sha256: '', arch: '' })
+  const [coreBusy, setCoreBusy] = useState(false)
+  const [coreError, setCoreError] = useState('')
+
+  const loadCores = () => {
+    api.get('/proxy-cores').then(d => setCores(d.cores || [])).catch(() => {})
+  }
+
   useEffect(() => {
     api.get('/settings').then(data => {
       setForm(f => ({
@@ -51,6 +61,7 @@ export default function Settings() {
     api.get('/migrate/status').then(setMigStatus).catch(() => {})
   }
   useEffect(() => { loadMigStatus() }, [])
+  useEffect(() => { loadCores() }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -159,6 +170,61 @@ export default function Settings() {
     finally { setMigBusy(false) }
   }
 
+
+  const setCore = (k, v) => setCoreForm(f => ({ ...f, [k]: v }))
+
+  const fetchCores = async () => {
+    setCoreError('')
+    setCoreBusy(true)
+    try {
+      const body = {
+        type: coreForm.type,
+        version: coreForm.version.trim() || undefined,
+        url: coreForm.url.trim() || undefined,
+        sha256: coreForm.sha256.trim() || undefined,
+      }
+      if (coreForm.arch) body.arch = coreForm.arch
+      if (coreForm.url.trim() && !coreForm.arch) {
+        setCoreError('自定义 URL 时请选择架构（amd64 或 arm64）')
+        setCoreBusy(false)
+        return
+      }
+      const res = await api.post('/proxy-cores/fetch', body)
+      setCores(res.cores || [])
+      const fails = (res.results || []).filter(r => !r.ok)
+      if (fails.length) {
+        toast(`部分架构失败：${fails.map(f => f.arch + ': ' + (f.error || '')).join('；')}`)
+      } else {
+        toast('核心缓存已更新')
+      }
+    } catch (err) {
+      setCoreError(err.message)
+    } finally {
+      setCoreBusy(false)
+    }
+  }
+
+  const deleteCore = async (type, arch) => {
+    if (!(await confirm({ title: '删除缓存', message: `确定删除 ${type}/${arch} 的核心缓存？` }))) return
+    setCoreBusy(true)
+    try {
+      const res = await api.del(`/proxy-cores/${encodeURIComponent(type)}/${encodeURIComponent(arch)}`)
+      setCores(res.cores || [])
+      toast('已删除')
+    } catch (err) {
+      setCoreError(err.message)
+    } finally {
+      setCoreBusy(false)
+    }
+  }
+
+  const formatSize = (n) => {
+    if (!n) return '—'
+    if (n < 1024) return n + ' B'
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+    return (n / 1024 / 1024).toFixed(1) + ' MB'
+  }
+
   if (loading) return <Layout><Loading /></Layout>
 
   const pending = migStatus?.pending_panel_redirect_url || ''
@@ -256,6 +322,101 @@ export default function Settings() {
               <button type="submit" disabled={saving} className="btn-primary">{saving ? '保存中…' : '保存设置'}</button>
             </div>
           </form>
+        </div>
+      </div>
+
+      {/* 代理核心缓存 */}
+      <div className="card mt-5" style={{ maxWidth: 980 }}>
+        <div className="card-header">
+          <h3 className="text-[16px] font-bold m-0">代理核心缓存</h3>
+        </div>
+        <div className="px-6 py-[22px] space-y-5">
+          <p className="text-[13px] text-ink-soft m-0 leading-relaxed">
+            从 GitHub 官方 release 下载并缓存 <code className="font-mono text-[12px]">xray</code> /
+            <code className="font-mono text-[12px]">sing-box</code> /
+            <code className="font-mono text-[12px]">mita</code>（mieru 服务端）的 linux 二进制（amd64 / arm64）。
+            发布代理服务时，若节点本机没有对应核心，面板会按节点架构自动推送缓存并安装到
+            <code className="font-mono text-[12px]">/var/lib/nft/cores/…</code>。
+            版本留空 = 官方 latest；面板机需能访问 GitHub（或使用安装时的 gh-proxy / 自定义 URL）。
+          </p>
+
+          {coreError && (
+            <div className="text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">{coreError}</div>
+          )}
+
+          <div className="overflow-x-auto rounded-[10px] border border-line">
+            <table className="tbl w-full text-[13px]">
+              <thead>
+                <tr>
+                  <th className="text-left">类型</th>
+                  <th className="text-left">架构</th>
+                  <th className="text-left">版本</th>
+                  <th className="text-left">大小</th>
+                  <th className="text-left">SHA256</th>
+                  <th className="text-left">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cores.length === 0 ? (
+                  <tr><td colSpan={6} className="text-ink-mut">暂无缓存，请在下方下载</td></tr>
+                ) : cores.map(c => (
+                  <tr key={`${c.type}-${c.arch}`}>
+                    <td className="font-semibold">{c.type}</td>
+                    <td className="font-mono text-xs">{c.arch}</td>
+                    <td className="font-mono text-xs">{c.version || '—'}</td>
+                    <td className="text-xs">{formatSize(c.size)}</td>
+                    <td className="font-mono text-[11px] text-ink-mut max-w-[160px] truncate" title={c.sha256}>{c.sha256 ? c.sha256.slice(0, 12) + '…' : '—'}</td>
+                    <td>
+                      <button type="button" className="text-red-600 text-[12px] font-semibold bg-transparent border-0 cursor-pointer p-0"
+                        disabled={coreBusy} onClick={() => deleteCore(c.type, c.arch)}>删除</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center gap-3">
+              <label className="w-[72px] flex-shrink-0 text-[13px] text-ink-soft">类型</label>
+              <select className="input-field flex-1" value={coreForm.type} onChange={e => setCore('type', e.target.value)}>
+                <option value="xray">xray（VLESS）</option>
+                <option value="sing-box">sing-box（Shadowsocks）</option>
+                <option value="mita">mita（mieru 服务端）</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-[72px] flex-shrink-0 text-[13px] text-ink-soft">架构</label>
+              <select className="input-field flex-1" value={coreForm.arch} onChange={e => setCore('arch', e.target.value)}>
+                <option value="">双架构（amd64 + arm64）</option>
+                <option value="amd64">仅 amd64</option>
+                <option value="arm64">仅 arm64</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-[72px] flex-shrink-0 text-[13px] text-ink-soft">版本</label>
+              <input className="input-field flex-1 font-mono" placeholder="留空 = latest，如 v1.12.12"
+                value={coreForm.version} onChange={e => setCore('version', e.target.value)} />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-[72px] flex-shrink-0 text-[13px] text-ink-soft">SHA256</label>
+              <input className="input-field flex-1 font-mono" placeholder="可选，校验解压后的二进制"
+                value={coreForm.sha256} onChange={e => setCore('sha256', e.target.value)} />
+            </div>
+            <div className="flex items-center gap-3 sm:col-span-2">
+              <label className="w-[72px] flex-shrink-0 text-[13px] text-ink-soft">URL</label>
+              <input className="input-field flex-1 font-mono" placeholder="可选自定义下载地址（zip/tar.gz/二进制）"
+                value={coreForm.url} onChange={e => setCore('url', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-center">
+            <button type="button" className="btn-primary px-5" disabled={coreBusy} onClick={fetchCores}>
+              {coreBusy ? '下载中…' : '下载并缓存'}
+            </button>
+            <button type="button" className="btn-secondary px-4" disabled={coreBusy} onClick={loadCores}>刷新列表</button>
+            <span className="text-[12px] text-ink-mut">源：XTLS/Xray-core · SagerNet/sing-box · enfein/mieru</span>
+          </div>
         </div>
       </div>
 

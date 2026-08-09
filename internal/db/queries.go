@@ -66,7 +66,10 @@ type Node struct {
 	Online              int            `json:"online"`
 	AgentVersion        string         `json:"agent_version"`
 	AgentSHA            string         `json:"agent_sha"`
-	LastSeen            *int64         `json:"last_seen,omitempty"`
+	// AgentArch is the GOARCH reported by the agent hello (amd64/arm64/…).
+	// Empty until the first hello after migration 0060.
+	AgentArch string `json:"agent_arch,omitempty"`
+	LastSeen  *int64 `json:"last_seen,omitempty"`
 	LastApplyAt         sql.NullInt64  `json:"last_apply_at"`
 	LastError           sql.NullString `json:"last_error"`
 	LastWarning         string         `json:"last_warning"`
@@ -445,7 +448,7 @@ func ResetNodeSecret(d *sql.DB, id int64) (string, error) {
 
 // NOTE: scanNode and the inline scan in grants.go (ListNodesForUser) read these
 // columns in this exact order — keep all three in lockstep when adding a column.
-const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip`
+const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip,agent_arch`
 
 func GetNode(d *sql.DB, id int64) (*Node, error) {
 	row := d.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id)
@@ -458,7 +461,7 @@ func scanNode(r rowScanner) (*Node, error) {
 	n := &Node{}
 	var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
 	var localMigratedAt, lastSeen sql.NullInt64
-	var agentVersion sql.NullString
+	var agentVersion, agentArch sql.NullString
 	var ownerID sql.NullInt64
 	var luVersion, luStatus, luError sql.NullString
 	if err := r.Scan(
@@ -471,6 +474,7 @@ func scanNode(r rowScanner) (*Node, error) {
 		&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
 		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
 		&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+		&agentArch,
 	); err != nil {
 		return nil, err
 	}
@@ -494,6 +498,9 @@ func scanNode(r rowScanner) (*Node, error) {
 	}
 	if agentVersion.Valid {
 		n.AgentVersion = agentVersion.String
+	}
+	if agentArch.Valid {
+		n.AgentArch = agentArch.String
 	}
 	n.LastUpgradeVersion = luVersion.String
 	n.LastUpgradeStatus = luStatus.String
@@ -1057,11 +1064,11 @@ func UpsertSelfNode(d *sql.DB) (*Node, error) {
 }
 
 // MarkNodeOnline records a successful hello/heartbeat from an agent and
-// refreshes the reported binary version and connect IP.
-func MarkNodeOnline(d *sql.DB, id int64, agentVersion, agentSHA, connectIP string) error {
+// refreshes the reported binary version, arch, and connect IP.
+func MarkNodeOnline(d *sql.DB, id int64, agentVersion, agentSHA, connectIP, agentArch string) error {
 	_, err := d.Exec(
-		`UPDATE nodes SET online=1, last_seen=?, agent_version=?, agent_sha=?, last_error=NULL, address=? WHERE id=?`,
-		now(), agentVersion, agentSHA, connectIP, id)
+		`UPDATE nodes SET online=1, last_seen=?, agent_version=?, agent_sha=?, agent_arch=?, last_error=NULL, address=? WHERE id=?`,
+		now(), agentVersion, agentSHA, agentArch, connectIP, id)
 	return err
 }
 
