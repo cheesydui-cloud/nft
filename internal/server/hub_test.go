@@ -580,8 +580,9 @@ func TestHubReconcilesDirtyV6RelayHostOnConnect(t *testing.T) {
 	if got.RelayHostV6 != "2001:db8::dead" {
 		t.Errorf("RelayHostV6 = %q, want 2001:db8::dead (migrated from the stale relay_host value)", got.RelayHostV6)
 	}
-	if got.RelayHost != "127.0.0.1" {
-		t.Errorf("RelayHost = %q, want 127.0.0.1 (re-seeded from connectIP after the dirty v6 value was evicted)", got.RelayHost)
+	// Public agent probe beats loopback connectIP when re-seeding v4.
+	if got.RelayHost != "198.51.100.1" {
+		t.Errorf("RelayHost = %q, want 198.51.100.1 (public ProbedV4 after dirty v6 eviction)", got.RelayHost)
 	}
 }
 
@@ -777,5 +778,75 @@ func TestHubAppliesDeclaredRelayHostV6(t *testing.T) {
 	}
 	if !got.RelayHostV6Declared {
 		t.Error("RelayHostV6Declared should be true after a hello carrying DeclaredRelayHostV6")
+	}
+}
+
+
+func TestExtractIPPrefersPublicXFF(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Header.Set("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
+	if got := extractIP(r); got != "203.0.113.50" {
+		t.Fatalf("extractIP = %q, want public leftmost XFF", got)
+	}
+}
+
+func TestExtractIPSkipsPrivateXFFHops(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Header.Set("X-Forwarded-For", "10.0.0.5, 203.0.113.9")
+	if got := extractIP(r); got != "203.0.113.9" {
+		t.Fatalf("extractIP = %q, want first public hop", got)
+	}
+}
+
+func TestResolveNodeConnectIPIgnoresPanelSelf(t *testing.T) {
+	d := openDB(t)
+	_ = db.SetSetting(d, "panel_url", "https://107.174.202.136:7788")
+	got := resolveNodeConnectIP(d, "107.174.202.136", "198.51.100.20", "")
+	if got != "198.51.100.20" {
+		t.Fatalf("got %q, want agent probe when observed is panel self", got)
+	}
+	// Lab loopback kept when no public v4 probe.
+	got2 := resolveNodeConnectIP(d, "127.0.0.1", "", "")
+	if got2 != "127.0.0.1" {
+		t.Fatalf("got %q, want keep private observed", got2)
+	}
+	// Public observed wins over probe.
+	got3 := resolveNodeConnectIP(d, "203.0.113.8", "198.51.100.20", "")
+	if got3 != "203.0.113.8" {
+		t.Fatalf("got %q, want public observed", got3)
+	}
+}
+
+func TestHubUsesProbeWhenObservedIsPanelIP(t *testing.T) {
+	srv, hub, n := newHubTestServer(t)
+	_ = db.SetSetting(hub.DB, "panel_url", "https://107.174.202.136")
+	// Simulate reverse proxy that stamps panel public IP into X-Real-IP.
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/"
+	opts := &websocket.DialOptions{HTTPHeader: http.Header{
+		"X-Forwarded-For": []string{"107.174.202.136"},
+	}}
+	c, _, err := websocket.Dial(context.Background(), url, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close(websocket.StatusNormalClosure, "") })
+	hp, _ := json.Marshal(wsproto.Hello{
+		NodeToken: "tok-good", AgentVersion: "v1", OS: "linux", Arch: "amd64",
+		ProbedV4: "198.51.100.77",
+	})
+	sendJSON(t, c, wsproto.Envelope{Type: wsproto.TypeHello, ID: "1", Payload: hp})
+	_ = recvEnvelope(t, c)
+	syncByPing(t, c)
+	got, err := db.GetNode(hub.DB, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Address != "198.51.100.77" {
+		t.Errorf("Address = %q, want probe 198.51.100.77 (panel self XFF ignored)", got.Address)
+	}
+	if got.RelayHost != "198.51.100.77" {
+		t.Errorf("RelayHost = %q, want probe", got.RelayHost)
 	}
 }

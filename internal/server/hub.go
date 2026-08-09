@@ -212,11 +212,14 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connectIP := extractIP(r)
+	observedIP := extractIP(r)
+	connectIP := resolveNodeConnectIP(h.DB, observedIP, hello.ProbedV4, hello.ProbedV6)
 	if err := db.MarkNodeOnline(h.DB, node.ID, hello.AgentVersion, hello.AgentSHA, connectIP, hello.Arch); err != nil {
 		log.Printf("hub: MarkNodeOnline: %v", err)
 	}
 	applyDeclaredRelayHosts(h.DB, node, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
+	// Use connectIP (already de-noised) for seeding; still pass probes so the
+	// other address family can be filled when this WS only covers one family.
 	fillNodeRelayHosts(h.DB, node, connectIP, hello.ProbedV4, hello.ProbedV6, hello.DeclaredRelayHost, hello.DeclaredRelayHostV6)
 	// Port range is panel-owned: admin edits via /nodes/{id}/port-range must stick.
 	// Agent still reports hello.PortRange for diagnostics, but we must not overwrite
@@ -703,78 +706,263 @@ func extractIP(r *http.Request) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
+	// Strip zone / accidental brackets; do NOT use LastIndex(":") — that
+	// corrupts IPv6 literals when SplitHostPort already failed.
+	host = strings.Trim(host, "[]")
 	remoteIP := net.ParseIP(host)
+
+	// Behind nginx/caddy on the panel host, RemoteAddr is loopback/private.
+	// Prefer the left-most public address from X-Forwarded-For / X-Real-IP
+	// when the immediate peer is a trusted proxy.
 	if remoteIP != nil && isTrustedProxy(remoteIP) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if i := strings.Index(xff, ","); i > 0 {
-				return strings.TrimSpace(xff[:i])
+			for _, part := range strings.Split(xff, ",") {
+				cand := strings.TrimSpace(part)
+				cand = strings.Trim(cand, "[]")
+				if cand == "" {
+					continue
+				}
+				// Skip non-public hops (proxy chain internals).
+				if ip := net.ParseIP(cand); ip != nil && ipNonPublic(ip) {
+					continue
+				}
+				return cand
 			}
-			return strings.TrimSpace(xff)
+			// Fall through: all XFF hops private — keep remote or X-Real-IP.
 		}
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
+		if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+			xri = strings.Trim(xri, "[]")
+			if ip := net.ParseIP(xri); ip == nil || !ipNonPublic(ip) {
+				return xri
+			}
 		}
 	}
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return strings.Trim(host, "[]")
+	return host
 }
 
-// fillNodeRelayHosts seeds relay_host/relay_host_v6 for a node that hasn't
-// had them set yet. connectIP (the address the panel observed this WS
-// connection arrive from) is authoritative for whichever family it belongs
-// to — it reflects the address as seen after any NAT, unlike a locally
-// self-probed address. The agent's self-probed address only fills the
-// OTHER family, the one this connection didn't use. Never overwrites a
-// manually-configured value (only fires when the DB field is still empty).
+// ipNonPublic reports loopback / RFC1918 / link-local / unspecified.
+func ipNonPublic(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+func ipStrNonPublic(s string) bool {
+	ip := net.ParseIP(strings.Trim(strings.TrimSpace(s), "[]"))
+	if ip == nil {
+		// Hostnames are treated as public-facing (operator-configured).
+		return false
+	}
+	return ipNonPublic(ip)
+}
+
+// panelSelfAddresses returns IPs that identify the panel host itself so we
+// never store them as a remote node's connect/relay address. Sources:
+// settings.panel_url host (when literal IP), and the self node row.
+func panelSelfAddresses(d *sql.DB) map[string]bool {
+	out := map[string]bool{}
+	if d == nil {
+		return out
+	}
+	if v, err := db.GetSetting(d, "panel_url"); err == nil {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			// Accept bare host:port or URL.
+			host := v
+			if strings.Contains(v, "://") {
+				if u, err := parseURLHost(v); err == nil {
+					host = u
+				}
+			} else if h, _, err := net.SplitHostPort(v); err == nil {
+				host = h
+			}
+			host = strings.Trim(host, "[]")
+			if ip := net.ParseIP(host); ip != nil {
+				out[ip.String()] = true
+			}
+		}
+	}
+	// Optional: collect literal IPs already stored on any node that look like
+	// the panel (rare). Primary signal is settings.panel_url above.
+	return out
+}
+
+func parseURLHost(raw string) (string, error) {
+	// Minimal parse without importing net/url at call sites repeatedly —
+	// net/url is fine; keep local helper for clarity.
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	// Use strings to avoid heavy deps: scheme://host[:port]/path]
+	rest := raw
+	if i := strings.Index(raw, "://"); i >= 0 {
+		rest = raw[i+3:]
+	}
+	if i := strings.IndexAny(rest, "/?"); i >= 0 {
+		rest = rest[:i]
+	}
+	host := rest
+	if h, _, err := net.SplitHostPort(rest); err == nil {
+		host = h
+	}
+	return strings.Trim(host, "[]"), nil
+}
+
+// resolveNodeConnectIP chooses the address stored as nodes.address (UI「连接 IP」)
+// and used when seeding relay_host.
 //
-// relay_host must always hold a v4 literal or hostname: an IPv6 literal
-// found there can only be leftover data from before the two fields were
-// split by address family. Such a value is evicted from relay_host
-// unconditionally, so the empty-field seeding below can re-fill it with a
-// proper v4 value. It is migrated into relay_host_v6 only when this
-// connection didn't itself supply a fresher v6 connectIP: connectIP is
-// always more authoritative than data carried over from before the split,
-// since the agent's address may well have changed since that data was
-// written. This makes stale data self-heal on the node's next connection
-// instead of persisting forever, without letting the stale value block a
-// fresher one from landing.
-//
-// declaredV4/declaredV6 come from this same hello's applyDeclaredRelayHosts
-// call. A non-empty declared value — even one that failed validation and so
-// was never written — means the operator expressed intent for that family;
-// auto-filling it from connectIP would silently paper over a rejected
-// declaration with the very kind of address (the connection's outbound
-// route) the declare feature exists to override. So a non-empty declared
-// value suppresses auto-fill for its family regardless of whether it was
-// valid. Nodes that never declare anything see declaredV4/declaredV6 always
-// empty, so this guard is always true for them and behavior is unchanged.
+// Rules:
+//  1. Public observed WS client IP that is NOT the panel itself → use it.
+//  2. Observed is empty or equals the panel (broken reverse-proxy X-Real-IP) →
+//     prefer agent-probed public addresses.
+//  3. Otherwise keep the observed peer (including private/loopback for lab/tests).
+//  4. Last resort: any probe.
+func resolveNodeConnectIP(d *sql.DB, observed, probedV4, probedV6 string) string {
+	self := panelSelfAddresses(d)
+	obs := strings.Trim(strings.TrimSpace(observed), "[]")
+	obsIP := net.ParseIP(obs)
+	obsSelf := obsIP != nil && self[obsIP.String()]
+	obsPublic := obsIP != nil && !ipNonPublic(obsIP)
+
+	publicProbe := func(s string) string {
+		s = strings.Trim(strings.TrimSpace(s), "[]")
+		if s == "" {
+			return ""
+		}
+		ip := net.ParseIP(s)
+		if ip == nil || ipNonPublic(ip) || self[ip.String()] {
+			return ""
+		}
+		return s
+	}
+
+	if obs != "" && !obsSelf && obsPublic {
+		return obs
+	}
+	// Broken proxy: XFF/X-Real-IP is the panel, or missing entirely.
+	if obs == "" || obsSelf {
+		if p := publicProbe(probedV4); p != "" {
+			return p
+		}
+		if p := publicProbe(probedV6); p != "" {
+			return p
+		}
+	}
+	// Lab / direct dial: private observed peer is still the real client.
+	if obs != "" && !obsSelf {
+		return obs
+	}
+	if p := publicProbe(probedV4); p != "" {
+		return p
+	}
+	if p := publicProbe(probedV6); p != "" {
+		return p
+	}
+	if s := strings.TrimSpace(probedV4); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(probedV6); s != "" {
+		return strings.Trim(s, "[]")
+	}
+	return obs
+}
+
 func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, probedV4, probedV6, declaredV4, declaredV6 string) {
+	self := panelSelfAddresses(d)
+	pickV4 := func(cands ...string) string {
+		var private string
+		for _, s := range cands {
+			s = strings.TrimSpace(strings.Trim(s, "[]"))
+			if s == "" {
+				continue
+			}
+			ip := net.ParseIP(s)
+			if ip == nil {
+				// hostname — only for v4 relay
+				return s
+			}
+			if ip.To4() == nil {
+				continue
+			}
+			if self[ip.String()] {
+				continue
+			}
+			if !ipNonPublic(ip) {
+				return s
+			}
+			if private == "" {
+				private = s
+			}
+		}
+		return private
+	}
+	pickV6 := func(cands ...string) string {
+		var private string
+		for _, s := range cands {
+			s = strings.TrimSpace(strings.Trim(s, "[]"))
+			if s == "" {
+				continue
+			}
+			ip := net.ParseIP(s)
+			if ip == nil || ip.To4() != nil {
+				continue
+			}
+			if self[ip.String()] {
+				continue
+			}
+			if !ipNonPublic(ip) {
+				return s
+			}
+			if private == "" {
+				private = s
+			}
+		}
+		return private
+	}
+
 	connectIsV6 := false
 	if ip := net.ParseIP(connectIP); ip != nil {
 		connectIsV6 = ip.To4() == nil
 	}
+	// Evict pre-split IPv6 literals stuck in relay_host.
 	if ip := net.ParseIP(node.RelayHost); ip != nil && ip.To4() == nil {
-		if node.RelayHostV6 == "" && !(connectIsV6 && connectIP != "") {
+		if node.RelayHostV6 == "" && !(connectIsV6 && connectIP != "" && pickV6(connectIP) != "") {
 			_ = db.UpdateNodeRelayHostV6(d, node.ID, node.RelayHost)
 			node.RelayHostV6 = node.RelayHost
 		}
 		_ = db.UpdateNodeRelayHost(d, node.ID, "")
 		node.RelayHost = ""
 	}
+
+	// Heal mistaken panel-IP auto-fill (not operator-declared).
+	if node.RelayHost != "" && !node.RelayHostDeclared {
+		if ip := net.ParseIP(node.RelayHost); ip != nil && self[ip.String()] {
+			_ = db.UpdateNodeRelayHost(d, node.ID, "")
+			node.RelayHost = ""
+		}
+	}
+	if node.RelayHostV6 != "" && !node.RelayHostV6Declared {
+		if ip := net.ParseIP(node.RelayHostV6); ip != nil && self[ip.String()] {
+			_ = db.UpdateNodeRelayHostV6(d, node.ID, "")
+			node.RelayHostV6 = ""
+		}
+	}
+
 	if node.RelayHost == "" && declaredV4 == "" {
-		if !connectIsV6 && connectIP != "" {
-			_ = db.UpdateNodeRelayHost(d, node.ID, connectIP)
-		} else if probedV4 != "" {
-			_ = db.UpdateNodeRelayHost(d, node.ID, probedV4)
+		// Prefer public connectIP, then agent probe, then private.
+		v4 := pickV4(connectIP, probedV4)
+		if v4 != "" {
+			_ = db.UpdateNodeRelayHost(d, node.ID, v4)
+			node.RelayHost = v4
 		}
 	}
 	if node.RelayHostV6 == "" && declaredV6 == "" {
-		if connectIsV6 && connectIP != "" {
-			_ = db.UpdateNodeRelayHostV6(d, node.ID, connectIP)
-		} else if probedV6 != "" {
-			_ = db.UpdateNodeRelayHostV6(d, node.ID, probedV6)
+		v6 := pickV6(connectIP, probedV6)
+		if v6 != "" {
+			_ = db.UpdateNodeRelayHostV6(d, node.ID, v6)
+			node.RelayHostV6 = v6
 		}
 	}
 }
