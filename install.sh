@@ -302,7 +302,8 @@ nft 一键安装/卸载/升级脚本（nft-server 面板 + nft-agent 节点）
   sudo $0 reset-password                 # 交互重置面板 admin 密码
   sudo nft-upgrade                       # 等效于 update（latest）
   sudo nft-upgrade --release v6.5.1      # 指定版本升级（无需再选菜单）
-  sudo nft-upgrade update --release v6.5.1 --gh-proxy ''   # 直连 GitHub（清代理）
+  sudo nft-upgrade update --release v6.6.0 --gh-proxy ''   # 直连 GitHub（清代理）
+  # 下载默认 HTTP/1.1 + 重试；gh-proxy 中断会自动回退直连 GitHub
 USAGE
 }
 
@@ -375,7 +376,7 @@ resolve_release_tag() {
   local resolved
 
   # Method 1: follow the GitHub releases/latest redirect.
-  resolved="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${GH_PROXY}https://github.com/$REPO/releases/latest" 2>/dev/null \
+  resolved="$(curl -fsSLI --http1.1 --max-time 20 -o /dev/null -w '%{url_effective}' "${GH_PROXY}https://github.com/$REPO/releases/latest" 2>/dev/null \
               | sed -n 's#.*/releases/tag/##p' | tr -d '\r\n')"
   if [[ -n "$resolved" ]]; then
     echo "$resolved"
@@ -383,7 +384,7 @@ resolve_release_tag() {
   fi
 
   # Method 2: GitHub API (helps when the redirect is intercepted/blocked).
-  resolved="$(curl -fsSL --max-time 10 "${GH_PROXY}https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+  resolved="$(curl -fsSL --http1.1 --max-time 15 "${GH_PROXY}https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
               | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   if [[ -n "$resolved" ]]; then
     echo "$resolved"
@@ -405,18 +406,67 @@ write_agent_identity() {
   printf '%s' "$sha" >"$ETC_DIR/agent.sha"
 }
 
+# curl_fetch downloads one URL to dest with HTTP/1.1, retries, and resume.
+# gh-proxy (and similar CDN frontends) often die mid-stream with HTTP/2
+# INTERNAL_ERROR; HTTP/1.1 + retry is far more reliable on reverse links.
+curl_fetch() {
+  local url="$1" dest="$2"
+  # -C - resumes partial files; --retry covers transient proxy/CDN drops.
+  curl -fL --http1.1 --retry 5 --retry-delay 2 --retry-all-errors \
+    --connect-timeout 20 --max-time 900 -C - --progress-bar \
+    -o "$dest" "$url"
+}
+
+# Strip a known gh-proxy prefix so we can fall back to direct GitHub.
+strip_gh_proxy_url() {
+  local url="$1" pfx
+  pfx="${GH_PROXY:-}"
+  if [[ -n "$pfx" && "$url" == "$pfx"* ]]; then
+    echo "${url#"$pfx"}"
+    return 0
+  fi
+  # Also strip common hard-coded prefixes if GH_PROXY was empty but URL still proxied.
+  for pfx in "https://gh-proxy.com/" "https://mirror.ghproxy.com/" "https://ghproxy.com/"; do
+    if [[ "$url" == "$pfx"* ]]; then
+      echo "${url#"$pfx"}"
+      return 0
+    fi
+  done
+  echo "$url"
+}
+
 # Download one release asset through the proxy and strong-verify it against the
 # release's SHA256SUMS. Echoes the verified sha256 hex on success.
 #   $1 = base URL (releases/download root), $2 = asset name, $3 = dest path
 #   $4 = "strict" to hard-fail when SHA256SUMS is unavailable (binaries), or
 #        "soft" to warn and skip (legacy tolerance for optional fetches)
+# On proxy failure, automatically retries the direct GitHub URL once.
 fetch_and_verify() {
   local base="$1" asset="$2" dest="$3" strictness="${4:-strict}"
-  curl -fL --progress-bar "$base/$asset" -o "$dest" \
-    || die "下载失败: $base/$asset"
-  local ddir
+  local url="$base/$asset" direct
+  rm -f "$dest"
+  if ! curl_fetch "$url" "$dest"; then
+    direct="$(strip_gh_proxy_url "$url")"
+    if [[ "$direct" != "$url" ]]; then
+      warn "代理下载失败，改直连 GitHub: $asset"
+      rm -f "$dest"
+      curl_fetch "$direct" "$dest" || die "下载失败: $url （直连亦失败: $direct）"
+      # Prefer direct base for SHA256SUMS as well.
+      base="$(dirname "$direct")"
+    else
+      die "下载失败: $url"
+    fi
+  fi
+  local ddir sums_url sums_direct
   ddir="$(dirname "$dest")"
-  if curl -fLs "$base/SHA256SUMS" -o "$ddir/SHA256SUMS" 2>/dev/null; then
+  sums_url="$base/SHA256SUMS"
+  if ! curl_fetch "$sums_url" "$ddir/SHA256SUMS" 2>/dev/null; then
+    sums_direct="$(strip_gh_proxy_url "$sums_url")"
+    if [[ "$sums_direct" != "$sums_url" ]]; then
+      curl_fetch "$sums_direct" "$ddir/SHA256SUMS" 2>/dev/null || true
+    fi
+  fi
+  if [[ -s "$ddir/SHA256SUMS" ]]; then
     # Verification chatter must go to stderr — stdout carries only the hash the
     # caller captures into the identity file.
     (cd "$ddir" && grep -E "  $asset\$" SHA256SUMS | sha256sum -c - >&2) \
