@@ -12,8 +12,8 @@ func TestClassifyProbeFail(t *testing.T) {
 		raw, status string
 		wantSub     string
 	}{
-		{"connection refused", db.ProxyDeployReady, "无进程监听"},
-		{"connection refused", db.ProxyDeployError, "部署状态异常"},
+		{"connection refused", db.ProxyDeployReady, "无监听"},
+		{"connection refused", db.ProxyDeployError, "部署失败"},
 		{"node 3 not connected", "", "节点离线"},
 		{"probe timeout", "", "超时"},
 	}

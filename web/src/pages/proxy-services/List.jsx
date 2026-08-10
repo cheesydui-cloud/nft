@@ -43,6 +43,26 @@ export default function ProxyServiceList() {
     } catch (err) { toast(err.message, 'error') }
   }
 
+  const republish = async (svc) => {
+    try {
+      // Fetch instances to get node_ids
+      const d = await api.get(`/proxy-services/${svc.id}`)
+      const inst = d?.service?.instances || []
+      const nodeIds = [...new Set(inst.map(i => i.node_id).filter(Boolean))]
+      if (nodeIds.length === 0) {
+        toast('尚无部署节点，请点「编辑」走发布向导', 'error')
+        return
+      }
+      const r = await api.post(`/proxy-services/${svc.id}/publish`, { node_ids: nodeIds, force_core: true })
+      const results = r?.results || []
+      const ok = results.filter(x => x.ok).length
+      const fail = results.length - ok
+      if (fail === 0) toast(`重新发布完成 ${ok}/${results.length}`)
+      else toast(`重新发布 ${ok} 成功 / ${fail} 失败，请打开详情看错误`, 'error')
+      load()
+    } catch (err) { toast(err.message, 'error') }
+  }
+
   const probeLatency = async (svc) => {
     setProbingId(svc.id)
     try {
@@ -119,12 +139,19 @@ export default function ProxyServiceList() {
                           )}
                         </td>
                         <td>{s.sub_visible ? '是' : '否'}</td>
-                        <td><Badge color={st.color}>{st.label}</Badge></td>
-                        <td className="text-[12px] max-w-[200px]">
+                        <td>
+                          <Badge color={st.color}>{st.label}</Badge>
+                          {s.last_error_sample && (
+                            <div className="text-[11px] text-rose-600 mt-0.5 max-w-[220px] truncate" title={s.last_error_sample}>
+                              {s.last_error_sample}
+                            </div>
+                          )}
+                        </td>
+                        <td className="text-[12px] max-w-[180px]">
                           {probingId === s.id ? (
                             <span className="text-ink-mut">测试中…</span>
                           ) : lat ? (
-                            <span className={lat.ok_count > 0 && lat.fail_count === 0 ? 'text-emerald-700 dark:text-emerald-300' : lat.ok_count > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-rose-600'} title={(lat.results || []).map(r => `${r.node_name || r.node_id}: ${r.ok ? r.latency_ms + 'ms' : r.error}`).join('\n')}>
+                            <span className={`block truncate ${lat.ok_count > 0 && lat.fail_count === 0 ? 'text-emerald-700 dark:text-emerald-300' : lat.ok_count > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-rose-600'}`} title={(lat.results || []).map(r => `${r.node_name || r.node_id}: ${r.ok ? r.latency_ms + 'ms' : r.error}`).join('\n') + (lat.summary ? '\n' + lat.summary : '')}>
                               {lat.summary || '—'}
                             </span>
                           ) : (
@@ -132,6 +159,12 @@ export default function ProxyServiceList() {
                           )}
                         </td>
                         <td className="text-right whitespace-nowrap">
+                          <button type="button" disabled={!(s.instance_count > 0)}
+                            onClick={() => republish(s)}
+                            className="text-emerald-600 text-sm font-semibold mr-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="向已绑定节点重新推送核心并启动">
+                            重新发布
+                          </button>
                           <button type="button" disabled={probingId === s.id || !(s.instance_count > 0)}
                             onClick={() => probeLatency(s)}
                             className="text-emerald-600 text-sm font-semibold mr-3 disabled:opacity-40 disabled:cursor-not-allowed">

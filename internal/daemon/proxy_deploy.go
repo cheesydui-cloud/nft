@@ -89,9 +89,13 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 			}
 		}
 	}
-	if err := waitListenHint(port, 5*time.Second); err != nil {
-		// Non-fatal: process may still be binding; surface as warning via CoreVersion path.
-		_ = err
+	if err := waitListenHint(port, 8*time.Second); err != nil {
+		tail, _ := os.ReadFile(logPath)
+		stopPIDFile(pidPath)
+		return wsproto.ProxyServiceApplyAck{
+			OK:    false,
+			Error: fmt.Sprintf("xray 已启动但端口 %d 未监听: %v；日志: %s", port, err, truncateOut(string(tail))),
+		}
 	}
 	return wsproto.ProxyServiceApplyAck{
 		OK:          true,
@@ -144,7 +148,14 @@ func deploySingBoxSS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 	if err := restartDetached(pidPath, logPath, boxPath, "run", "-c", cfgPath); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "启动 sing-box 失败: " + err.Error()}
 	}
-	_ = waitListenHint(port, 5*time.Second)
+	if err := waitListenHint(port, 8*time.Second); err != nil {
+		tail, _ := os.ReadFile(logPath)
+		stopPIDFile(pidPath)
+		return wsproto.ProxyServiceApplyAck{
+			OK:    false,
+			Error: fmt.Sprintf("sing-box 已启动但端口 %d 未监听: %v；日志: %s", port, err, truncateOut(string(tail))),
+		}
+	}
 	return wsproto.ProxyServiceApplyAck{
 		OK:          true,
 		DryRun:      false,
@@ -208,7 +219,7 @@ func restartDetached(pidPath, logPath, name string, args ...string) error {
 	_ = cmd.Process.Release()
 	_ = logF.Close()
 	// Brief settle: if process dies immediately, surface log tail.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
 	if !pidAlive(pid) {
 		tail, _ := os.ReadFile(logPath)
 		return fmt.Errorf("process exited immediately (pid %d): %s", pid, truncateOut(string(tail)))

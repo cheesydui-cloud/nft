@@ -26,7 +26,32 @@ func (s *Server) apiListProxyServices(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []*db.ProxyService{}
 	}
-	jsonOK(w, map[string]any{"services": list})
+	// Attach a sample instance last_error so list UI can show why status is error
+	// without an extra round-trip per row.
+	type svcOut struct {
+		*db.ProxyService
+		LastErrorSample string `json:"last_error_sample,omitempty"`
+	}
+	out := make([]svcOut, 0, len(list))
+	for _, svc := range list {
+		row := svcOut{ProxyService: svc}
+		if svc.Status == db.ProxyStatusError || svc.Status == "error" || svc.Status == db.ProxyStatusPartial || svc.Status == "partial" {
+			if inst, err := db.ListProxyInstances(s.DB, svc.ID); err == nil {
+				for _, i := range inst {
+					if strings.TrimSpace(i.LastError) != "" {
+						msg := strings.TrimSpace(i.LastError)
+						if len(msg) > 120 {
+							msg = msg[:120] + "…"
+						}
+						row.LastErrorSample = msg
+						break
+					}
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	jsonOK(w, map[string]any{"services": out})
 }
 
 // apiGetProxyService returns one service with instances.
@@ -154,7 +179,8 @@ func (s *Server) apiDeleteProxyService(w http.ResponseWriter, r *http.Request) {
 }
 
 type proxyPublishBody struct {
-	NodeIDs []int64 `json:"node_ids"`
+	ForceCore bool    `json:"force_core"` // re-push core from panel cache even if node reports installed
+	NodeIDs   []int64 `json:"node_ids"`
 	// Optional per-node port overrides: map as list of {node_id, port}
 	Ports []struct {
 		NodeID int64 `json:"node_id"`
@@ -234,7 +260,7 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Ensure proxy core is on the node (push from panel cache if needed).
-		if err := s.ensureCoreOnNode(node, svc.Protocol); err != nil {
+		if err := s.ensureCoreOnNodeForce(node, svc.Protocol, body.ForceCore); err != nil {
 			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
 			results = append(results, map[string]any{
 				"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
@@ -296,12 +322,16 @@ type applyOutcome struct {
 // does not already report that core. Returns nil when the core is present or
 // was installed successfully.
 func (s *Server) ensureCoreOnNode(node *db.Node, protocol string) error {
+	return s.ensureCoreOnNodeForce(node, protocol, false)
+}
+
+func (s *Server) ensureCoreOnNodeForce(node *db.Node, protocol string, force bool) error {
 	need := coreNeededForProtocol(protocol)
 	if need == "" {
 		return nil
 	}
 	cores, _ := db.GetNodeCores(s.DB, node.ID)
-	if nodeCorePresent(cores, need) {
+	if !force && nodeCorePresent(cores, need) {
 		return nil
 	}
 	arch := sanitizeArch(node.AgentArch)
@@ -680,24 +710,28 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 func classifyProbeFail(raw, deployStatus string, port int) string {
 	s := strings.ToLower(raw)
 	switch {
-	case strings.Contains(s, "not connected") || strings.Contains(s, "node") && strings.Contains(s, "not connected"):
-		return "节点离线（agent 未连接面板）"
+	case strings.Contains(s, "not connected"):
+		return "节点离线（agent 未连接）"
 	case strings.Contains(s, "probe timeout") || strings.Contains(s, "timeout"):
 		return "探测超时"
 	case strings.Contains(s, "connection refused") || strings.Contains(s, "refused") || strings.Contains(s, "actively refused"):
-		hint := fmt.Sprintf("端口 %d 无进程监听", port)
+		hint := fmt.Sprintf("端口 %d 无监听", port)
 		if deployStatus == db.ProxyDeployError || deployStatus == "error" {
-			return hint + "（部署状态异常，请打开服务详情查看 last_error，或重新发布）"
+			return hint + " · 部署失败，看详情 last_error 后重新发布"
 		}
 		if deployStatus == db.ProxyDeployReady || deployStatus == "ready" {
-			return hint + "（状态显示就绪但端口未开：核心可能已退出，请重新发布并确认节点已装 xray/sing-box）"
+			return hint + " · 进程已退出，请重新发布"
 		}
-		return hint + "（请确认核心已启动）"
+		return hint + " · 请重新发布"
 	case strings.Contains(s, "no route") || strings.Contains(s, "network is unreachable"):
 		return "网络不可达"
 	case strings.TrimSpace(raw) == "":
 		return "端口不通"
 	default:
+		// keep short for list UI
+		if len(raw) > 80 {
+			return raw[:80] + "…"
+		}
 		return raw
 	}
 }

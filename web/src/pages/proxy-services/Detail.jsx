@@ -36,6 +36,19 @@ export default function ProxyServiceDetail() {
     } catch (err) { toast(err.message, 'error') }
   }
 
+  const republish = async () => {
+    const nodeIds = [...new Set((svc?.instances || []).map(i => i.node_id).filter(Boolean))]
+    if (nodeIds.length === 0) { toast('尚无部署节点', 'error'); return }
+    try {
+      const r = await api.post(`/proxy-services/${id}/publish`, { node_ids: nodeIds, force_core: true })
+      const results = r?.results || []
+      const ok = results.filter(x => x.ok).length
+      toast(ok === results.length ? `重新发布完成 ${ok}/${results.length}` : `重新发布 ${ok}/${results.length} 成功`, ok === results.length ? 'success' : 'error')
+      load()
+      setLatency(null)
+    } catch (err) { toast(err.message, 'error') }
+  }
+
   const probeLatency = async () => {
     setProbing(true)
     try {
@@ -75,6 +88,7 @@ export default function ProxyServiceDetail() {
           actions={
             <div className="flex gap-2 flex-wrap">
               <Link to={`/proxy-services/${id}/edit`} className="btn-primary text-sm">编辑</Link>
+              <button type="button" className="btn-secondary text-sm" disabled={!(instances.length > 0)} onClick={republish}>重新发布</button>
               <button type="button" className="btn-secondary text-sm" disabled={probing || !(instances.length > 0)} onClick={probeLatency}>
                 {probing ? '测试中…' : '测试'}
               </button>
