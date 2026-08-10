@@ -195,24 +195,33 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 mita 配置失败: " + err.Error()}
 	}
 
+	// mita CLI talks to a local RPC daemon. Official flow is: start daemon → apply config.
+	// Applying while the daemon is down yields:
+	//   get mita server status failed ... rpc error ... connection error
+	// which looks like "core missing" but the binary is present.
+	if err := ensureMitaDaemon(mitaPath); err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
+	}
+
 	// apply merges into existing mita settings (multiple instances on one host OK).
 	if out, err := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err != nil {
-		return wsproto.ProxyServiceApplyAck{
-			OK:    false,
-			Error: fmt.Sprintf("mita apply config 失败: %v (%s)", err, truncateOut(out)),
+		// Daemon may have died; one more start+apply attempt.
+		_ = ensureMitaDaemon(mitaPath)
+		if out2, err2 := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err2 != nil {
+			return wsproto.ProxyServiceApplyAck{
+				OK: false,
+				Error: fmt.Sprintf(
+					"mita apply config 失败（二进制已找到，但守护进程 RPC 不可用或配置无效）: %v (%s); 重试: %v (%s)。"+
+						"可在节点执行: systemctl status mita; %s start; journalctl -u mita -n 50",
+					err, truncateOut(out), err2, truncateOut(out2), mitaPath),
+			}
 		}
 	}
 
 	// Restart so new portBindings take effect (reload only covers users/logging).
 	_, _ = runCmdTimeout(15*time.Second, mitaPath, "stop")
-	if out, err := runCmdTimeout(20*time.Second, mitaPath, "start"); err != nil {
-		// systemctl unit is often named mita — fall back if CLI start fails.
-		if out2, err2 := runCmdTimeout(20*time.Second, "systemctl", "restart", "mita"); err2 != nil {
-			return wsproto.ProxyServiceApplyAck{
-				OK:    false,
-				Error: fmt.Sprintf("mita start 失败: %v (%s); systemctl: %v (%s)", err, truncateOut(out), err2, truncateOut(out2)),
-			}
-		}
+	if err := ensureMitaDaemon(mitaPath); err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "mita 重启失败: " + err.Error()}
 	}
 
 	ver := probeCoreVersion(mitaPath)
@@ -221,6 +230,48 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		DryRun:      false,
 		CoreVersion: ver,
 	}
+}
+
+// ensureMitaDaemon starts the mita server process if RPC is down.
+// Order: systemctl start mita → mita start → wait until status succeeds.
+func ensureMitaDaemon(mitaPath string) error {
+	// Already healthy?
+	if out, err := runCmdTimeout(8*time.Second, mitaPath, "status"); err == nil {
+		_ = out
+		return nil
+	}
+	// Prefer packaged unit when present.
+	_, _ = runCmdTimeout(20*time.Second, "systemctl", "start", "mita")
+	_, _ = runCmdTimeout(20*time.Second, "systemctl", "enable", "mita")
+	if out, err := runCmdTimeout(8*time.Second, mitaPath, "status"); err == nil {
+		_ = out
+		return nil
+	}
+	// CLI start (standalone / panel-pushed binary without unit).
+	if out, err := runCmdTimeout(20*time.Second, mitaPath, "start"); err != nil {
+		// Last try: systemctl restart
+		out2, err2 := runCmdTimeout(20*time.Second, "systemctl", "restart", "mita")
+		if err2 != nil {
+			return fmt.Errorf(
+				"无法启动 mita 守护进程（apply/status 需要本机 RPC）。"+
+					"CLI start: %v (%s); systemctl: %v (%s)。"+
+					"面板缓存的 mita 二进制在 /var/lib/nft/cores/mieru/mita，但官方安装通常还带 systemd unit；"+
+					"可在节点: curl 安装脚本或 systemctl enable --now mita",
+				err, truncateOut(out), err2, truncateOut(out2))
+		}
+	}
+	// Wait briefly for socket.
+	deadline := time.Now().Add(8 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		out, err := runCmdTimeout(5*time.Second, mitaPath, "status")
+		if err == nil {
+			return nil
+		}
+		last = truncateOut(out)
+		time.Sleep(400 * time.Millisecond)
+	}
+	return fmt.Errorf("mita 已尝试启动但 status 仍失败: %s", last)
 }
 
 func mitaPortBindings(port int, transports []string) []map[string]any {
