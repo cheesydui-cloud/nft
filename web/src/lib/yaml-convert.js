@@ -3,58 +3,88 @@
    can fall back to copying the raw URI. */
 
 export function uriToClashYaml(uri) {
-  const i = uri.indexOf('://')
+  if (!uri || typeof uri !== 'string') return null
+  const raw = uri.trim()
+  if (!raw) return null
+  const i = raw.indexOf('://')
   if (i <= 0) return null
-  const scheme = uri.slice(0, i).toLowerCase()
+  const scheme = raw.slice(0, i).toLowerCase()
   switch (scheme) {
-    case 'ss': return ssToYaml(uri)
-    case 'vmess': return vmessToYaml(uri)
-    case 'vless': return vlessToYaml(uri)
-    case 'trojan': return trojanToYaml(uri)
+    case 'ss':
+    case 'shadowsocks':
+      return ssToYaml(raw)
+    case 'vmess': return vmessToYaml(raw)
+    case 'vless': return vlessToYaml(raw)
+    case 'trojan': return trojanToYaml(raw)
     case 'hy2':
-    case 'hysteria2': return hy2ToYaml(uri)
+    case 'hysteria2': return hy2ToYaml(raw)
     default: return null
   }
 }
 
 function ssToYaml(uri) {
-  let rest = uri.slice('ss://'.length)
+  // Accept ss:// and shadowsocks://
+  const schemeEnd = uri.indexOf('://')
+  let rest = uri.slice(schemeEnd + 3)
   let name = ''
   const h = rest.indexOf('#')
   if (h >= 0) { name = dec(rest.slice(h + 1)); rest = rest.slice(0, h) }
-  const q = rest.indexOf('?')
+
+  // SIP002: ss://userinfo@host:port/?plugin=…  or  …/path?plugin=…
+  // Strip query first, then any path after host:port so hostport works.
   let plugin = '', pluginOpts = ''
+  const q = rest.indexOf('?')
   if (q >= 0) {
     const params = parseQS(rest.slice(q + 1))
     plugin = params.plugin || ''
     pluginOpts = params['plugin-opts'] || ''
     rest = rest.slice(0, q)
   }
+  // Drop path segment (e.g. trailing "/" after port)
+  const pathSlash = rest.indexOf('/')
+  if (pathSlash >= 0) {
+    // Only strip path when it is after authority (has @ or looks like host:port/)
+    const atProbe = rest.lastIndexOf('@')
+    if (atProbe >= 0 || /^\[[^\]]+\]:\d+\//.test(rest) || /^[^@/]+:\d+\//.test(rest)) {
+      rest = rest.slice(0, pathSlash)
+    }
+  }
+
   let method, password, host, port
   const at = rest.lastIndexOf('@')
   if (at >= 0) {
     let userinfo = rest.slice(0, at)
+    // Prefer base64(method:password); else plain / percent-decoded method:password
     const decoded = b64(userinfo)
-    if (decoded) userinfo = decoded
+    if (decoded && decoded.includes(':')) {
+      userinfo = decoded
+    } else {
+      const plain = dec(userinfo)
+      if (plain.includes(':')) userinfo = plain
+    }
     const colon = userinfo.indexOf(':')
     if (colon < 0) return null
-    method = userinfo.slice(0, colon)
+    method = userinfo.slice(0, colon).trim()
     password = userinfo.slice(colon + 1)
     const hp = hostport(rest.slice(at + 1))
     if (!hp) return null
     host = hp[0]; port = hp[1]
   } else {
+    // Legacy: entire body base64(method:password@host:port)
     const decoded = b64(rest)
     if (!decoded) return null
     const at2 = decoded.lastIndexOf('@')
     if (at2 < 0) return null
     const colon = decoded.indexOf(':')
-    method = decoded.slice(0, colon)
+    if (colon < 0 || colon > at2) return null
+    method = decoded.slice(0, colon).trim()
     password = decoded.slice(colon + 1, at2)
     const hp = hostport(decoded.slice(at2 + 1))
     if (!hp) return null
     host = hp[0]; port = hp[1]
   }
+  if (!method || !host || !port) return null
+
   const L = []
   L.push(`- name: "${esc(name)}"`)
   L.push(`  type: ss`)
@@ -63,8 +93,60 @@ function ssToYaml(uri) {
   L.push(`  cipher: ${method}`)
   L.push(`  password: "${esc(password)}"`)
   L.push(`  udp: true`)
-  if (plugin) { L.push(`  plugin: ${plugin}`); if (pluginOpts) L.push(`  plugin-opts: ${pluginOpts}`) }
+  // plugin=obfs-local;obfs=http;obfs-host=…  → Clash simple plugin fields when possible
+  if (plugin) {
+    const mapped = mapSSPlugin(plugin)
+    if (mapped) {
+      L.push(`  plugin: ${mapped.name}`)
+      if (mapped.opts && Object.keys(mapped.opts).length) {
+        L.push(`  plugin-opts:`)
+        for (const [k, v] of Object.entries(mapped.opts)) {
+          L.push(`    ${k}: ${yamlScalar(v)}`)
+        }
+      }
+    } else {
+      L.push(`  plugin: ${plugin}`)
+      if (pluginOpts) L.push(`  plugin-opts: ${pluginOpts}`)
+    }
+  }
   return L.join('\n')
+}
+
+/** Map SIP002 plugin string to Clash Meta plugin name + opts. */
+function mapSSPlugin(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return null
+  // "obfs-local;obfs=http;obfs-host=www.example.com"
+  const parts = s.split(';').map(x => x.trim()).filter(Boolean)
+  if (!parts.length) return null
+  const head = parts[0].toLowerCase()
+  const opts = {}
+  for (let i = 1; i < parts.length; i++) {
+    const eq = parts[i].indexOf('=')
+    if (eq > 0) opts[parts[i].slice(0, eq)] = parts[i].slice(eq + 1)
+  }
+  if (head === 'obfs-local' || head === 'simple-obfs' || head === 'obfs') {
+    const mode = opts.obfs || opts.mode || 'http'
+    const out = { name: 'obfs', opts: { mode } }
+    if (opts['obfs-host'] || opts.host) out.opts.host = opts['obfs-host'] || opts.host
+    return out
+  }
+  if (head === 'v2ray-plugin') {
+    const out = { name: 'v2ray-plugin', opts: {} }
+    if (opts.mode) out.opts.mode = opts.mode
+    if (opts.tls === 'true' || opts.tls === '1') out.opts.tls = true
+    if (opts.host) out.opts.host = opts.host
+    if (opts.path) out.opts.path = opts.path
+    return out
+  }
+  return null
+}
+
+function yamlScalar(v) {
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  const s = String(v)
+  if (/^[A-Za-z0-9_./-]+$/.test(s)) return s
+  return `"${esc(s)}"`
 }
 
 function vmessToYaml(uri) {
@@ -212,19 +294,25 @@ function parseQS(qs) {
 
 function hostport(s) {
   if (!s) return null
+  // Strip path/query leftovers: host:port/ or host:port/path
+  let raw = String(s).trim()
+  const slash = raw.indexOf('/')
+  if (slash >= 0) raw = raw.slice(0, slash)
+  const q = raw.indexOf('?')
+  if (q >= 0) raw = raw.slice(0, q)
   let host, portStr
-  if (s.startsWith('[')) {
-    const close = s.indexOf(']')
+  if (raw.startsWith('[')) {
+    const close = raw.indexOf(']')
     if (close < 0) return null
-    host = s.slice(1, close)
-    const rem = s.slice(close + 1)
+    host = raw.slice(1, close)
+    const rem = raw.slice(close + 1)
     if (!rem.startsWith(':')) return null
     portStr = rem.slice(1)
   } else {
-    const c = s.lastIndexOf(':')
+    const c = raw.lastIndexOf(':')
     if (c < 0) return null
-    host = s.slice(0, c)
-    portStr = s.slice(c + 1)
+    host = raw.slice(0, c)
+    portStr = raw.slice(c + 1)
   }
   const port = Number(portStr)
   if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return null

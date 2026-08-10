@@ -63,11 +63,30 @@ export default function Proxies() {
     const out = []
     for (const r of rules) {
       const key = r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : null
-      if (!key || !allLandingIdx.has(key) || !r.entry) continue
-      const ep = splitEndpoint(r.entry)
-      const node = allLandingIdx.get(key)
-      const relay = ep && rewriteEndpoint(node.uri, ep.host, ep.port)
-      if (relay) out.push({ ...node, relay, ruleName: r.name })
+      // Prefer server-built relay_uri (same as 规则详情复制); fall back to local rewrite.
+      let relay = r.relay_uri || null
+      let node = key && allLandingIdx.has(key) ? allLandingIdx.get(key) : null
+      if (!relay && key && node && r.entry) {
+        const ep = splitEndpoint(r.entry)
+        relay = ep && rewriteEndpoint(node.uri, ep.host, ep.port)
+      }
+      if (!relay) continue
+      // Protocol from landing node when known; else sniff from URI scheme.
+      let protocol = node?.protocol || r.landing_protocol || ''
+      if (!protocol) {
+        const i = relay.indexOf('://')
+        protocol = i > 0 ? relay.slice(0, i).toLowerCase() : ''
+      }
+      out.push({
+        name: node?.name || r.landing_name || r.name,
+        host: node?.host || r.exit_host,
+        port: node?.port || r.exit_port,
+        protocol,
+        uri: node?.uri || r.landing_uri || '',
+        relay,
+        ruleName: r.name,
+        kind: 'relay',
+      })
     }
     return out
   }, [rules, allLandingIdx])
@@ -142,8 +161,17 @@ export default function Proxies() {
   const proxyItemForClash = (n) => {
     if (n.kind === 'relay') {
       if (!n.relay) return null
+      const expiresAt = relayExpiryFromMap(expiryMap, n.host, n.port)
+      const uname = (user?.username || '').trim()
       let name = n.name || n.ruleName || 'relay'
-      if (user?.username && n.ruleName) name = `${user.username}-${n.ruleName}`
+      if (uname && expiresAt > 0) {
+        const d = new Date(expiresAt * 1000)
+        if (!Number.isNaN(d.getTime())) name = `${uname}-${d.getMonth() + 1}月${d.getDate()}日`
+      } else if (uname && n.ruleName) {
+        name = `${uname}-${n.ruleName}`
+      } else if (uname) {
+        name = uname
+      }
       return { name, uri: n.relay, protocol: n.protocol }
     }
     if (!n.uri) return null
@@ -152,17 +180,27 @@ export default function Proxies() {
 
   const canClashYaml = (n) => {
     const item = proxyItemForClash(n)
-    if (!item) return false
+    if (!item?.uri) return false
+    const uri = item.uri.toLowerCase()
+    if (uri.startsWith('mierus://') || uri.startsWith('mieru://')) return false
     const proto = String(item.protocol || '').toLowerCase()
-    const uri = (item.uri || '').toLowerCase()
-    if (proto === 'mieru' || uri.startsWith('mierus://') || uri.startsWith('mieru://')) return false
+    if (proto === 'mieru' || proto === 'mierus') return false
     return !!uriToClashYaml(item.uri)
   }
 
   const downloadRowYaml = (n) => {
     const item = proxyItemForClash(n)
-    if (!item) {
+    if (!item?.uri) {
       toast('该代理无可导出链接', 'error')
+      return
+    }
+    if (!uriToClashYaml(item.uri)) {
+      const uri = item.uri.toLowerCase()
+      if (uri.startsWith('mieru') || String(item.protocol || '').toLowerCase().includes('mieru')) {
+        toast('Mihomo/Clash 不支持 mieru，请用「复制链接」', 'error')
+      } else {
+        toast('该链接无法转成 Mihomo YAML（格式无法识别）', 'error')
+      }
       return
     }
     const { yaml, count, skipped } = buildClashProfile([item], {
@@ -173,8 +211,8 @@ export default function Proxies() {
     if (count === 0) {
       toast(
         skipped > 0
-          ? 'Mihomo/Clash 不支持 mieru，请用复制链接或规则订阅'
-          : '该协议无法生成 Mihomo YAML',
+          ? 'Mihomo/Clash 不支持该协议，请用复制链接'
+          : '生成 YAML 失败',
         'error',
       )
       return
