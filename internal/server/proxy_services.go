@@ -538,9 +538,12 @@ func (s *Server) apiSyncProxyServiceToRepo(w http.ResponseWriter, r *http.Reques
 	jsonOK(w, map[string]any{"synced": synced, "results": outs})
 }
 
-// apiProbeProxyServiceLatency checks each instance's listen port from the node
-// and reports TCP latency. Tries loopback v4/v6 then share_host so dual-stack
-// and IPv6-only listeners (legacy sing-box "::") still pass when the core is up.
+// apiProbeProxyServiceLatency measures TCP reachability / RTT for each instance.
+//
+// Default mode=public: panel process dials share_host:listen_port (client path RTT).
+// mode=local: agent on the node dials loopback (core process alive).
+//
+// Query/body: mode=public|local (default public).
 func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Request) {
 	id, err := urlParamInt64(r, "id")
 	if err != nil {
@@ -557,10 +560,25 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		// optional JSON body { "mode": "public"|"local" }
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mode = strings.ToLower(strings.TrimSpace(body.Mode))
+	}
+	if mode != "local" {
+		mode = "public"
+	}
+
 	if len(inst) == 0 {
 		jsonOK(w, map[string]any{
 			"service_id": id,
 			"name":       svc.Name,
+			"mode":       mode,
 			"results":    []any{},
 			"ok_count":   0,
 			"fail_count": 0,
@@ -580,6 +598,7 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 		ShareHost    string `json:"share_host,omitempty"`
 		ListenPort   int    `json:"listen_port"`
 		DeployStatus string `json:"deploy_status,omitempty"`
+		Mode         string `json:"mode,omitempty"`
 	}
 	results := make([]row, len(inst))
 	var wg sync.WaitGroup
@@ -604,35 +623,66 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 			r := row{
 				InstanceID: it.ID, NodeID: it.NodeID, NodeName: name,
 				ListenPort: port, ShareHost: it.ShareHost, DeployStatus: it.DeployStatus,
+				Mode: mode,
 			}
 			if port <= 0 {
 				r.Error = "无监听端口"
 				results[i] = r
 				return
 			}
+
+			if mode == "public" {
+				// Real path: panel → share_host:port (what clients hit).
+				sh := strings.TrimSpace(it.ShareHost)
+				if sh == "" {
+					// fall back to node relay host
+					if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
+						sh = firstNonEmpty(n.RelayHost, n.Address)
+					}
+				}
+				if sh != "" {
+					if h, _, err := splitHostPortLoose(sh); err == nil && h != "" {
+						sh = h
+					}
+				}
+				if sh == "" {
+					r.Error = "无分享地址（无法测公网延迟）"
+					results[i] = r
+					return
+				}
+				target := net.JoinHostPort(sh, strconv.Itoa(port))
+				r.Target = target
+				lat, err := dialTCPLatency(target, 5*time.Second)
+				if err != nil {
+					r.Error = classifyProbeFail(err.Error(), it.DeployStatus, port)
+					results[i] = r
+					return
+				}
+				r.OK = true
+				r.Latency = lat
+				results[i] = r
+				return
+			}
+
+			// mode=local: agent dials loopback (core process up on node).
 			if !s.Hub.IsConnected(it.NodeID) {
 				r.Error = "节点离线（agent 未连接面板）"
 				results[i] = r
 				return
 			}
-
-			// Candidate targets from the node: loopback first (local core), then share host.
 			var targets []string
 			targets = append(targets,
 				net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
 				net.JoinHostPort("::1", strconv.Itoa(port)),
 			)
 			if sh := strings.TrimSpace(it.ShareHost); sh != "" {
-				// strip accidental port
 				if h, _, err := splitHostPortLoose(sh); err == nil && h != "" {
 					sh = h
 				}
-				// skip if already loopback
 				if sh != "127.0.0.1" && sh != "::1" && sh != "localhost" {
 					targets = append(targets, net.JoinHostPort(sh, strconv.Itoa(port)))
 				}
 			}
-
 			var lastErr string
 			for _, target := range targets {
 				ack, err := s.Hub.SendProbe(it.NodeID, target)
@@ -652,7 +702,6 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 				} else {
 					lastErr = "连接失败"
 				}
-				// connection refused on one family — try next
 			}
 			r.Target = targets[0]
 			r.Error = classifyProbeFail(lastErr, it.DeployStatus, port)
@@ -681,29 +730,50 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
-	summary := fmt.Sprintf("%d/%d 端口可达", okN, len(results))
+	modeLabel := "公网"
+	if mode == "local" {
+		modeLabel = "节点本机"
+	}
+	summary := fmt.Sprintf("%d/%d 端口可达（%s）", okN, len(results), modeLabel)
 	if okN > 0 {
 		avg := sumL / okN
-		summary = fmt.Sprintf("%d/%d 可达 · 延迟 %d–%d ms（均 %d ms）", okN, len(results), minL, maxL, avg)
+		summary = fmt.Sprintf("%d/%d 可达 · %s延迟 %d–%d ms（均 %d ms）", okN, len(results), modeLabel, minL, maxL, avg)
 		if failN > 0 && firstErr != "" {
 			summary += "；失败: " + firstErr
 		}
 	} else if firstErr != "" {
-		summary = fmt.Sprintf("0/%d 可达 · %s", len(results), firstErr)
+		summary = fmt.Sprintf("0/%d 可达（%s） · %s", len(results), modeLabel, firstErr)
 	} else {
-		summary = fmt.Sprintf("0/%d 可达", len(results))
+		summary = fmt.Sprintf("0/%d 可达（%s）", len(results), modeLabel)
 	}
 
 	jsonOK(w, map[string]any{
 		"service_id": id,
 		"name":       svc.Name,
 		"protocol":   svc.Protocol,
+		"mode":       mode,
 		"results":    results,
 		"ok_count":   okN,
 		"fail_count": failN,
 		"summary":    summary,
 		"probed_at":  time.Now().Unix(),
 	})
+}
+
+// dialTCPLatency opens a TCP connection to target and returns RTT in ms.
+func dialTCPLatency(target string, timeout time.Duration) (int, error) {
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", target, timeout)
+	elapsed := time.Since(start)
+	if err != nil {
+		return 0, err
+	}
+	_ = conn.Close()
+	ms := int(elapsed.Milliseconds())
+	if ms < 1 {
+		ms = 1
+	}
+	return ms, nil
 }
 
 // classifyProbeFail turns raw dial/hub errors into operator-facing Chinese hints.

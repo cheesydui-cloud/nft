@@ -220,20 +220,30 @@ export default function ProxyServiceDetail() {
     }
   }
 
-  const probeLatency = async () => {
+  /** Real public RTT: panel dials share_host:port (default). mode=local = agent loopback. */
+  const probeLatency = async ({ silent = false, mode = 'public' } = {}) => {
     setProbing(true)
     try {
-      const d = await api.post(`/proxy-services/${id}/probe-latency`, {})
+      const d = await api.post(`/proxy-services/${id}/probe-latency?mode=${mode}`, { mode })
       setLatency(d)
-      if (d.ok_count > 0 && d.fail_count === 0) toast(d.summary || '探测完成')
-      else toast(d.summary || '探测完成（有失败）', 'error')
+      if (!silent) {
+        if (d.ok_count > 0 && d.fail_count === 0) toast(d.summary || '延迟测试完成')
+        else toast(d.summary || '延迟测试完成（有失败）', 'error')
+      }
     } catch (err) {
       setLatency({ summary: err.message, ok_count: 0, fail_count: 1, results: [] })
-      toast(err.message, 'error')
+      if (!silent) toast(err.message, 'error')
     } finally {
       setProbing(false)
     }
   }
+
+  // Auto-measure public latency once instances are loaded.
+  useEffect(() => {
+    if (!svc || !instances.length) return
+    probeLatency({ silent: true, mode: 'public' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, svc?.id, instances.length])
 
   if (svc === null) {
     return (
@@ -279,9 +289,19 @@ export default function ProxyServiceDetail() {
                 type="button"
                 className="btn-secondary text-sm"
                 disabled={probing || instances.length === 0}
-                onClick={probeLatency}
+                onClick={() => probeLatency({ mode: 'public' })}
+                title="面板直连分享地址:端口，测公网 TCP 延迟"
               >
-                {probing ? '测试中…' : '测试'}
+                {probing ? '测延迟…' : '测延迟'}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                disabled={probing || instances.length === 0}
+                onClick={() => probeLatency({ mode: 'local' })}
+                title="节点 agent 本机探测监听端口（核心是否存活）"
+              >
+                本机探测
               </button>
               <button type="button" className="btn-secondary text-sm" onClick={syncRepo}>
                 同步到落地仓库
@@ -445,16 +465,38 @@ export default function ProxyServiceDetail() {
                           ) : null}
                         </td>
                         <td className="text-[12px] font-mono whitespace-nowrap">
-                          {probing ? (
+                          {probing && !latR ? (
                             <span className="text-ink-mut">…</span>
                           ) : !latR ? (
-                            <span className="text-ink-mut">—</span>
+                            <button
+                              type="button"
+                              className="text-emerald-600 font-semibold"
+                              disabled={probing}
+                              onClick={() => probeLatency({ mode: 'public' })}
+                              title="点击测公网延迟"
+                            >
+                              测延迟
+                            </button>
                           ) : latR.ok ? (
-                            <span className="text-emerald-700 dark:text-emerald-300">{latR.latency_ms} ms</span>
+                            <button
+                              type="button"
+                              className="text-emerald-700 dark:text-emerald-300 font-semibold tabular-nums"
+                              disabled={probing}
+                              onClick={() => probeLatency({ mode: 'public' })}
+                              title={latR.target ? `目标 ${latR.target} · 点击重测` : '点击重测'}
+                            >
+                              {latR.latency_ms} ms
+                            </button>
                           ) : (
-                            <span className="text-rose-600" title={latR.error}>
+                            <button
+                              type="button"
+                              className="text-rose-600 font-semibold"
+                              disabled={probing}
+                              onClick={() => probeLatency({ mode: 'public' })}
+                              title={latR.error || '失败 · 点击重测'}
+                            >
                               失败
-                            </span>
+                            </button>
                           )}
                         </td>
                         <td className="whitespace-nowrap">
