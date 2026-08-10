@@ -342,6 +342,66 @@ func DeleteProxyInstance(d *sql.DB, id int64) error {
 	return err
 }
 
+// SubExportNode is one ready, sub-visible proxy instance the user may import.
+type SubExportNode struct {
+	InstanceID int64  `json:"instance_id"`
+	ServiceID  int64  `json:"service_id"`
+	NodeID     int64  `json:"node_id"`
+	Name       string `json:"name"`
+	Protocol   string `json:"protocol"`
+	URI        string `json:"uri"`
+	ShareHost  string `json:"share_host"`
+	ListenPort int    `json:"listen_port"`
+	NodeName   string `json:"node_name"`
+}
+
+// ListSubVisibleReadyInstancesForUser returns published proxy instances that:
+//   - belong to services with sub_visible=1
+//   - are deploy_status=ready with non-empty uri
+//   - run on a line node the user is granted (user_nodes)
+func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNode, error) {
+	rows, err := d.Query(`
+		SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
+		       COALESCE(n.name, '')
+		FROM proxy_service_instances i
+		JOIN proxy_services s ON s.id = i.service_id
+		JOIN user_nodes g ON g.node_id = i.node_id AND g.user_id = ?
+		LEFT JOIN nodes n ON n.id = i.node_id
+		WHERE s.sub_visible = 1
+		  AND i.deploy_status = ?
+		  AND TRIM(i.uri) != ''
+		ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
+		userID, ProxyDeployReady)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SubExportNode
+	for rows.Next() {
+		var n SubExportNode
+		if err := rows.Scan(
+			&n.InstanceID, &n.ServiceID, &n.NodeID, &n.Name, &n.Protocol,
+			&n.URI, &n.ShareHost, &n.ListenPort, &n.NodeName,
+		); err != nil {
+			return nil, err
+		}
+		// Prefer "Service · Node" when multiple nodes; keep service name if single-ish.
+		svc := strings.TrimSpace(n.Name)
+		node := strings.TrimSpace(n.NodeName)
+		if svc != "" && node != "" {
+			n.Name = svc + " · " + node
+		} else if svc != "" {
+			n.Name = svc
+		} else if node != "" {
+			n.Name = node
+		} else {
+			n.Name = fmt.Sprintf("node-%d", n.NodeID)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // RecomputeProxyServiceStatus sets service status from its instances.
 func RecomputeProxyServiceStatus(d *sql.DB, serviceID int64) error {
 	var total, ready, errN int

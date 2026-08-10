@@ -643,6 +643,13 @@ func (s *Server) Router() http.Handler {
 	r.Get("/v1/binary", s.serveBinary)
 	r.Get("/v1/cores/{type}", s.serveCoreBinary)
 
+	// Public client subscription feeds (token in path; no session / CSRF).
+	// Must stay outside /api so SPA clients and Clash/SR can GET freely.
+	r.Get("/sub/{token}", s.publicSubPlain)
+	r.Get("/sub/{token}/mihomo.yaml", s.publicSubMihomo)
+	r.Get("/sub/{token}/global.yaml", s.publicSubGlobal)
+	r.Get("/sub/{token}/shadowrocket.conf", s.publicSubShadowrocket)
+
 	// --- JSON API ---
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.csrfProtect)
@@ -825,7 +832,14 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/my/token", s.apiMyDeleteToken)
 			r.Post("/my/token/refresh", s.apiMyRefreshToken)
 			r.Post("/my/token/toggle", s.apiMyToggleToken)
-		})
+
+			// Rule subscription (Clash / Shadowrocket / plain)
+			r.Get("/my/subscription", s.apiMyGetSubscription)
+			r.Post("/my/subscription", s.apiMyCreateSubscription)
+			r.Post("/my/subscription/refresh", s.apiMyRefreshSubscription)
+			r.Post("/my/subscription/toggle", s.apiMyToggleSubscription)
+			r.Get("/my/subscription/preview", s.apiMyPreviewSubscription)
+			})
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth)

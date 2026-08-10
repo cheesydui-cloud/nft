@@ -1,0 +1,94 @@
+package subexport
+
+import (
+	"strings"
+	"testing"
+)
+
+func sampleNodes() []Node {
+	return []Node{
+		{
+			Name:     "HK · VLESS",
+			Protocol: "vless",
+			URI:      "vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=abcdefghijklmnopqrstuv&sid=abcd1234&type=tcp#HK",
+		},
+		{
+			Name:     "SS-1",
+			Protocol: "shadowsocks",
+			URI:      "ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206QUFBQUFBQUFBQUFBQUFBQUFBQUE=@5.6.7.8:8388#SS1",
+		},
+		{
+			Name:     "mieru-skip",
+			Protocol: "mieru",
+			URI:       "mierus://u:p@9.9.9.9?profile=x",
+		},
+	}
+}
+
+func TestPlainBase64(t *testing.T) {
+	b64 := PlainBase64(sampleNodes())
+	if b64 == "" {
+		t.Fatal("empty b64")
+	}
+	raw := PlainRaw(sampleNodes())
+	if !strings.Contains(raw, "vless://") || !strings.Contains(raw, "ss://") {
+		t.Fatalf("raw missing uris: %s", raw)
+	}
+}
+
+func TestClashSplit(t *testing.T) {
+	yml := ClashSplit(sampleNodes(), Options{Username: "alice", Panel: "nft"})
+	for _, want := range []string{
+		"mixed-port: 7890",
+		"type: vless",
+		"type: ss",
+		"GEOIP,CN,DIRECT",
+		"MATCH,PROXY",
+		"mieru",
+	} {
+		if !strings.Contains(yml, want) {
+			t.Fatalf("missing %q in:\n%s", want, yml)
+		}
+	}
+	// mieru should be comment-only, not a proxy entry type
+	if strings.Contains(yml, "type: mieru") {
+		t.Fatal("should not emit mieru proxy type")
+	}
+}
+
+func TestClashGlobalNoCN(t *testing.T) {
+	yml := ClashGlobal(sampleNodes(), Options{Username: "bob"})
+	if strings.Contains(yml, "GEOIP,CN,DIRECT") {
+		t.Fatal("global should not have CN direct")
+	}
+	if !strings.Contains(yml, "MATCH,PROXY") {
+		t.Fatal("need MATCH PROXY")
+	}
+	if !strings.Contains(yml, "1.1.1.1") {
+		t.Fatal("want cloudflare dns")
+	}
+}
+
+func TestShadowrocketConf(t *testing.T) {
+	conf := ShadowrocketConf(sampleNodes(), Options{Username: "fs", Panel: "nft"})
+	for _, want := range []string{
+		"[General]",
+		"[Proxy]",
+		"[Rule]",
+		"FINAL,Proxy",
+		"vless,",
+		"ss,",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("missing %q\n%s", want, conf)
+		}
+	}
+}
+
+func TestURIToClashVLESS(t *testing.T) {
+	uri := "vless://u@1.2.3.4:443?security=reality&sni=a.com&pbk=pk&sid=ab&type=tcp&flow=xtls-rprx-vision#n"
+	y := URIToClashProxy(uri, "n1")
+	if !strings.Contains(y, "type: vless") || !strings.Contains(y, "reality-opts") {
+		t.Fatal(y)
+	}
+}
