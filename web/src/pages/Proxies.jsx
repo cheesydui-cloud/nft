@@ -138,75 +138,51 @@ export default function Proxies() {
     }).filter(Boolean).join('\n')
   }
 
-  // Build full Clash profile from current filtered list (relay URI preferred).
-  const collectClashItems = () => {
-    const items = []
-    for (const n of filtered) {
-      if (n.kind === 'relay') {
-        if (!n.relay) continue
-        const expiresAt = relayExpiryFromMap(expiryMap, n.host, n.port)
-        // Use same display naming as relay copy when possible.
-        let name = n.name || n.ruleName || 'relay'
-        if (user?.username && n.ruleName) name = `${user.username}-${n.ruleName}`
-        items.push({ name, uri: n.relay, protocol: n.protocol, expiresAt })
-      } else if (n.uri) {
-        items.push({ name: n.name || 'proxy', uri: n.uri, protocol: n.protocol })
-      }
+  // Single-row Mihomo profile: one proxy + full anti-DNS-leak rules.
+  const proxyItemForClash = (n) => {
+    if (n.kind === 'relay') {
+      if (!n.relay) return null
+      let name = n.name || n.ruleName || 'relay'
+      if (user?.username && n.ruleName) name = `${user.username}-${n.ruleName}`
+      return { name, uri: n.relay, protocol: n.protocol }
     }
-    return items
+    if (!n.uri) return null
+    return { name: n.name || 'proxy', uri: n.uri, protocol: n.protocol }
   }
 
-  const downloadClashYaml = (mode) => {
-    const items = collectClashItems()
-    if (items.length === 0) {
-      toast('当前列表没有可导出的代理', 'error')
+  const canClashYaml = (n) => {
+    const item = proxyItemForClash(n)
+    if (!item) return false
+    const proto = String(item.protocol || '').toLowerCase()
+    const uri = (item.uri || '').toLowerCase()
+    if (proto === 'mieru' || uri.startsWith('mierus://') || uri.startsWith('mieru://')) return false
+    return !!uriToClashYaml(item.uri)
+  }
+
+  const downloadRowYaml = (n) => {
+    const item = proxyItemForClash(n)
+    if (!item) {
+      toast('该代理无可导出链接', 'error')
       return
     }
-    const { yaml, count, skipped } = buildClashProfile(items, {
-      mode,
+    const { yaml, count, skipped } = buildClashProfile([item], {
+      mode: 'global',
       username: user?.username,
       brand: 'nft-panel',
     })
     if (count === 0) {
       toast(
         skipped > 0
-          ? `没有 Clash 可识别节点（${skipped} 条为 mieru 或不支持协议）`
-          : '没有 Clash 可识别节点',
+          ? 'Mihomo/Clash 不支持 mieru，请用复制链接或规则订阅'
+          : '该协议无法生成 Mihomo YAML',
         'error',
       )
       return
     }
-    const tag = mode === 'split' ? 'split' : 'global'
-    const file = `clash-${tag}-${user?.username || 'user'}.yaml`
+    const safe = String(item.name || 'proxy').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 48)
+    const file = `mihomo-${safe}.yaml`
     downloadTextFile(file, yaml)
-    toast(
-      skipped > 0
-        ? `已下载 ${file}（${count} 节点，跳过 ${skipped}）`
-        : `已下载 ${file}（${count} 节点）`,
-    )
-  }
-
-  const copyClashYaml = async (mode) => {
-    const items = collectClashItems()
-    if (items.length === 0) {
-      toast('当前列表没有可导出的代理', 'error')
-      return
-    }
-    const { yaml, count, skipped } = buildClashProfile(items, {
-      mode,
-      username: user?.username,
-      brand: 'nft-panel',
-    })
-    if (count === 0) {
-      toast('没有 Clash 可识别节点', 'error')
-      return
-    }
-    try {
-      await copyToClipboard(yaml)
-      toast(skipped > 0 ? `已复制完整 YAML（${count} 节点，跳过 ${skipped}）` : `已复制完整 YAML（${count} 节点）`)
-    } catch {
-      toast('复制失败', 'error')
-    }
+    toast(`已下载 ${file}（导入 Mihomo/Clash 即可使用）`)
   }
 
   return (
@@ -217,7 +193,7 @@ export default function Proxies() {
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索名称、协议、地址…" />
         </PanelToolbar>
-        <div className="flex flex-wrap items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
+        <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['all', '全部', allProxies.length], ['direct', '直连', directProxies.length], ['relay', '中转', relayProxies.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
@@ -225,44 +201,18 @@ export default function Proxies() {
               }`}>{label} {n}</button>
           ))}
           {filtered.length > 0 && (
-            <div className="ml-auto flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                title="下载完整 Clash/Mihomo 配置：全局防泄漏（DNS fake-ip + respect-rules + 无国内直连）"
-                onClick={() => downloadClashYaml('global')}
-                className="px-3 py-0.5 rounded text-xs border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 transition-colors font-semibold"
-              >
-                下载 YAML（防泄漏）
-              </button>
-              <button
-                type="button"
-                title="下载完整 Clash 配置：国内 DIRECT 分流（仍防 DNS 泄漏）"
-                onClick={() => downloadClashYaml('split')}
-                className="px-3 py-0.5 rounded text-xs border border-line bg-surface text-ink-soft hover:border-ink-mut transition-colors"
-              >
-                下载 YAML（分流）
-              </button>
-              <button
-                type="button"
-                title="复制完整防泄漏 YAML 到剪贴板"
-                onClick={() => copyClashYaml('global')}
-                className="px-3 py-0.5 rounded text-xs border border-line bg-surface text-ink-soft hover:border-ink-mut transition-colors"
-              >
-                复制 YAML
-              </button>
-              <button
-                type="button"
-                title="一次复制当前列表全部链接，适合批量导入电脑端"
-                onClick={() => {
-                  const all = copyAllText()
-                  if (!all) { toast('没有可复制的内容', 'error'); return }
-                  copyToClipboard(all).then(() => toast(`已复制 ${filtered.length} 条`)).catch(() => toast('复制失败', 'error'))
-                }}
-                className="px-3 py-0.5 rounded text-xs border border-line bg-surface text-ink-soft hover:border-ink-mut transition-colors"
-              >
-                复制全部
-              </button>
-            </div>
+            <button
+              type="button"
+              title="一次复制当前列表全部链接，适合批量导入电脑端"
+              onClick={() => {
+                const all = copyAllText()
+                if (!all) { toast('没有可复制的内容', 'error'); return }
+                copyToClipboard(all).then(() => toast(`已复制 ${filtered.length} 条`)).catch(() => toast('复制失败', 'error'))
+              }}
+              className="ml-auto px-3 py-0.5 rounded text-xs border border-line bg-surface text-ink-soft hover:border-ink-mut transition-colors"
+            >
+              复制全部
+            </button>
           )}
         </div>
 
@@ -309,7 +259,28 @@ export default function Proxies() {
                         : <Badge color="blue">直连</Badge>}
                     </td>
                     <td className="text-right">
-                      <div className="inline-flex items-center gap-4 justify-end">
+                      <div className="inline-flex items-center gap-3 justify-end">
+                        {canClashYaml(n) ? (
+                          <button
+                            type="button"
+                            onClick={() => downloadRowYaml(n)}
+                            className="text-emerald-600 font-sans text-xs font-semibold hover:underline"
+                            title="下载单节点完整 Mihomo/Clash YAML（含 DNS 防泄漏），导入即可使用该代理"
+                          >
+                            下载 YAML
+                          </button>
+                        ) : (
+                          <span
+                            className="text-ink-mut font-sans text-xs font-semibold opacity-40 cursor-not-allowed"
+                            title={
+                              String(n.protocol || '').toLowerCase() === 'mieru'
+                                ? 'Mihomo 不支持 mieru，请用复制链接'
+                                : '该协议无法生成 Mihomo YAML'
+                            }
+                          >
+                            下载 YAML
+                          </span>
+                        )}
                         <QRCodeButton
                           text={qr}
                           toast={toast}
