@@ -195,7 +195,7 @@ export default function Proxies() {
       return
     }
     const { yaml, count, skipped } = buildClashProfile([item], {
-      mode: 'global',
+      mode: 'split',
       username: user?.username,
       brand: 'nft-panel',
     })

@@ -78,15 +78,16 @@ function mieruToYaml(uri) {
 
   if (!name) name = params.profile || host
 
+  // Field order matches mieru-panel / Mihomo docs.
   const L = []
   L.push(`- name: "${esc(name)}"`)
   L.push(`  type: mieru`)
-  L.push(`  server: ${host}`)
+  L.push(`  server: "${esc(host)}"`)
   L.push(`  port: ${port}`)
-  L.push(`  transport: ${transport}`)
   L.push(`  username: "${esc(username)}"`)
   L.push(`  password: "${esc(password)}"`)
-  L.push(`  multiplexing: MULTIPLEXING_LOW`)
+  L.push(`  transport: ${transport}`)
+  L.push(`  multiplexing: MULTIPLEXING_OFF`)
   if (params['traffic-pattern'] || params.trafficPattern) {
     const tp = params['traffic-pattern'] || params.trafficPattern
     const v = Array.isArray(tp) ? tp[0] : tp

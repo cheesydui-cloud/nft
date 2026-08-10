@@ -108,15 +108,16 @@ func mieruToClash(rest, forceName string) string {
 			name = host
 		}
 	}
+	// Field order matches mieru-panel / Mihomo docs.
 	var b strings.Builder
 	fmt.Fprintf(&b, "- name: %s\n", strconv.Quote(name))
 	b.WriteString("  type: mieru\n")
-	fmt.Fprintf(&b, "  server: %s\n", host)
+	fmt.Fprintf(&b, "  server: %s\n", strconv.Quote(host))
 	fmt.Fprintf(&b, "  port: %d\n", port)
-	fmt.Fprintf(&b, "  transport: %s\n", transport)
 	fmt.Fprintf(&b, "  username: %s\n", strconv.Quote(username))
 	fmt.Fprintf(&b, "  password: %s\n", strconv.Quote(password))
-	b.WriteString("  multiplexing: MULTIPLEXING_LOW")
+	fmt.Fprintf(&b, "  transport: %s\n", transport)
+	b.WriteString("  multiplexing: MULTIPLEXING_OFF")
 	if tp := params.Get("traffic-pattern"); tp != "" {
 		fmt.Fprintf(&b, "\n  traffic-pattern: %s", strconv.Quote(tp))
 	}

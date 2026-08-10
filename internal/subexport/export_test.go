@@ -43,8 +43,13 @@ func TestClashSplit(t *testing.T) {
 		"type: vless",
 		"type: ss",
 		"type: mieru",
+		"listen: 0.0.0.0:1053",
+		"GEOSITE,private,DIRECT",
+		"GEOSITE,cn,DIRECT",
 		"GEOIP,CN,DIRECT",
 		"MATCH,PROXY",
+		"multiplexing: MULTIPLEXING_OFF",
+		`name: "PROXY"`,
 	} {
 		if !strings.Contains(yml, want) {
 			t.Fatalf("missing %q in:\n%s", want, yml)
@@ -57,11 +62,12 @@ func TestMieruToClash(t *testing.T) {
 	for _, want := range []string{
 		`name: "PV2"`,
 		"type: mieru",
-		"server: 1.2.3.4",
+		`server: "1.2.3.4"`,
 		"port: 26582",
 		"transport: TCP",
 		`username: "alice"`,
 		`password: "secret"`,
+		"multiplexing: MULTIPLEXING_OFF",
 	} {
 		if !strings.Contains(yml, want) {
 			t.Fatalf("missing %q in:\n%s", want, yml)
@@ -71,7 +77,7 @@ func TestMieruToClash(t *testing.T) {
 
 func TestClashGlobalNoCN(t *testing.T) {
 	yml := ClashGlobal(sampleNodes(), Options{Username: "bob"})
-	if strings.Contains(yml, "GEOIP,CN,DIRECT") {
+	if strings.Contains(yml, "GEOSITE,cn,DIRECT") || strings.Contains(yml, "GEOIP,CN,DIRECT") {
 		t.Fatal("global should not have CN direct")
 	}
 	if !strings.Contains(yml, "MATCH,PROXY") {
@@ -82,6 +88,9 @@ func TestClashGlobalNoCN(t *testing.T) {
 	}
 	if !strings.Contains(yml, "type: mieru") {
 		t.Fatal("global should include mieru proxies")
+	}
+	if !strings.Contains(yml, "respect-rules: true") {
+		t.Fatal("global should respect-rules for anti-leak DNS")
 	}
 }
 
