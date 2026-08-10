@@ -1,6 +1,8 @@
 package proxysvc
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -8,7 +10,8 @@ import (
 )
 
 // BuildXrayVLESSConfig builds a standalone xray-core JSON config for one VLESS inbound.
-// Deploy currently requires REALITY; transports tcp/ws/httpupgrade/xhttp are supported.
+// Deploy requires REALITY. Xray-core REALITY only accepts tcp (RAW) / xhttp / gRPC —
+// ws and httpupgrade are rejected early with a clear error (xray 26.x).
 func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	var c VLESSConfig
 	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -30,8 +33,9 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if sec != "reality" {
 		return nil, fmt.Errorf("目前部署仅支持 REALITY（security=reality），got %q", c.Security)
 	}
-	if c.PrivateKey == "" {
-		return nil, fmt.Errorf("reality private_key missing")
+	privKey, err := normalizeRealityPrivateKey(strings.TrimSpace(c.PrivateKey))
+	if err != nil {
+		return nil, err
 	}
 	sni := strings.TrimSpace(c.ServerName)
 	if sni == "" {
@@ -46,20 +50,30 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if network == "" {
 		network = "tcp"
 	}
+	// Xray REALITY: "REALITY only supports RAW, XHTTP and gRPC for now."
+	// We expose tcp + xhttp in the panel; reject the rest before writing config.
 	switch network {
-	case "tcp", "ws", "httpupgrade", "xhttp":
+	case "tcp", "xhttp":
+	case "ws", "httpupgrade", "websocket":
+		return nil, fmt.Errorf(
+			"Xray REALITY 不支持传输层 %q（仅 tcp / xhttp）。请改回 tcp（推荐）或 xhttp 后重新发布",
+			network,
+		)
 	default:
-		return nil, fmt.Errorf("unsupported network %q (tcp/ws/httpupgrade/xhttp)", network)
+		return nil, fmt.Errorf("unsupported network %q for REALITY (tcp/xhttp)", network)
 	}
 
 	// Vision flow is only valid with tcp (+ REALITY). Strip on other transports
 	// so xray does not reject the config.
 	flow := strings.TrimSpace(c.Flow)
-	if flow == "none" || flow == "off" {
+	if flow == "none" || flow == "off" || flow == "关" || flow == "-" {
 		flow = ""
 	}
 	if network != "tcp" {
 		flow = ""
+	}
+	if flow != "" && flow != "xtls-rprx-vision" {
+		return nil, fmt.Errorf("unsupported flow %q（仅 xtls-rprx-vision 或关）", flow)
 	}
 	client := map[string]any{"id": c.UUID}
 	if flow != "" {
@@ -67,6 +81,11 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	}
 
 	sid := strings.TrimSpace(c.ShortID)
+	if sid != "" {
+		if err := validateRealityShortID(sid); err != nil {
+			return nil, err
+		}
+	}
 	var shortIDs []string
 	if sid == "" {
 		shortIDs = []string{""}
@@ -83,17 +102,16 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		maxDiff = 60000
 	}
 
+	// Server-side REALITY: dest/serverNames/privateKey/shortIds only.
+	// spiderX / fingerprint are client outbound fields — do not put them here.
 	reality := map[string]any{
 		"show":        false,
 		"dest":        dest,
 		"xver":        0,
 		"serverNames": []string{sni},
-		"privateKey":  c.PrivateKey,
+		"privateKey":  privKey,
 		"shortIds":    shortIDs,
 		"maxTimeDiff": maxDiff,
-	}
-	if spx := strings.TrimSpace(c.SpiderX); spx != "" {
-		reality["spiderX"] = spx
 	}
 
 	stream := map[string]any{
@@ -107,20 +125,7 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		path = "/"
 	}
 	hostHdr := strings.TrimSpace(c.Host)
-	switch network {
-	case "ws":
-		ws := map[string]any{"path": path}
-		if hostHdr != "" {
-			ws["headers"] = map[string]any{"Host": hostHdr}
-		}
-		stream["wsSettings"] = ws
-	case "httpupgrade":
-		hu := map[string]any{"path": path}
-		if hostHdr != "" {
-			hu["host"] = hostHdr
-		}
-		stream["httpupgradeSettings"] = hu
-	case "xhttp":
+	if network == "xhttp" {
 		mode := strings.TrimSpace(c.XHTTPMode)
 		if mode == "" {
 			mode = "auto"
@@ -135,6 +140,9 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	decryption := strings.TrimSpace(c.Decryption)
 	if decryption == "" {
 		decryption = "none"
+	}
+	if err := validateVLESSDecryption(decryption); err != nil {
+		return nil, err
 	}
 
 	cfg := map[string]any{
@@ -162,6 +170,75 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// normalizeRealityPrivateKey matches xray: base64.RawURLEncoding of exactly 32 bytes.
+// Accepts padded / std alphabet paste and re-encodes to RawURL for the config file.
+func normalizeRealityPrivateKey(priv string) (string, error) {
+	priv = strings.TrimSpace(priv)
+	if priv == "" {
+		return "", fmt.Errorf("reality private_key missing")
+	}
+	raw := strings.TrimRight(priv, "=")
+	if b, err := base64.RawURLEncoding.DecodeString(raw); err == nil && len(b) == 32 {
+		return base64.RawURLEncoding.EncodeToString(b), nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(raw); err == nil && len(b) == 32 {
+		return base64.RawURLEncoding.EncodeToString(b), nil
+	}
+	// std with padding
+	if b, err := base64.StdEncoding.DecodeString(priv); err == nil && len(b) == 32 {
+		return base64.RawURLEncoding.EncodeToString(b), nil
+	}
+	return "", fmt.Errorf("reality private_key 无效（需 xray x25519 输出的 32 字节 base64url）。请点「生成密钥」重新生成")
+}
+
+// validateRealityShortID matches xray: hex, length 0..16 (decoded into 8-byte slot).
+func validateRealityShortID(sid string) error {
+	sid = strings.TrimSpace(sid)
+	if sid == "" {
+		return nil
+	}
+	if len(sid) > 16 {
+		return fmt.Errorf("short_id 过长（最多 16 个十六进制字符）: %q", sid)
+	}
+	if len(sid)%2 != 0 {
+		return fmt.Errorf("short_id 须为偶数位十六进制: %q", sid)
+	}
+	if _, err := hex.DecodeString(sid); err != nil {
+		return fmt.Errorf("short_id 须为十六进制: %q", sid)
+	}
+	return nil
+}
+
+// validateVLESSDecryption accepts "none" or mlkem768x25519plus.* server decryption string.
+func validateVLESSDecryption(dec string) error {
+	dec = strings.TrimSpace(dec)
+	if dec == "" || dec == "none" {
+		return nil
+	}
+	// Client encryption string must not be pasted into server decryption.
+	if strings.HasPrefix(strings.ToLower(dec), "mlkem768x25519plus.") {
+		parts := strings.Split(dec, ".")
+		if len(parts) < 4 {
+			return fmt.Errorf("decryption 格式不完整（mlkem768x25519plus 段数不足）。请用「生成 vlessenc」写入，或清空用 none")
+		}
+		switch parts[1] {
+		case "native", "xorpub", "random":
+		default:
+			return fmt.Errorf("decryption 模式无效 %q（native/xorpub/random）", parts[1])
+		}
+		return nil
+	}
+	return fmt.Errorf("decryption 不支持 %q：须为 none 或 xray vlessenc 的服务端 decryption 整串。勿把客户端 encryption 填到服务端", truncateForErr(dec, 48))
+}
+
+func truncateForErr(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // BuildSingBoxSSConfig builds a standalone sing-box JSON config for one Shadowsocks inbound.

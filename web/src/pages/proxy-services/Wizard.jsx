@@ -109,6 +109,11 @@ export default function ProxyServiceWizard() {
       setSubVisible(!!s.sub_visible)
       try {
         const cfg = typeof s.config_json === 'string' ? JSON.parse(s.config_json) : (s.config_json || {})
+        // Xray REALITY 不支持 ws/httpupgrade；旧配置编辑时自动改回 tcp，避免再发一次必失败
+        if (s.protocol === 'vless' && cfg && (cfg.network === 'ws' || cfg.network === 'httpupgrade' || cfg.network === 'websocket')) {
+          cfg.network = 'tcp'
+          if (!cfg.flow || cfg.flow === 'none') cfg.flow = 'xtls-rprx-vision'
+        }
         setConfig(cfg)
       } catch { /* keep */ }
       setStep(1)
@@ -381,7 +386,7 @@ export default function ProxyServiceWizard() {
                         if (v !== 'tcp' && config.flow === 'xtls-rprx-vision') setCfg('flow', 'none')
                         if (v === 'tcp' && (!config.flow || config.flow === 'none')) setCfg('flow', 'xtls-rprx-vision')
                       }} options={REALITY_NETWORK_OPTIONS} />
-                      <p className="text-[11px] text-ink-mut mt-1">抗封锁默认 tcp；ws/xhttp 会多一层 HTTP 特征，仅在需要时选用</p>
+                      <p className="text-[11px] text-ink-mut mt-1">Xray REALITY 仅支持 tcp / xhttp（默认 tcp 最稳）；勿用 ws</p>
                     </div>
                     <div>
                       <label className="fl block mb-1">flow</label>
@@ -460,9 +465,9 @@ export default function ProxyServiceWizard() {
                     )}
                   </div>
 
-                  {(config.network === 'ws' || config.network === 'httpupgrade' || config.network === 'xhttp') && (
+                  {config.network === 'xhttp' && (
                     <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
-                      <div className="text-sm font-bold">传输层参数 · {config.network}</div>
+                      <div className="text-sm font-bold">传输层参数 · xhttp</div>
                       <div className="grid sm:grid-cols-2 gap-3">
                         <div>
                           <label className="fl block mb-1">path</label>
@@ -472,13 +477,11 @@ export default function ProxyServiceWizard() {
                           <label className="fl block mb-1">host（可选）</label>
                           <input className="input-field font-mono" value={config.host || ''} onChange={e => setCfg('host', e.target.value)} placeholder="默认与 SNI 一致时可留空" />
                         </div>
-                        {config.network === 'xhttp' && (
-                          <div>
-                            <label className="fl block mb-1">xhttp mode</label>
-                            <Select value={config.xhttp_mode || 'auto'} onChange={v => setCfg('xhttp_mode', v)}
-                              options={['auto', 'packet-up', 'stream-up', 'stream-one'].map(v => ({ value: v, label: v }))} />
-                          </div>
-                        )}
+                        <div>
+                          <label className="fl block mb-1">xhttp mode</label>
+                          <Select value={config.xhttp_mode || 'auto'} onChange={v => setCfg('xhttp_mode', v)}
+                            options={['auto', 'packet-up', 'stream-up', 'stream-one'].map(v => ({ value: v, label: v }))} />
+                        </div>
                       </div>
                     </div>
                   )}

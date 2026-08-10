@@ -38,9 +38,9 @@ export const REALITY_FP_OPTIONS = [
   'chrome', 'firefox', 'edge', 'safari', '360', 'qq', 'ios', 'android', 'random', 'randomized',
 ]
 
+// Xray-core REALITY only supports RAW(tcp) / XHTTP / gRPC (v26.x).
+// ws / httpupgrade + REALITY → "Failed to start: main … REALITY only supports …"
 export const REALITY_NETWORK_OPTIONS = [
   { value: 'tcp', label: 'tcp（裸 TCP · 推荐）' },
-  { value: 'ws', label: 'ws（WebSocket）' },
-  { value: 'httpupgrade', label: 'httpupgrade' },
-  { value: 'xhttp', label: 'xhttp（仅 xray）' },
+  { value: 'xhttp', label: 'xhttp' },
 ]

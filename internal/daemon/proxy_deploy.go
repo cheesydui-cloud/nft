@@ -168,7 +168,10 @@ func looksLikeConfigError(out string) bool {
 	return strings.Contains(s, "failed") ||
 		strings.Contains(s, "invalid") ||
 		strings.Contains(s, "error") ||
-		strings.Contains(s, "panic")
+		strings.Contains(s, "panic") ||
+		strings.Contains(s, "unsupported") ||
+		strings.Contains(s, "only supports") ||
+		strings.Contains(s, "empty ")
 }
 
 // stopPIDFile kills a previously started core process if the pid file is still live.

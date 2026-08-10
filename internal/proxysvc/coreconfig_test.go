@@ -132,24 +132,61 @@ func TestBuildXrayVLESSConfigShortIDsStrict(t *testing.T) {
 	}
 }
 
-func TestBuildXrayVLESSConfigWS(t *testing.T) {
+func TestBuildXrayVLESSConfigRejectsWSWithREALITY(t *testing.T) {
 	priv, pub := GenerateRealityKeyPair()
 	raw, _ := json.Marshal(VLESSConfig{
 		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
 		PrivateKey: priv, PublicKey: pub, ShortID: "ab", Security: "reality",
 		Network: "ws", Path: "/ray", Host: "www.example.com", Flow: "xtls-rprx-vision",
 	})
+	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
+		t.Fatal("expected error for ws+REALITY")
+	} else if !strings.Contains(err.Error(), "tcp") {
+		t.Fatalf("error should mention tcp: %v", err)
+	}
+}
+
+func TestBuildXrayVLESSConfigXHTTP(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "ab", Security: "reality",
+		Network: "xhttp", Path: "/ray", Host: "www.example.com", XHTTPMode: "auto",
+		Flow: "xtls-rprx-vision",
+	})
 	cfg, err := BuildXrayVLESSConfig(443, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(cfg)
-	if !strings.Contains(s, `"wsSettings"`) || !strings.Contains(s, "/ray") {
-		t.Fatalf("missing ws settings: %s", s)
+	if !strings.Contains(s, `"xhttpSettings"`) || !strings.Contains(s, "/ray") {
+		t.Fatalf("missing xhttp settings: %s", s)
 	}
 	// flow must be stripped on non-tcp
 	if strings.Contains(s, "xtls-rprx-vision") {
-		t.Fatal("vision should not appear on ws")
+		t.Fatal("vision should not appear on xhttp")
+	}
+}
+
+func TestBuildXrayVLESSConfigInvalidPrivateKey(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: "not-a-key", ShortID: "ab", Security: "reality", Network: "tcp",
+	})
+	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
+		t.Fatal("expected invalid private_key error")
+	}
+}
+
+func TestBuildXrayVLESSConfigInvalidDecryption(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality", Network: "tcp",
+		Decryption: "mlkem-client-encryption-string-pasted-wrong",
+	})
+	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
+		t.Fatal("expected invalid decryption error")
 	}
 }
 

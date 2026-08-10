@@ -278,8 +278,72 @@ func runCmdTimeout(d time.Duration, name string, args ...string) (string, error)
 
 func truncateOut(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) > 240 {
-		return s[:240] + "…"
+	if s == "" {
+		return s
 	}
-	return s
+	// xray prints a long version banner first; the real error is usually at the end.
+	// Prefer the most informative tail so UI shows "Failed to start: …" not the banner.
+	useful := extractUsefulCoreErr(s)
+	if len(useful) > 480 {
+		return useful[len(useful)-480:]
+	}
+	return useful
+}
+
+// extractUsefulCoreErr drops xray version banners and keeps failure lines.
+func extractUsefulCoreErr(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	// Prefer lines that look like actual failures.
+	lines := strings.Split(s, "\n")
+	var keep []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		low := strings.ToLower(t)
+		// Skip pure version banner lines.
+		if strings.HasPrefix(t, "Xray ") && strings.Contains(t, "Xray, Penetrates") {
+			continue
+		}
+		if strings.Contains(low, "a unified platform for anti-censorship") {
+			continue
+		}
+		if strings.Contains(low, "failed") ||
+			strings.Contains(low, "invalid") ||
+			strings.Contains(low, "error") ||
+			strings.Contains(low, "panic") ||
+			strings.Contains(low, "unsupported") ||
+			strings.Contains(low, "empty ") ||
+			strings.Contains(low, "please ") ||
+			strings.Contains(low, "only supports") {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) > 0 {
+		return strings.Join(keep, " | ")
+	}
+	// Fallback: last non-empty line(s), not the head (banner).
+	var nonEmpty []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t != "" {
+			nonEmpty = append(nonEmpty, t)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return s
+	}
+	if len(nonEmpty) == 1 {
+		return nonEmpty[0]
+	}
+	// last up to 3 lines
+	start := len(nonEmpty) - 3
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(nonEmpty[start:], " | ")
 }
