@@ -137,7 +137,7 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		stream["xhttpSettings"] = xh
 	}
 
-	decryption := strings.TrimSpace(c.Decryption)
+	decryption := normalizeVLESSEncToken(c.Decryption)
 	if decryption == "" {
 		decryption = "none"
 	}
@@ -211,22 +211,53 @@ func validateRealityShortID(sid string) error {
 	return nil
 }
 
+// normalizeVLESSEncToken strips whitespace and surrounding quotes that some
+// xray vlessenc outputs (or copy-paste) wrap around the material.
+func normalizeVLESSEncToken(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		if len(s) >= 2 {
+			if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+				s = strings.TrimSpace(s[1 : len(s)-1])
+				continue
+			}
+		}
+		// Leading quote only (truncated paste / regex capture of "token)
+		if strings.HasPrefix(s, "\"") || strings.HasPrefix(s, "'") {
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		if strings.HasSuffix(s, "\"") || strings.HasSuffix(s, "'") {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		break
+	}
+	return s
+}
+
 // validateVLESSDecryption accepts "none" or mlkem768x25519plus.* server decryption string.
 func validateVLESSDecryption(dec string) error {
-	dec = strings.TrimSpace(dec)
+	dec = normalizeVLESSEncToken(dec)
 	if dec == "" || dec == "none" {
 		return nil
 	}
 	// Client encryption string must not be pasted into server decryption.
-	if strings.HasPrefix(strings.ToLower(dec), "mlkem768x25519plus.") {
+	// Client material often contains "0rtt"; server uses "600s" (or similar) in segment 2.
+	low := strings.ToLower(dec)
+	if strings.HasPrefix(low, "mlkem768x25519plus.") {
 		parts := strings.Split(dec, ".")
 		if len(parts) < 4 {
 			return fmt.Errorf("decryption 格式不完整（mlkem768x25519plus 段数不足）。请用「生成 vlessenc」写入，或清空用 none")
 		}
-		switch parts[1] {
+		switch strings.ToLower(parts[1]) {
 		case "native", "xorpub", "random":
 		default:
 			return fmt.Errorf("decryption 模式无效 %q（native/xorpub/random）", parts[1])
+		}
+		// Heuristic: client encryption usually has "0rtt" in the third segment.
+		if strings.EqualFold(parts[2], "0rtt") {
+			return fmt.Errorf("decryption 看起来是客户端 encryption（含 0rtt）。服务端应填 vlessenc 的 Decryption（通常含 600s），请点「生成 vlessenc」或对调字段")
 		}
 		return nil
 	}

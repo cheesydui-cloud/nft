@@ -132,12 +132,35 @@ func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
 			decryption = tokens[1]
 		}
 	}
-	encryption = strings.TrimSpace(encryption)
-	decryption = strings.TrimSpace(decryption)
+	encryption = stripEncQuotes(encryption)
+	decryption = stripEncQuotes(decryption)
 	if encryption == "" || decryption == "" {
 		return "", "", false
 	}
 	return encryption, decryption, true
+}
+
+// stripEncQuotes removes surrounding " / ' that some xray builds print around material.
+func stripEncQuotes(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		if len(s) >= 2 {
+			if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+				s = strings.TrimSpace(s[1 : len(s)-1])
+				continue
+			}
+		}
+		if strings.HasPrefix(s, "\"") || strings.HasPrefix(s, "'") {
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		if strings.HasSuffix(s, "\"") || strings.HasSuffix(s, "'") {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		break
+	}
+	return s
 }
 
 func truncateRunes(s string, n int) string {

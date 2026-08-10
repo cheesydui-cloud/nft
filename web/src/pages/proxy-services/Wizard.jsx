@@ -149,8 +149,20 @@ export default function ProxyServiceWizard() {
         setCfg('short_id', d.short_id)
         toast('已生成 short_id')
       } else if (kind === 'vlessenc') {
-        setCfg('encryption', d.encryption || '')
-        setCfg('decryption', d.decryption || '')
+        const stripQ = (s) => {
+          let v = String(s || '').trim()
+          while (
+            (v.startsWith('"') && v.endsWith('"')) ||
+            (v.startsWith("'") && v.endsWith("'"))
+          ) {
+            v = v.slice(1, -1).trim()
+          }
+          while (v.startsWith('"') || v.startsWith("'")) v = v.slice(1).trim()
+          while (v.endsWith('"') || v.endsWith("'")) v = v.slice(0, -1).trim()
+          return v
+        }
+        setCfg('encryption', stripQ(d.encryption))
+        setCfg('decryption', stripQ(d.decryption))
         toast(d.xray_version ? `已生成 vlessenc（xray ${d.xray_version}）` : '已生成 vlessenc')
       } else {
         setCfg('private_key', d.private_key)

@@ -190,6 +190,35 @@ func TestBuildXrayVLESSConfigInvalidDecryption(t *testing.T) {
 	}
 }
 
+func TestBuildXrayVLESSConfigQuotedDecryption(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	// xray / paste often wraps material in quotes — must accept after strip.
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality", Network: "tcp",
+		Decryption: `"mlkem768x25519plus.native.600s.4MioaxQX0R2H6A1xAukJgb"`,
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `"decryption": "mlkem768x25519plus.native.600s.4MioaxQX0R2H6A1xAukJgb"`) {
+		t.Fatalf("expected stripped decryption in config:\n%s", cfg)
+	}
+}
+
+func TestBuildXrayVLESSConfigRejectsClientEncInDecryption(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality", Network: "tcp",
+		Decryption: "mlkem768x25519plus.native.0rtt.ySi246clientOnly",
+	})
+	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
+		t.Fatal("expected reject client encryption pasted as decryption")
+	}
+}
+
 func TestEnsureSecretsKeyPairAlwaysMatched(t *testing.T) {
 	// Only private provided → both replaced with a matched pair
 	raw, err := EnsureSecrets("vless", json.RawMessage(`{"server_name":"a.com","private_key":"only-priv"}`))
