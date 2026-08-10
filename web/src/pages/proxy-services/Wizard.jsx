@@ -159,10 +159,30 @@ export default function ProxyServiceWizard() {
           }
           while (v.startsWith('"') || v.startsWith("'")) v = v.slice(1).trim()
           while (v.endsWith('"') || v.endsWith("'")) v = v.slice(0, -1).trim()
+          while (v.endsWith(',')) v = v.slice(0, -1).trim()
           return v
         }
-        setCfg('encryption', stripQ(d.encryption))
-        setCfg('decryption', stripQ(d.decryption))
+        // Client = 0rtt/1rtt; server = ticket lifetime (e.g. 600s). Never trust API order alone.
+        let enc = stripQ(d.encryption)
+        let dec = stripQ(d.decryption)
+        const looksClient = (s) => {
+          const p = String(s || '').toLowerCase().split('.')
+          return p.length >= 3 && (p[2] === '0rtt' || p[2] === '1rtt')
+        }
+        const looksServer = (s) => {
+          const p = String(s || '').toLowerCase().split('.')
+          if (p.length < 3) return false
+          if (p[2] === '0rtt' || p[2] === '1rtt') return false
+          return p[2].endsWith('s') || p[2].includes('-')
+        }
+        if ((looksServer(enc) && looksClient(dec)) || (looksClient(dec) && !looksClient(enc))) {
+          ;[enc, dec] = [dec, enc]
+        }
+        if (!looksClient(enc) || !looksServer(dec)) {
+          toast('vlessenc 密钥角色异常（encryption 应含 0rtt，decryption 应含 600s）', 'error')
+        }
+        setCfg('encryption', enc)
+        setCfg('decryption', dec)
         toast(d.xray_version ? `已生成 vlessenc（xray ${d.xray_version}）` : '已生成 vlessenc')
       } else {
         setCfg('private_key', d.private_key)

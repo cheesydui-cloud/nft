@@ -156,13 +156,30 @@ func (s *Server) apiUpdateProxyService(w http.ResponseWriter, r *http.Request) {
 	if body.SubVisible != nil {
 		sub = *body.SubVisible
 	}
-	if err := db.UpdateProxyService(s.DB, id, name, cfg, sub); err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
+		if err := db.UpdateProxyService(s.DB, id, name, cfg, sub); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Rebuild instance share URIs so encryption/decryption/flow changes take effect
+		// without requiring a full re-publish (node still needs re-publish for server config).
+		if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
+			for _, it := range inst {
+				if it == nil || it.ShareHost == "" || it.ListenPort <= 0 {
+					continue
+				}
+				uri, uriErr := proxysvc.BuildShareURI(svc.Protocol, name, it.ShareHost, it.ListenPort, cfg)
+				if uriErr != nil {
+					continue
+				}
+				_ = db.UpdateProxyInstanceURI(s.DB, it.ID, uri)
+			}
+		}
+		svc, _ = db.GetProxyService(s.DB, id)
+		if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
+			svc.Instances = inst
+		}
+		jsonOK(w, map[string]any{"service": svc})
 	}
-	svc, _ = db.GetProxyService(s.DB, id)
-	jsonOK(w, map[string]any{"service": svc})
-}
 
 // apiDeleteProxyService removes a service and instances.
 func (s *Server) apiDeleteProxyService(w http.ResponseWriter, r *http.Request) {

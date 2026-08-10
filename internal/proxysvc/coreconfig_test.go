@@ -209,6 +209,7 @@ func TestBuildXrayVLESSConfigQuotedDecryption(t *testing.T) {
 
 func TestBuildXrayVLESSConfigRejectsClientEncInDecryption(t *testing.T) {
 	priv, pub := GenerateRealityKeyPair()
+	// Only client string in decryption (no pair to auto-swap) → reject.
 	raw, _ := json.Marshal(VLESSConfig{
 		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
 		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality", Network: "tcp",
@@ -216,6 +217,49 @@ func TestBuildXrayVLESSConfigRejectsClientEncInDecryption(t *testing.T) {
 	})
 	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
 		t.Fatal("expected reject client encryption pasted as decryption")
+	}
+}
+
+// Swapped encryption/decryption fields must auto-correct so server gets 600s.
+func TestBuildXrayVLESSConfigSwappedPairAutoAlign(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality", Network: "tcp",
+		// Intentionally swapped (broken paste / old parser).
+		Encryption: "mlkem768x25519plus.native.600s.ServerKeyMaterialAAAAAAA",
+		Decryption: "mlkem768x25519plus.native.0rtt.ClientKeyMaterialBBBBBBB",
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `"decryption": "mlkem768x25519plus.native.600s.ServerKeyMaterialAAAAAAA"`) {
+		t.Fatalf("expected server 600s as decryption after align:\n%s", cfg)
+	}
+	if strings.Contains(string(cfg), "0rtt") {
+		t.Fatalf("server config must not contain client 0rtt:\n%s", cfg)
+	}
+}
+
+func TestEnsureSecretsAlignsSwappedVlessEnc(t *testing.T) {
+	raw, err := EnsureSecrets("vless", json.RawMessage(`{
+		"server_name":"www.example.com",
+		"encryption":"mlkem768x25519plus.native.600s.ServerKeyMaterialAAAAAAA",
+		"decryption":"mlkem768x25519plus.native.0rtt.ClientKeyMaterialBBBBBBB"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c VLESSConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.Encryption, "0rtt") {
+		t.Fatalf("encryption should be client 0rtt, got %q", c.Encryption)
+	}
+	if !strings.Contains(c.Decryption, "600s") {
+		t.Fatalf("decryption should be server 600s, got %q", c.Decryption)
 	}
 }
 

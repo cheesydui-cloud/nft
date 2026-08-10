@@ -329,6 +329,13 @@ func UpdateProxyInstanceDeploy(d *sql.DB, id int64, status, uri, lastErr, coreVe
 	return err
 }
 
+// UpdateProxyInstanceURI rewrites only the share URI (e.g. after config edit with encryption change).
+func UpdateProxyInstanceURI(d *sql.DB, id int64, uri string) error {
+	_, err := d.Exec(`UPDATE proxy_service_instances SET uri=?, updated_at=? WHERE id=?`,
+		uri, time.Now().Unix(), id)
+	return err
+}
+
 // SetProxyInstanceSyncedRepo links instance to a node_repo row.
 func SetProxyInstanceSyncedRepo(d *sql.DB, id, repoID int64) error {
 	_, err := d.Exec(`UPDATE proxy_service_instances SET synced_repo_id=?, updated_at=? WHERE id=?`,

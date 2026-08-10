@@ -33,6 +33,8 @@ func generateVlessEncPair() (encryption, decryption, version string, err error) 
 	if !ok {
 		return "", "", version, fmt.Errorf("无法解析 xray vlessenc 输出（version=%s）:\n%s", version, truncateRunes(out, 400))
 	}
+	// Final role guard: 0rtt = client encryption, 600s = server decryption.
+	enc, dec = alignVlessEncRoles(enc, dec)
 	return enc, dec, version, nil
 }
 
@@ -86,58 +88,199 @@ func runXrayCmd(bin string, timeout time.Duration, args ...string) (string, erro
 	}
 }
 
-// parseVlessEncOutput extracts Encryption / Decryption lines from `xray vlessenc`.
+// parseVlessEncOutput extracts client encryption + server decryption from
+// `xray vlessenc` stdout.
+//
+// Real xray output (XTLS/Xray-core main/commands/all/vlessenc.go):
+//
+//	Authentication: X25519, not Post-Quantum
+//	"decryption": "mlkem768x25519plus.native.600s...."
+//	"encryption": "mlkem768x25519plus.native.0rtt...."
+//
+//	Authentication: ML-KEM-768, Post-Quantum
+//	"decryption": "..."
+//	"encryption": "..."
+//
+// Prefer the last complete pair (ML-KEM-768 / Post-Quantum) when present.
+// Never trust token order alone — assign roles via 0rtt / 600s heuristics.
 func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
+	type pair struct{ enc, dec string }
+
+	// 1) Exact xray JSON-ish lines: "decryption": "..." / "encryption": "..."
+	//    Also accept unquoted keys: decryption: ...
+	keyValRe := regexp.MustCompile(`(?i)["']?(decryption|encryption)["']?\s*:\s*["']?([mlkemvlessenc][0-9A-Za-z+./_=-]+)["']?`)
+	// 2) Human labels: Encryption (client): ... / Decryption (server): ...
+	labelRe := regexp.MustCompile(`(?i)\b(encryption|decryption)\b(?:\s*\([^)]*\))?\s*:\s*["']?([mlkemvlessenc][0-9A-Za-z+./_=-]+)["']?`)
+	// 3) Chinese labels
+	zhRe := regexp.MustCompile(`(?i)(客户端|服务端|client|server)\s*[:：]\s*["']?([mlkemvlessenc][0-9A-Za-z+./_=-]+)["']?`)
+
+	var pairs []pair
+	cur := pair{}
+	flush := func() {
+		if cur.enc != "" && cur.dec != "" {
+			pairs = append(pairs, cur)
+			cur = pair{}
+		}
+	}
+
 	lines := strings.Split(out, "\n")
-	encRe := regexp.MustCompile(`(?i)encryption[^:]*:\s*(\S+)`)
-	decRe := regexp.MustCompile(`(?i)decryption[^:]*:\s*(\S+)`)
-	clientRe := regexp.MustCompile(`(?i)(?:client|客户端)[^:]*:\s*(\S+)`)
-	serverRe := regexp.MustCompile(`(?i)(?:server|服务端)[^:]*:\s*(\S+)`)
 	for _, ln := range lines {
 		ln = strings.TrimSpace(ln)
-		if m := encRe.FindStringSubmatch(ln); len(m) == 2 && encryption == "" {
-			encryption = m[1]
+		if ln == "" {
+			flush()
+			continue
 		}
-		if m := decRe.FindStringSubmatch(ln); len(m) == 2 && decryption == "" {
-			decryption = m[1]
+		// New authentication block → previous pair is complete if both set.
+		if strings.Contains(strings.ToLower(ln), "authentication:") {
+			flush()
+			continue
+		}
+
+		matched := false
+		for _, re := range []*regexp.Regexp{keyValRe, labelRe} {
+			if m := re.FindStringSubmatch(ln); len(m) == 3 {
+				role := strings.ToLower(m[1])
+				val := stripEncQuotes(m[2])
+				if val == "" {
+					continue
+				}
+				if role == "encryption" {
+					cur.enc = val
+				} else if role == "decryption" {
+					cur.dec = val
+				}
+				matched = true
+				break
+			}
+		}
+		if matched {
+			if cur.enc != "" && cur.dec != "" {
+				flush()
+			}
+			continue
+		}
+		if m := zhRe.FindStringSubmatch(ln); len(m) == 3 {
+			role := strings.ToLower(m[1])
+			val := stripEncQuotes(m[2])
+			if strings.Contains(role, "client") || strings.Contains(role, "客户端") {
+				cur.enc = val
+			} else if strings.Contains(role, "server") || strings.Contains(role, "服务端") {
+				cur.dec = val
+			}
+			if cur.enc != "" && cur.dec != "" {
+				flush()
+			}
 		}
 	}
-	if encryption == "" || decryption == "" {
-		for _, ln := range lines {
-			ln = strings.TrimSpace(ln)
-			if encryption == "" {
-				if m := clientRe.FindStringSubmatch(ln); len(m) == 2 {
-					encryption = m[1]
-				}
+	flush()
+
+	if len(pairs) > 0 {
+		// Prefer last pair (ML-KEM-768 block is printed after X25519).
+		p := pairs[len(pairs)-1]
+		encryption, decryption = alignVlessEncRoles(p.enc, p.dec)
+		return encryption, decryption, true
+	}
+
+	// Fallback: collect all mlkem tokens and assign by 0rtt/600s role, not order.
+	tokenRe := regexp.MustCompile(`(?i)\b(mlkem768x25519plus\.[0-9A-Za-z+./_=-]+)`)
+	var tokens []string
+	seen := map[string]bool{}
+	for _, ln := range lines {
+		for _, m := range tokenRe.FindAllString(ln, -1) {
+			m = stripEncQuotes(m)
+			if m == "" || seen[m] {
+				continue
 			}
-			if decryption == "" {
-				if m := serverRe.FindStringSubmatch(ln); len(m) == 2 {
-					decryption = m[1]
-				}
-			}
+			seen[m] = true
+			tokens = append(tokens, m)
 		}
 	}
-	if encryption == "" || decryption == "" {
-		tokenRe := regexp.MustCompile(`(?i)\b(mlkem[0-9a-z+./_=-]{20,}|vlessenc[0-9a-z+./_=-]{8,})`)
-		var tokens []string
+	if len(tokens) < 2 {
+		// last-ditch: any mlkem-looking tokens
+		looseRe := regexp.MustCompile(`(?i)\b(mlkem[0-9A-Za-z+./_=-]{20,})`)
 		for _, ln := range lines {
-			for _, m := range tokenRe.FindAllString(ln, -1) {
+			for _, m := range looseRe.FindAllString(ln, -1) {
+				m = stripEncQuotes(m)
+				if m == "" || seen[m] {
+					continue
+				}
+				seen[m] = true
 				tokens = append(tokens, m)
 			}
 		}
-		if encryption == "" && len(tokens) >= 1 {
-			encryption = tokens[0]
-		}
-		if decryption == "" && len(tokens) >= 2 {
-			decryption = tokens[1]
-		}
 	}
-	encryption = stripEncQuotes(encryption)
-	decryption = stripEncQuotes(decryption)
+	if len(tokens) < 2 {
+		return "", "", false
+	}
+
+	// Pair last two tokens as one pair (handles dual X25519+PQ dumps).
+	a, b := tokens[len(tokens)-2], tokens[len(tokens)-1]
+	encryption, decryption = alignVlessEncRoles(a, b)
 	if encryption == "" || decryption == "" {
 		return "", "", false
 	}
 	return encryption, decryption, true
+}
+
+// alignVlessEncRoles ensures encryption is the client (0rtt) string and
+// decryption is the server (600s / ticket lifetime) string.
+// xray vlessenc always prints decryption first then encryption; naive
+// "first token = encryption" fallback used to swap them and break handshakes.
+func alignVlessEncRoles(a, b string) (encryption, decryption string) {
+	a = stripEncQuotes(a)
+	b = stripEncQuotes(b)
+	if a == "" || b == "" {
+		return a, b
+	}
+	aClient := vlessEncLooksClient(a)
+	bClient := vlessEncLooksClient(b)
+	aServer := vlessEncLooksServer(a)
+	bServer := vlessEncLooksServer(b)
+
+	switch {
+	case aClient && bServer:
+		return a, b
+	case bClient && aServer:
+		return b, a
+	case aServer && !bServer:
+		return b, a
+	case bServer && !aServer:
+		return a, b
+	case aClient && !bClient:
+		return a, b
+	case bClient && !aClient:
+		return b, a
+	default:
+		// Unknown shape: keep given order (enc, dec) if caller already labeled;
+		// when both unlabeled tokens, prefer second as client only if first has more dots/server-ish.
+		return a, b
+	}
+}
+
+func vlessEncLooksClient(s string) bool {
+	parts := strings.Split(strings.ToLower(s), ".")
+	if len(parts) < 3 {
+		return false
+	}
+	// Client third segment is 0rtt or 1rtt (xray outbound).
+	return parts[2] == "0rtt" || parts[2] == "1rtt"
+}
+
+func vlessEncLooksServer(s string) bool {
+	parts := strings.Split(strings.ToLower(s), ".")
+	if len(parts) < 3 {
+		return false
+	}
+	// Server third segment is ticket lifetime, e.g. 600s or 100-500s.
+	seg := parts[2]
+	if seg == "0rtt" || seg == "1rtt" {
+		return false
+	}
+	if strings.HasSuffix(seg, "s") {
+		return true
+	}
+	// range form 100-500s already covered by suffix; bare digits+s handled above
+	return strings.Contains(seg, "-")
 }
 
 // stripEncQuotes removes surrounding " / ' that some xray builds print around material.
@@ -155,6 +298,11 @@ func stripEncQuotes(s string) string {
 			continue
 		}
 		if strings.HasSuffix(s, "\"") || strings.HasSuffix(s, "'") {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		// Trailing comma / JSON junk
+		if strings.HasSuffix(s, ",") {
 			s = strings.TrimSpace(s[:len(s)-1])
 			continue
 		}

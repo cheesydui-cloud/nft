@@ -137,7 +137,12 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		stream["xhttpSettings"] = xh
 	}
 
-	decryption := normalizeVLESSEncToken(c.Decryption)
+		// Align swapped client/server material before writing inbound decryption.
+	_, decAligned := alignVLESSEncPair(c.Encryption, c.Decryption)
+	decryption := normalizeVLESSEncToken(decAligned)
+	if decryption == "" {
+		decryption = normalizeVLESSEncToken(c.Decryption)
+	}
 	if decryption == "" {
 		decryption = "none"
 	}
@@ -231,9 +236,65 @@ func normalizeVLESSEncToken(s string) string {
 			s = strings.TrimSpace(s[:len(s)-1])
 			continue
 		}
+		if strings.HasSuffix(s, ",") {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
 		break
 	}
 	return s
+}
+
+// alignVLESSEncPair fixes swapped client/server material.
+// Client encryption uses 0rtt/1rtt in segment 3; server decryption uses ticket lifetime (e.g. 600s).
+// A common failure mode was pasting or mis-parsing so server got 0rtt and client got 600s —
+// handshake then fails while decryption=none still works (Weir-style "with enc works" vs ours broken).
+func alignVLESSEncPair(encryption, decryption string) (enc, dec string) {
+	enc = normalizeVLESSEncToken(encryption)
+	dec = normalizeVLESSEncToken(decryption)
+	if enc == "" || dec == "" || strings.EqualFold(enc, "none") || strings.EqualFold(dec, "none") {
+		return enc, dec
+	}
+	encClient := vlessEncLooksClient(enc)
+	decClient := vlessEncLooksClient(dec)
+	encServer := vlessEncLooksServer(enc)
+	decServer := vlessEncLooksServer(dec)
+	// Clearly swapped: encryption looks like server and decryption looks like client.
+	if (encServer && decClient) || (encServer && !decServer && decClient) || (decClient && encServer) {
+		return dec, enc
+	}
+	// Only decryption looks client-side → swap.
+	if decClient && !encClient {
+		return dec, enc
+	}
+	// Only encryption looks server-side → swap.
+	if encServer && !decServer {
+		return dec, enc
+	}
+	return enc, dec
+}
+
+func vlessEncLooksClient(s string) bool {
+	parts := strings.Split(strings.ToLower(normalizeVLESSEncToken(s)), ".")
+	if len(parts) < 3 {
+		return false
+	}
+	return parts[2] == "0rtt" || parts[2] == "1rtt"
+}
+
+func vlessEncLooksServer(s string) bool {
+	parts := strings.Split(strings.ToLower(normalizeVLESSEncToken(s)), ".")
+	if len(parts) < 3 {
+		return false
+	}
+	seg := parts[2]
+	if seg == "0rtt" || seg == "1rtt" {
+		return false
+	}
+	if strings.HasSuffix(seg, "s") {
+		return true
+	}
+	return strings.Contains(seg, "-")
 }
 
 // validateVLESSDecryption accepts "none" or mlkem768x25519plus.* server decryption string.
@@ -256,8 +317,13 @@ func validateVLESSDecryption(dec string) error {
 			return fmt.Errorf("decryption 模式无效 %q（native/xorpub/random）", parts[1])
 		}
 		// Heuristic: client encryption usually has "0rtt" in the third segment.
-		if strings.EqualFold(parts[2], "0rtt") {
+		if strings.EqualFold(parts[2], "0rtt") || strings.EqualFold(parts[2], "1rtt") {
 			return fmt.Errorf("decryption 看起来是客户端 encryption（含 0rtt）。服务端应填 vlessenc 的 Decryption（通常含 600s），请点「生成 vlessenc」或对调字段")
+		}
+		// Final auth material: base64url of 32 or 64 bytes (xray inbound).
+		keyPart := parts[len(parts)-1]
+		if len(keyPart) < 20 {
+			return fmt.Errorf("decryption 密钥段过短。请用「生成 vlessenc」重新生成")
 		}
 		return nil
 	}

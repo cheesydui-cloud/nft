@@ -115,11 +115,13 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 				c.ShortID = randomHex(8)
 			}
 		}
-		// xray vlessenc / paste often wraps material in quotes — strip so share URI
-		// and server config stay in sync (quoted encryption breaks clients).
-		c.Encryption = normalizeVLESSEncToken(c.Encryption)
-		c.Decryption = normalizeVLESSEncToken(c.Decryption)
-		if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
+			// xray vlessenc / paste often wraps material in quotes — strip so share URI
+			// and server config stay in sync (quoted encryption breaks clients).
+			// Also auto-swap if user/panel put client (0rtt) into decryption and server (600s) into encryption.
+			c.Encryption = normalizeVLESSEncToken(c.Encryption)
+			c.Decryption = normalizeVLESSEncToken(c.Decryption)
+			c.Encryption, c.Decryption = alignVLESSEncPair(c.Encryption, c.Decryption)
+			if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
 			c.Path = "/"
 		}
 		if c.XHTTPMode == "" && c.Network == "xhttp" {
@@ -195,13 +197,15 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			return "", fmt.Errorf("vless uuid missing")
 		}
 		q := url.Values{}
-		// encryption: none unless ML-KEM / vlessenc material provided
-		enc := normalizeVLESSEncToken(c.Encryption)
-		if enc != "" && !strings.EqualFold(enc, "none") {
-			q.Set("encryption", enc)
-		} else {
-			q.Set("encryption", "none")
-		}
+			// encryption: none unless ML-KEM / vlessenc material provided.
+			// Align against decryption so a swapped pair still exports the client (0rtt) string.
+			enc, _ := alignVLESSEncPair(c.Encryption, c.Decryption)
+			enc = normalizeVLESSEncToken(enc)
+			if enc != "" && !strings.EqualFold(enc, "none") {
+				q.Set("encryption", enc)
+			} else {
+				q.Set("encryption", "none")
+			}
 		if c.Flow != "" {
 			q.Set("flow", c.Flow)
 		}
