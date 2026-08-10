@@ -509,7 +509,8 @@ func (s *Server) apiSyncProxyServiceToRepo(w http.ResponseWriter, r *http.Reques
 }
 
 // apiProbeProxyServiceLatency checks each instance's listen port from the node
-// (TCP dial 127.0.0.1:port) and reports latency. Offline nodes are skipped with error.
+// and reports TCP latency. Tries loopback v4/v6 then share_host so dual-stack
+// and IPv6-only listeners (legacy sing-box "::") still pass when the core is up.
 func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Request) {
 	id, err := urlParamInt64(r, "id")
 	if err != nil {
@@ -539,15 +540,16 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 	}
 
 	type row struct {
-		InstanceID int64  `json:"instance_id"`
-		NodeID     int64  `json:"node_id"`
-		NodeName   string `json:"node_name"`
-		Target     string `json:"target"`
-		OK         bool   `json:"ok"`
-		Latency    int    `json:"latency_ms"`
-		Error      string `json:"error,omitempty"`
-		ShareHost  string `json:"share_host,omitempty"`
-		ListenPort int    `json:"listen_port"`
+		InstanceID   int64  `json:"instance_id"`
+		NodeID       int64  `json:"node_id"`
+		NodeName     string `json:"node_name"`
+		Target       string `json:"target"`
+		OK           bool   `json:"ok"`
+		Latency      int    `json:"latency_ms"`
+		Error        string `json:"error,omitempty"`
+		ShareHost    string `json:"share_host,omitempty"`
+		ListenPort   int    `json:"listen_port"`
+		DeployStatus string `json:"deploy_status,omitempty"`
 	}
 	results := make([]row, len(inst))
 	var wg sync.WaitGroup
@@ -556,41 +558,74 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 		go func(i int, it *db.ProxyServiceInstance) {
 			defer wg.Done()
 			name := it.NodeName
-			if name == "" {
+			online := it.NodeOnline
+			if name == "" || online == 0 {
 				if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
-					name = n.Name
-				} else {
-					name = fmt.Sprintf("#%d", it.NodeID)
+					if name == "" {
+						name = n.Name
+					}
+					online = n.Online
 				}
+			}
+			if name == "" {
+				name = fmt.Sprintf("#%d", it.NodeID)
 			}
 			port := it.ListenPort
-			if port <= 0 {
-				results[i] = row{
-					InstanceID: it.ID, NodeID: it.NodeID, NodeName: name,
-					ListenPort: port, ShareHost: it.ShareHost,
-					Error: "无监听端口",
-				}
-				return
-			}
-			// Probe from the node itself: is the core listening on this port?
-			target := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-			// Prefer IPv6 loopback if listen is only on :: — still try 127.0.0.1 first.
-			ack, err := s.Hub.SendProbe(it.NodeID, target)
 			r := row{
 				InstanceID: it.ID, NodeID: it.NodeID, NodeName: name,
-				Target: target, ListenPort: port, ShareHost: it.ShareHost,
+				ListenPort: port, ShareHost: it.ShareHost, DeployStatus: it.DeployStatus,
 			}
-			if err != nil {
-				r.Error = err.Error()
-			} else if !ack.OK {
-				r.Error = ack.Error
-				if r.Error == "" {
-					r.Error = "端口不通"
+			if port <= 0 {
+				r.Error = "无监听端口"
+				results[i] = r
+				return
+			}
+			if !s.Hub.IsConnected(it.NodeID) {
+				r.Error = "节点离线（agent 未连接面板）"
+				results[i] = r
+				return
+			}
+
+			// Candidate targets from the node: loopback first (local core), then share host.
+			var targets []string
+			targets = append(targets,
+				net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+				net.JoinHostPort("::1", strconv.Itoa(port)),
+			)
+			if sh := strings.TrimSpace(it.ShareHost); sh != "" {
+				// strip accidental port
+				if h, _, err := splitHostPortLoose(sh); err == nil && h != "" {
+					sh = h
 				}
-			} else {
-				r.OK = true
-				r.Latency = ack.Latency
+				// skip if already loopback
+				if sh != "127.0.0.1" && sh != "::1" && sh != "localhost" {
+					targets = append(targets, net.JoinHostPort(sh, strconv.Itoa(port)))
+				}
 			}
+
+			var lastErr string
+			for _, target := range targets {
+				ack, err := s.Hub.SendProbe(it.NodeID, target)
+				if err != nil {
+					lastErr = err.Error()
+					continue
+				}
+				if ack.OK {
+					r.OK = true
+					r.Latency = ack.Latency
+					r.Target = target
+					results[i] = r
+					return
+				}
+				if ack.Error != "" {
+					lastErr = ack.Error
+				} else {
+					lastErr = "连接失败"
+				}
+				// connection refused on one family — try next
+			}
+			r.Target = targets[0]
+			r.Error = classifyProbeFail(lastErr, it.DeployStatus, port)
 			results[i] = r
 		}(i, it)
 	}
@@ -598,6 +633,7 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 
 	okN, failN := 0, 0
 	minL, maxL, sumL := -1, 0, 0
+	var firstErr string
 	for _, r := range results {
 		if r.OK {
 			okN++
@@ -610,14 +646,22 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 			sumL += r.Latency
 		} else {
 			failN++
+			if firstErr == "" && r.Error != "" {
+				firstErr = r.Error
+			}
 		}
 	}
 	summary := fmt.Sprintf("%d/%d 端口可达", okN, len(results))
 	if okN > 0 {
 		avg := sumL / okN
 		summary = fmt.Sprintf("%d/%d 可达 · 延迟 %d–%d ms（均 %d ms）", okN, len(results), minL, maxL, avg)
-	} else if failN > 0 {
-		summary = fmt.Sprintf("0/%d 可达 — 节点离线或核心未监听", len(results))
+		if failN > 0 && firstErr != "" {
+			summary += "；失败: " + firstErr
+		}
+	} else if firstErr != "" {
+		summary = fmt.Sprintf("0/%d 可达 · %s", len(results), firstErr)
+	} else {
+		summary = fmt.Sprintf("0/%d 可达", len(results))
 	}
 
 	jsonOK(w, map[string]any{
@@ -630,6 +674,32 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 		"summary":    summary,
 		"probed_at":  time.Now().Unix(),
 	})
+}
+
+// classifyProbeFail turns raw dial/hub errors into operator-facing Chinese hints.
+func classifyProbeFail(raw, deployStatus string, port int) string {
+	s := strings.ToLower(raw)
+	switch {
+	case strings.Contains(s, "not connected") || strings.Contains(s, "node") && strings.Contains(s, "not connected"):
+		return "节点离线（agent 未连接面板）"
+	case strings.Contains(s, "probe timeout") || strings.Contains(s, "timeout"):
+		return "探测超时"
+	case strings.Contains(s, "connection refused") || strings.Contains(s, "refused") || strings.Contains(s, "actively refused"):
+		hint := fmt.Sprintf("端口 %d 无进程监听", port)
+		if deployStatus == db.ProxyDeployError || deployStatus == "error" {
+			return hint + "（部署状态异常，请打开服务详情查看 last_error，或重新发布）"
+		}
+		if deployStatus == db.ProxyDeployReady || deployStatus == "ready" {
+			return hint + "（状态显示就绪但端口未开：核心可能已退出，请重新发布并确认节点已装 xray/sing-box）"
+		}
+		return hint + "（请确认核心已启动）"
+	case strings.Contains(s, "no route") || strings.Contains(s, "network is unreachable"):
+		return "网络不可达"
+	case strings.TrimSpace(raw) == "":
+		return "端口不通"
+	default:
+		return raw
+	}
 }
 
 // apiProxyServiceGenKeys generates REALITY key material for the wizard UI.

@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -236,7 +237,15 @@ func waitListenHint(port int, d time.Duration) error {
 }
 
 func portLikelyListening(port int) bool {
-	// ss -lnt | grep :port
+	// Prefer actual dial — works for both IPv4-only and IPv6-only listeners.
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 400*time.Millisecond)
+		if err == nil {
+			_ = c.Close()
+			return true
+		}
+	}
+	// Fallback: ss / lsof when dial fails (e.g. firewall on loopback — rare).
 	out, err := runCmdTimeout(2*time.Second, "ss", "-lntu")
 	if err == nil && strings.Contains(out, ":"+strconv.Itoa(port)) {
 		return true

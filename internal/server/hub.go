@@ -533,6 +533,13 @@ func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply)
 	}
 }
 
+func (h *Hub) IsConnected(nodeID int64) bool {
+	h.mu.RLock()
+	_, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	return ok
+}
+
 func (h *Hub) SendProbe(nodeID int64, target string) (wsproto.ProbeAck, error) {
 	return h.SendProbeEx(nodeID, wsproto.Probe{Target: target})
 }

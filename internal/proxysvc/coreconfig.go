@@ -189,7 +189,7 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 			map[string]any{
 				"type":        "shadowsocks",
 				"tag":         "ss-in",
-				"listen":      "::",
+				"listen":      "0.0.0.0",
 				"listen_port": listenPort,
 				"method":      method,
 				"password":    c.Password,
