@@ -242,6 +242,40 @@ func TestBuildXrayVLESSConfigSwappedPairAutoAlign(t *testing.T) {
 	}
 }
 
+func TestGenerateVlessEncX25519Shape(t *testing.T) {
+	enc, dec := GenerateVlessEncX25519()
+	if !strings.HasPrefix(enc, "mlkem768x25519plus.native.0rtt.") {
+		t.Fatalf("enc=%q", enc)
+	}
+	if !strings.HasPrefix(dec, "mlkem768x25519plus.native.600s.") {
+		t.Fatalf("dec=%q", dec)
+	}
+	if len(enc) > 100 || len(dec) > 100 {
+		t.Fatalf("expected short X25519 keys enc=%d dec=%d", len(enc), len(dec))
+	}
+	// Must be a matched pair that xray accepts as server decryption.
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd1234", Security: "reality", Network: "tcp",
+		Encryption: enc, Decryption: dec, Flow: "xtls-rprx-vision",
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `"decryption": "`+dec+`"`) {
+		t.Fatalf("config missing decryption:\n%s", cfg)
+	}
+	uri, err := BuildShareURI("vless", "t", "1.2.3.4", 443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(uri, "encryption="+enc) && !strings.Contains(uri, "0rtt") {
+		t.Fatalf("uri missing encryption: %s", uri)
+	}
+}
+
 func TestEnsureSecretsAlignsSwappedVlessEnc(t *testing.T) {
 	raw, err := EnsureSecrets("vless", json.RawMessage(`{
 		"server_name":"www.example.com",

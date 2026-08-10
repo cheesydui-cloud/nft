@@ -462,7 +462,7 @@ export default function ProxyServiceWizard() {
                         }}>清空</button>
                       </div>
                       <p className="text-[11px] text-ink-mut mt-1">
-                        可选 ML-KEM / vlessenc：一键调用面板缓存的 xray 生成密钥对，写入 decryption（服务端）与 encryption（客户端）。需先在「代理核心缓存」拉取支持 vlessenc 的 xray。留空即 none。
+                        可选 vlessenc：默认一键生成 X25519 短密钥（encryption 含 0rtt、decryption 含 600s，各约 70–80 字符，对齐 Weir）。改配置后须「重新发布」节点。留空即 none。
                       </p>
                     </div>
                   </div>

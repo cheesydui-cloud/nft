@@ -382,6 +382,21 @@ func GenerateRealityKeyPair() (privateKey, publicKey string) {
 	return base64.RawURLEncoding.EncodeToString(priv[:]), base64.RawURLEncoding.EncodeToString(pub[:])
 }
 
+// GenerateVlessEncX25519 builds a matched VLESS Encryption pair using X25519,
+// identical to the first block of `xray vlessenc` (not the ML-KEM-768 PQ block):
+//
+//	decryption = mlkem768x25519plus.native.600s.<private>
+//	encryption = mlkem768x25519plus.native.0rtt.<public>
+//
+// This is what Weir and most clients use. Generating natively avoids parsing
+// xray's dual-block stdout (which previously preferred the multi-KB PQ keys).
+func GenerateVlessEncX25519() (encryption, decryption string) {
+	priv, pub := GenerateRealityKeyPair()
+	decryption = "mlkem768x25519plus.native.600s." + priv
+	encryption = "mlkem768x25519plus.native.0rtt." + pub
+	return encryption, decryption
+}
+
 // GenerateShortID returns an 8-byte hex short_id.
 func GenerateShortID() string {
 	return randomHex(8)

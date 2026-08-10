@@ -9,13 +9,26 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"nft/internal/proxysvc"
 )
 
-// generateVlessEncPair runs `xray vlessenc` from the panel core cache and
-// returns client encryption + server decryption strings.
+// generateVlessEncPair returns client encryption + server decryption strings.
 // auth: "x25519" (default, short keys, matches Weir / most clients) or "mlkem" (PQ, long).
-// Requires a cached xray binary that supports the vlessenc subcommand.
+//
+// Default path generates natively (same math as xray vlessenc X25519 block) so we
+// never mis-parse the dual-block stdout. PQ still shells out to cached xray.
 func generateVlessEncPair(auth string) (encryption, decryption, version string, err error) {
+	preferPQ := strings.EqualFold(strings.TrimSpace(auth), "mlkem") ||
+		strings.EqualFold(strings.TrimSpace(auth), "pq") ||
+		strings.EqualFold(strings.TrimSpace(auth), "mlkem768")
+
+	if !preferPQ {
+		// Native X25519 — no xray binary required, always short matched pair.
+		enc, dec := proxysvc.GenerateVlessEncX25519()
+		return enc, dec, "native-x25519", nil
+	}
+
 	bin, version, err := resolveLocalXrayBinary()
 	if err != nil {
 		return "", "", "", err
@@ -25,20 +38,20 @@ func generateVlessEncPair(auth string) (encryption, decryption, version string, 
 		out2, err2 := runXrayCmd(bin, 15*time.Second, "mlkem768x25519")
 		if err2 != nil {
 			return "", "", version, fmt.Errorf(
-				"xray 无法生成 vlessenc（需要支持 vlessenc 的 Xray-core）。请在「代理核心缓存」拉取最新 xray（%s）。详情: %v",
+				"xray 无法生成 vlessenc PQ（需要支持 vlessenc 的 Xray-core）。请在「代理核心缓存」拉取最新 xray（%s）。详情: %v",
 				version, err)
 		}
 		out = out2
 	}
-	preferPQ := strings.EqualFold(strings.TrimSpace(auth), "mlkem") ||
-		strings.EqualFold(strings.TrimSpace(auth), "pq") ||
-		strings.EqualFold(strings.TrimSpace(auth), "mlkem768")
-	enc, dec, ok := parseVlessEncOutputPrefer(out, preferPQ)
+	enc, dec, ok := parseVlessEncOutputPrefer(out, true)
 	if !ok {
 		return "", "", version, fmt.Errorf("无法解析 xray vlessenc 输出（version=%s）:\n%s", version, truncateRunes(out, 400))
 	}
-	// Final role guard: 0rtt = client encryption, 600s = server decryption.
 	enc, dec = alignVlessEncRoles(enc, dec)
+	if len(enc) < 200 {
+		// Parser fell back to short pair; still OK but note.
+		version = version + "+pq-short?"
+	}
 	return enc, dec, version, nil
 }
 
