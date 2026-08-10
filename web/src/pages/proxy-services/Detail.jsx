@@ -76,7 +76,7 @@ export default function ProxyServiceDetail() {
             <div className="flex gap-2 flex-wrap">
               <Link to={`/proxy-services/${id}/edit`} className="btn-primary text-sm">编辑</Link>
               <button type="button" className="btn-secondary text-sm" disabled={probing || !(instances.length > 0)} onClick={probeLatency}>
-                {probing ? '探测中…' : '探测延迟'}
+                {probing ? '测试中…' : '测试'}
               </button>
               <Link to={`/proxy-services/new`} className="btn-secondary text-sm" state={{ from: id }}>再发布</Link>
               <button type="button" className="btn-secondary text-sm" onClick={syncRepo}>同步到落地仓库</button>
@@ -93,7 +93,7 @@ export default function ProxyServiceDetail() {
                 ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20'
                 : 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-900/20'
           }`}>
-            延迟探测：{latency.summary}
+            测试：{latency.summary}
           </div>
         )}
 

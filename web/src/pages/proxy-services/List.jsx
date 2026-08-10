@@ -122,7 +122,7 @@ export default function ProxyServiceList() {
                         <td><Badge color={st.color}>{st.label}</Badge></td>
                         <td className="text-[12px] max-w-[200px]">
                           {probingId === s.id ? (
-                            <span className="text-ink-mut">探测中…</span>
+                            <span className="text-ink-mut">测试中…</span>
                           ) : lat ? (
                             <span className={lat.ok_count > 0 && lat.fail_count === 0 ? 'text-emerald-700 dark:text-emerald-300' : lat.ok_count > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-rose-600'} title={(lat.results || []).map(r => `${r.node_name || r.node_id}: ${r.ok ? r.latency_ms + 'ms' : r.error}`).join('\n')}>
                               {lat.summary || '—'}
@@ -135,7 +135,7 @@ export default function ProxyServiceList() {
                           <button type="button" disabled={probingId === s.id || !(s.instance_count > 0)}
                             onClick={() => probeLatency(s)}
                             className="text-emerald-600 text-sm font-semibold mr-3 disabled:opacity-40 disabled:cursor-not-allowed">
-                            {probingId === s.id ? '探测中…' : '探测延迟'}
+                            {probingId === s.id ? '测试中…' : '测试'}
                           </button>
                           <Link to={`/proxy-services/${s.id}/edit`} className="text-emerald-600 text-sm font-semibold mr-3">编辑</Link>
                           <Link to={`/proxy-services/${s.id}`} className="text-emerald-600 text-sm font-semibold mr-3">查看</Link>
