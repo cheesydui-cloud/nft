@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link, useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast } from '../../components/Layout'
-import { Loading, Empty, Badge, useConfirm, CopyText } from '../../components/ui'
-import { PageHeader, Panel, TableScroll } from '../../components/page'
+import { Loading, Empty, Badge, CopyText } from '../../components/ui'
+import { PageHeader, Panel } from '../../components/page'
 
 const STATUS_MAP = {
   draft: { label: '草稿', color: 'gray' },
@@ -26,44 +26,69 @@ const DEPLOY_LABEL = {
   offline: { label: '离线', color: 'gray' },
 }
 
-/** Display order per protocol. Only keys present in config are rendered. */
-const CONFIG_FIELDS = {
+/** Grouped fields for config display. Only keys present in config are shown. */
+const CONFIG_GROUPS = {
   vless: [
-    { key: 'uuid', label: 'uuid' },
-    { key: 'flow', label: 'flow' },
-    { key: 'decryption', label: 'decryption' },
-    { key: 'encryption', label: 'encryption' },
-    { key: 'network', label: 'network' },
-    { key: 'path', label: 'path' },
-    { key: 'host', label: 'host' },
-    { key: 'xhttp_mode', label: 'xhttp_mode' },
-    { key: 'security', label: 'security' },
-    { key: 'server_name', label: 'server_name' },
-    { key: 'server_port', label: 'server_port' },
-    { key: 'fingerprint', label: 'fingerprint' },
-    { key: 'public_key', label: 'public_key' },
-    { key: 'private_key', label: 'private_key' },
-    { key: 'short_id', label: 'short_id' },
-    { key: 'allow_empty_short_id', label: 'allow_empty_short_id' },
-    { key: 'spider_x', label: 'spider_x' },
-    { key: 'max_time_difference', label: 'max_time_difference' },
-    { key: 'listen_port', label: 'listen_port' },
-    { key: 'share_host', label: 'share_host' },
+    {
+      title: '协议参数',
+      keys: [
+        ['uuid', 'uuid'],
+        ['flow', 'flow'],
+        ['decryption', 'decryption'],
+        ['encryption', 'encryption'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+      ],
+    },
+    {
+      title: '传输',
+      keys: [
+        ['network', 'network'],
+        ['path', 'path'],
+        ['host', 'host'],
+        ['xhttp_mode', 'xhttp_mode'],
+      ],
+    },
+    {
+      title: '安全层 · REALITY',
+      keys: [
+        ['security', 'security'],
+        ['server_name', 'server_name'],
+        ['server_port', 'server_port'],
+        ['fingerprint', 'fingerprint'],
+        ['public_key', 'public_key'],
+        ['private_key', 'private_key'],
+        ['short_id', 'short_id'],
+        ['allow_empty_short_id', 'allow_empty_short_id'],
+        ['spider_x', 'spider_x'],
+        ['max_time_difference', 'max_time_difference'],
+      ],
+    },
   ],
   shadowsocks: [
-    { key: 'method', label: 'method' },
-    { key: 'password', label: 'password' },
-    { key: 'listen_port', label: 'listen_port' },
-    { key: 'share_host', label: 'share_host' },
+    {
+      title: '协议参数',
+      keys: [
+        ['method', 'method'],
+        ['password', 'password'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+      ],
+    },
   ],
   mieru: [
-    { key: 'username', label: 'username' },
-    { key: 'password', label: 'password' },
-    { key: 'transports', label: 'transports' },
-    { key: 'traffic_pattern', label: 'traffic_pattern' },
-    { key: 'user_hint_is_mandatory', label: 'user_hint_is_mandatory' },
-    { key: 'listen_port', label: 'listen_port' },
-    { key: 'share_host', label: 'share_host' },
+    {
+      title: '协议参数',
+      keys: [
+        ['username', 'username'],
+        ['password', 'password'],
+        ['transports', 'transports'],
+        ['traffic_pattern', 'traffic_pattern'],
+        ['user_hint_is_mandatory', 'user_hint_is_mandatory'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+      ],
+    },
   ],
 }
 
@@ -99,10 +124,10 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function MetaRow({ label, children }) {
+function KvRow({ label, children }) {
   return (
-    <div className="flex gap-3 text-[13px] py-0.5">
-      <div className="text-ink-mut w-[7.5rem] shrink-0">{label}</div>
+    <div className="grid grid-cols-[9rem_1fr] sm:grid-cols-[11rem_1fr] gap-x-4 gap-y-1 py-1.5 text-[13px] items-start">
+      <div className="text-ink-mut shrink-0 pt-0.5">{label}</div>
       <div className="min-w-0 break-all">{children}</div>
     </div>
   )
@@ -114,8 +139,6 @@ export default function ProxyServiceDetail() {
   const [probing, setProbing] = useState(false)
   const [latency, setLatency] = useState(null)
   const toast = useToast()
-  const confirm = useConfirm()
-  const navigate = useNavigate()
 
   const load = () => {
     api
@@ -130,16 +153,23 @@ export default function ProxyServiceDetail() {
 
   const cfg = useMemo(() => parseConfig(svc?.config_json), [svc])
   const proto = String(svc?.protocol || '').toLowerCase()
-  const fields = CONFIG_FIELDS[proto === 'ss' ? 'shadowsocks' : proto] || CONFIG_FIELDS.vless
-  const configRows = useMemo(() => {
-    return fields
-      .map(({ key, label }) => {
-        const text = formatValue(cfg[key])
-        if (text == null) return null
-        return { key, label, text, raw: cfg[key] }
+  const protoKey = proto === 'ss' ? 'shadowsocks' : proto
+  const groups = CONFIG_GROUPS[protoKey] || CONFIG_GROUPS.vless
+
+  const groupedRows = useMemo(() => {
+    return groups
+      .map((g) => {
+        const rows = g.keys
+          .map(([key, label]) => {
+            const text = formatValue(cfg[key])
+            if (text == null) return null
+            return { key, label, text, raw: cfg[key] }
+          })
+          .filter(Boolean)
+        return rows.length ? { title: g.title, rows } : null
       })
       .filter(Boolean)
-  }, [cfg, fields])
+  }, [cfg, groups])
 
   const instances = svc?.instances || []
   const defaultPort = cfg.listen_port || instances[0]?.listen_port || '—'
@@ -205,26 +235,6 @@ export default function ProxyServiceDetail() {
     }
   }
 
-  const remove = async () => {
-    if (
-      !(await confirm({
-        title: '删除代理服务',
-        message: `确定删除「${svc?.name}」？节点上已运行的核心不会自动停止，落地仓库条目也不会自动删除。`,
-        confirmText: '删除',
-        danger: true,
-      }))
-    ) {
-      return
-    }
-    try {
-      await api.del(`/proxy-services/${id}`)
-      toast('已删除')
-      navigate('/proxy-services')
-    } catch (err) {
-      toast(err.message, 'error')
-    }
-  }
-
   if (svc === null) {
     return (
       <Layout>
@@ -244,7 +254,8 @@ export default function ProxyServiceDetail() {
 
   return (
     <Layout>
-      <div className="h-full flex flex-col overflow-auto">
+      {/* Document flow only — Layout main scrolls. Do NOT use h-full / nested overflow. */}
+      <div className="space-y-4 pb-8">
         <PageHeader
           title={svc.name}
           badge={<Badge color={st.color}>{st.label}</Badge>}
@@ -281,7 +292,7 @@ export default function ProxyServiceDetail() {
 
         {latency?.summary && (
           <div
-            className={`mb-4 px-4 py-2.5 rounded-xl border text-[13px] ${
+            className={`px-4 py-2.5 rounded-xl border text-[13px] ${
               latency.ok_count > 0 && latency.fail_count === 0
                 ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
                 : latency.ok_count > 0
@@ -293,27 +304,41 @@ export default function ProxyServiceDetail() {
           </div>
         )}
 
-        {/* 概览 */}
-        <Panel className="mb-4">
-          <div className="px-5 py-4 space-y-1">
-            <MetaRow label="协议">{PROTO_LABEL[proto] || svc.protocol}</MetaRow>
-            <MetaRow label="核心">
-              <span className="font-mono">{svc.core}</span>
-            </MetaRow>
-            <MetaRow label="默认端口">
-              <span className="font-mono">{defaultPort}</span>
-            </MetaRow>
-            <MetaRow label="覆盖节点数">{instances.length}</MetaRow>
-            <MetaRow label="创建时间">
-              <span className="font-mono text-[12.5px]">{formatTime(svc.created_at)}</span>
-            </MetaRow>
-            <MetaRow label="订阅可见性">{svc.sub_visible ? '是' : '否'}</MetaRow>
+        {/* 概览 — short grid, never clipped */}
+        <Panel>
+          <div className="px-5 py-4">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-3 text-[13px]">
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">协议</span>
+                <span className="font-semibold">{PROTO_LABEL[proto] || svc.protocol}</span>
+              </div>
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">核心</span>
+                <span className="font-mono font-semibold">{svc.core}</span>
+              </div>
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">默认端口</span>
+                <span className="font-mono font-semibold">{defaultPort}</span>
+              </div>
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">覆盖节点数</span>
+                <span className="font-semibold">{instances.length}</span>
+              </div>
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">创建时间</span>
+                <span className="font-mono text-[12.5px]">{formatTime(svc.created_at)}</span>
+              </div>
+              <div className="flex gap-3 min-w-0">
+                <span className="text-ink-mut w-24 shrink-0">订阅可见性</span>
+                <span className="font-semibold">{svc.sub_visible ? '是' : '否'}</span>
+              </div>
+            </div>
           </div>
         </Panel>
 
-        {/* 配置 */}
-        <Panel className="mb-4">
-          <div className="px-5 py-3 border-b border-line flex items-center justify-between">
+        {/* 配置 — full key/value, grouped, document height */}
+        <Panel>
+          <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="text-sm font-bold">配置</div>
               <div className="text-[12px] text-ink-mut">协议参数（发布到节点时使用的模板）</div>
@@ -322,35 +347,40 @@ export default function ProxyServiceDetail() {
               编辑协议配置
             </Link>
           </div>
-          <div className="px-5 py-4">
-            {configRows.length === 0 ? (
+          <div className="px-5 py-4 space-y-5">
+            {groupedRows.length === 0 ? (
               <div className="text-[13px] text-ink-mut">无配置字段</div>
             ) : (
-              <div className="space-y-2">
-                {configRows.map(({ key, label, text, raw }) => (
-                  <MetaRow key={key} label={label}>
-                    <span className="font-mono text-[12.5px]">
-                      <CopyText text={String(raw)}>{text}</CopyText>
-                    </span>
-                  </MetaRow>
-                ))}
-              </div>
+              groupedRows.map((g) => (
+                <div key={g.title}>
+                  <div className="text-[12px] font-bold text-ink-mut mb-1.5">{g.title}</div>
+                  <div className="rounded-lg border border-line/70 px-3 sm:px-4 py-1">
+                    {g.rows.map(({ key, label, text, raw }) => (
+                      <KvRow key={key} label={label}>
+                        <span className="font-mono text-[12.5px] leading-relaxed">
+                          <CopyText text={String(raw)}>{text}</CopyText>
+                        </span>
+                      </KvRow>
+                    ))}
+                  </div>
+                </div>
+              ))
             )}
             {proto === 'vless' && cfg.server_name && (
-              <p className="text-[12px] text-ink-mut mt-4 mb-0">
+              <p className="text-[12px] text-ink-mut m-0">
                 REALITY dest：
                 <span className="font-mono text-ink">
                   {cfg.server_name}:{cfg.server_port || 443}
                 </span>
-                {cfg.security === 'reality' || !cfg.security ? ' · security=reality' : ''}
+                {(cfg.security === 'reality' || !cfg.security) && ' · security=reality'}
               </p>
             )}
           </div>
         </Panel>
 
-        {/* 节点 */}
-        <Panel className="mb-4">
-          <div className="px-5 py-3 border-b border-line flex items-center justify-between flex-wrap gap-2">
+        {/* 节点 — plain table, horizontal scroll only, no flex height trap */}
+        <Panel>
+          <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="text-sm font-bold">节点</div>
               <div className="text-[12px] text-ink-mut">
@@ -361,11 +391,13 @@ export default function ProxyServiceDetail() {
               编辑 / 发布到更多节点
             </Link>
           </div>
-          <TableScroll>
-            {instances.length === 0 ? (
+          {instances.length === 0 ? (
+            <div className="px-5 py-8">
               <Empty title="尚未部署到节点" desc="请点「编辑 / 发布到更多节点」，在向导中选择节点并发布。" />
-            ) : (
-              <table className="tbl">
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="tbl w-full min-w-[720px]">
                 <thead>
                   <tr>
                     <th>节点</th>
@@ -425,9 +457,9 @@ export default function ProxyServiceDetail() {
                             </span>
                           )}
                         </td>
-                        <td className="max-w-[260px]">
+                        <td className="max-w-[280px]">
                           {i.uri ? (
-                            <span className="text-[11px] font-mono truncate block max-w-[260px]">
+                            <span className="text-[11px] font-mono break-all block">
                               <CopyText text={i.uri} />
                             </span>
                           ) : (
@@ -455,20 +487,8 @@ export default function ProxyServiceDetail() {
                   })}
                 </tbody>
               </table>
-            )}
-          </TableScroll>
-        </Panel>
-
-        <Panel className="mb-6 border-rose-200 dark:border-rose-900/40">
-          <div className="px-5 py-4">
-            <div className="text-sm font-bold text-rose-700 dark:text-rose-300 mb-1">危险区</div>
-            <p className="text-[12.5px] text-ink-mut mb-3">
-              删除仅移除面板记录；不会自动停节点上的 xray/sing-box/mita，也不会删落地仓库条目。
-            </p>
-            <button type="button" className="btn-secondary text-sm text-rose-600" onClick={remove}>
-              删除服务
-            </button>
-          </div>
+            </div>
+          )}
         </Panel>
       </div>
     </Layout>
