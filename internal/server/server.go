@@ -797,6 +797,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/proxy-services/{id}", s.apiDeleteProxyService)
 			r.Post("/proxy-services/{id}/publish", s.apiPublishProxyService)
 			r.Post("/proxy-services/{id}/sync-repo", s.apiSyncProxyServiceToRepo)
+			r.Post("/proxy-services/{id}/probe-latency", s.apiProbeProxyServiceLatency)
 
 			// Proxy core cache (Weir-style panel-side binary cache)
 			r.Get("/proxy-cores", s.apiListProxyCores)

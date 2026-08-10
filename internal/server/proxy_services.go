@@ -3,9 +3,12 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"nft/internal/db"
 	"nft/internal/landing"
@@ -503,6 +506,130 @@ func (s *Server) apiSyncProxyServiceToRepo(w http.ResponseWriter, r *http.Reques
 		outs = append(outs, map[string]any{"instance_id": i.ID, "ok": true, "repo_id": entry.ID, "updated": false})
 	}
 	jsonOK(w, map[string]any{"synced": synced, "results": outs})
+}
+
+// apiProbeProxyServiceLatency checks each instance's listen port from the node
+// (TCP dial 127.0.0.1:port) and reports latency. Offline nodes are skipped with error.
+func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Request) {
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	svc, err := db.GetProxyService(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "服务不存在")
+		return
+	}
+	inst, err := db.ListProxyInstances(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(inst) == 0 {
+		jsonOK(w, map[string]any{
+			"service_id": id,
+			"name":       svc.Name,
+			"results":    []any{},
+			"ok_count":   0,
+			"fail_count": 0,
+			"summary":    "尚无部署实例",
+		})
+		return
+	}
+
+	type row struct {
+		InstanceID int64  `json:"instance_id"`
+		NodeID     int64  `json:"node_id"`
+		NodeName   string `json:"node_name"`
+		Target     string `json:"target"`
+		OK         bool   `json:"ok"`
+		Latency    int    `json:"latency_ms"`
+		Error      string `json:"error,omitempty"`
+		ShareHost  string `json:"share_host,omitempty"`
+		ListenPort int    `json:"listen_port"`
+	}
+	results := make([]row, len(inst))
+	var wg sync.WaitGroup
+	for i, it := range inst {
+		wg.Add(1)
+		go func(i int, it *db.ProxyServiceInstance) {
+			defer wg.Done()
+			name := it.NodeName
+			if name == "" {
+				if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
+					name = n.Name
+				} else {
+					name = fmt.Sprintf("#%d", it.NodeID)
+				}
+			}
+			port := it.ListenPort
+			if port <= 0 {
+				results[i] = row{
+					InstanceID: it.ID, NodeID: it.NodeID, NodeName: name,
+					ListenPort: port, ShareHost: it.ShareHost,
+					Error: "无监听端口",
+				}
+				return
+			}
+			// Probe from the node itself: is the core listening on this port?
+			target := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+			// Prefer IPv6 loopback if listen is only on :: — still try 127.0.0.1 first.
+			ack, err := s.Hub.SendProbe(it.NodeID, target)
+			r := row{
+				InstanceID: it.ID, NodeID: it.NodeID, NodeName: name,
+				Target: target, ListenPort: port, ShareHost: it.ShareHost,
+			}
+			if err != nil {
+				r.Error = err.Error()
+			} else if !ack.OK {
+				r.Error = ack.Error
+				if r.Error == "" {
+					r.Error = "端口不通"
+				}
+			} else {
+				r.OK = true
+				r.Latency = ack.Latency
+			}
+			results[i] = r
+		}(i, it)
+	}
+	wg.Wait()
+
+	okN, failN := 0, 0
+	minL, maxL, sumL := -1, 0, 0
+	for _, r := range results {
+		if r.OK {
+			okN++
+			if minL < 0 || r.Latency < minL {
+				minL = r.Latency
+			}
+			if r.Latency > maxL {
+				maxL = r.Latency
+			}
+			sumL += r.Latency
+		} else {
+			failN++
+		}
+	}
+	summary := fmt.Sprintf("%d/%d 端口可达", okN, len(results))
+	if okN > 0 {
+		avg := sumL / okN
+		summary = fmt.Sprintf("%d/%d 可达 · 延迟 %d–%d ms（均 %d ms）", okN, len(results), minL, maxL, avg)
+	} else if failN > 0 {
+		summary = fmt.Sprintf("0/%d 可达 — 节点离线或核心未监听", len(results))
+	}
+
+	jsonOK(w, map[string]any{
+		"service_id": id,
+		"name":       svc.Name,
+		"protocol":   svc.Protocol,
+		"results":    results,
+		"ok_count":   okN,
+		"fail_count": failN,
+		"summary":    summary,
+		"probed_at":  time.Now().Unix(),
+	})
 }
 
 // apiProxyServiceGenKeys generates REALITY key material for the wizard UI.

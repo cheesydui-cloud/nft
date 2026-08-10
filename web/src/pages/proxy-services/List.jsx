@@ -21,6 +21,8 @@ const PROTO_LABEL = {
 export default function ProxyServiceList() {
   const [services, setServices] = useState(null)
   const [search, setSearch] = useState('')
+  const [probingId, setProbingId] = useState(null)
+  const [latencyMap, setLatencyMap] = useState({}) // id -> { summary, ok_count, fail_count, results }
   const toast = useToast()
   const confirm = useConfirm()
   const navigate = useNavigate()
@@ -39,6 +41,22 @@ export default function ProxyServiceList() {
       toast('已删除')
       load()
     } catch (err) { toast(err.message, 'error') }
+  }
+
+  const probeLatency = async (svc) => {
+    setProbingId(svc.id)
+    try {
+      const d = await api.post(`/proxy-services/${svc.id}/probe-latency`, {})
+      setLatencyMap(prev => ({ ...prev, [svc.id]: d }))
+      if (d.ok_count > 0 && d.fail_count === 0) toast(d.summary || '探测完成')
+      else if (d.ok_count > 0) toast(d.summary || '部分可达', 'error')
+      else toast(d.summary || d.error || '探测失败', 'error')
+    } catch (err) {
+      setLatencyMap(prev => ({ ...prev, [svc.id]: { summary: err.message, ok_count: 0, fail_count: 1 } }))
+      toast(err.message, 'error')
+    } finally {
+      setProbingId(null)
+    }
   }
 
   if (services === null) return <Layout><Loading /></Layout>
@@ -77,12 +95,14 @@ export default function ProxyServiceList() {
                     <th>覆盖节点</th>
                     <th>订阅可见</th>
                     <th>状态</th>
+                    <th>延迟</th>
                     <th className="text-right">操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map(s => {
                     const st = STATUS_MAP[s.status] || STATUS_MAP.draft
+                    const lat = latencyMap[s.id]
                     return (
                       <tr key={s.id}>
                         <td>
@@ -100,7 +120,24 @@ export default function ProxyServiceList() {
                         </td>
                         <td>{s.sub_visible ? '是' : '否'}</td>
                         <td><Badge color={st.color}>{st.label}</Badge></td>
-                        <td className="text-right">
+                        <td className="text-[12px] max-w-[200px]">
+                          {probingId === s.id ? (
+                            <span className="text-ink-mut">探测中…</span>
+                          ) : lat ? (
+                            <span className={lat.ok_count > 0 && lat.fail_count === 0 ? 'text-emerald-700 dark:text-emerald-300' : lat.ok_count > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-rose-600'} title={(lat.results || []).map(r => `${r.node_name || r.node_id}: ${r.ok ? r.latency_ms + 'ms' : r.error}`).join('\n')}>
+                              {lat.summary || '—'}
+                            </span>
+                          ) : (
+                            <span className="text-ink-mut">—</span>
+                          )}
+                        </td>
+                        <td className="text-right whitespace-nowrap">
+                          <button type="button" disabled={probingId === s.id || !(s.instance_count > 0)}
+                            onClick={() => probeLatency(s)}
+                            className="text-emerald-600 text-sm font-semibold mr-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                            {probingId === s.id ? '探测中…' : '探测延迟'}
+                          </button>
+                          <Link to={`/proxy-services/${s.id}/edit`} className="text-emerald-600 text-sm font-semibold mr-3">编辑</Link>
                           <Link to={`/proxy-services/${s.id}`} className="text-emerald-600 text-sm font-semibold mr-3">查看</Link>
                           <button type="button" onClick={() => remove(s)} className="text-rose-600 text-sm font-semibold">删除</button>
                         </td>

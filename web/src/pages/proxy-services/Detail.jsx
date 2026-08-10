@@ -15,6 +15,8 @@ const STATUS_MAP = {
 export default function ProxyServiceDetail() {
   const { id } = useParams()
   const [svc, setSvc] = useState(null)
+  const [probing, setProbing] = useState(false)
+  const [latency, setLatency] = useState(null)
   const toast = useToast()
   const confirm = useConfirm()
   const navigate = useNavigate()
@@ -32,6 +34,21 @@ export default function ProxyServiceDetail() {
       toast(`已同步 ${d.synced || 0} 条到落地仓库`)
       load()
     } catch (err) { toast(err.message, 'error') }
+  }
+
+  const probeLatency = async () => {
+    setProbing(true)
+    try {
+      const d = await api.post(`/proxy-services/${id}/probe-latency`, {})
+      setLatency(d)
+      if (d.ok_count > 0 && d.fail_count === 0) toast(d.summary || '探测完成')
+      else toast(d.summary || '探测完成（有失败）', 'error')
+    } catch (err) {
+      setLatency({ summary: err.message, ok_count: 0, fail_count: 1, results: [] })
+      toast(err.message, 'error')
+    } finally {
+      setProbing(false)
+    }
   }
 
   const remove = async () => {
@@ -56,13 +73,29 @@ export default function ProxyServiceDetail() {
           title={svc.name}
           badge={<Badge color={st.color}>{st.label}</Badge>}
           actions={
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <Link to={`/proxy-services/${id}/edit`} className="btn-primary text-sm">编辑</Link>
+              <button type="button" className="btn-secondary text-sm" disabled={probing || !(instances.length > 0)} onClick={probeLatency}>
+                {probing ? '探测中…' : '探测延迟'}
+              </button>
               <Link to={`/proxy-services/new`} className="btn-secondary text-sm" state={{ from: id }}>再发布</Link>
-              <button type="button" className="btn-primary text-sm" onClick={syncRepo}>同步到落地仓库</button>
+              <button type="button" className="btn-secondary text-sm" onClick={syncRepo}>同步到落地仓库</button>
               <button type="button" className="btn-secondary text-sm text-rose-600" onClick={remove}>删除</button>
             </div>
           }
         />
+
+        {latency?.summary && (
+          <div className={`mb-4 px-4 py-2.5 rounded-xl border text-[13px] ${
+            latency.ok_count > 0 && latency.fail_count === 0
+              ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
+              : latency.ok_count > 0
+                ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20'
+                : 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-900/20'
+          }`}>
+            延迟探测：{latency.summary}
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-3 gap-4 mb-4">
           <Panel>
@@ -110,6 +143,7 @@ export default function ProxyServiceDetail() {
                     <th>端口</th>
                     <th>分享地址</th>
                     <th>状态</th>
+                    <th>延迟</th>
                     <th>落地仓库</th>
                     <th>URI</th>
                   </tr>
@@ -134,6 +168,15 @@ export default function ProxyServiceDetail() {
                           {i.deploy_status}
                         </Badge>
                         {i.last_error && <div className="text-[11px] text-amber-600 mt-0.5 max-w-[200px]">{i.last_error}</div>}
+                      </td>
+                      <td className="text-[12px] font-mono">
+                        {(() => {
+                          const r = (latency?.results || []).find(x => x.instance_id === i.id || x.node_id === i.node_id)
+                          if (probing) return <span className="text-ink-mut">…</span>
+                          if (!r) return <span className="text-ink-mut">—</span>
+                          if (r.ok) return <span className="text-emerald-700 dark:text-emerald-300">{r.latency_ms} ms</span>
+                          return <span className="text-rose-600" title={r.error}>失败</span>
+                        })()}
                       </td>
                       <td>
                         {i.synced_repo_id > 0

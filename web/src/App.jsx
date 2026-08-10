@@ -136,6 +136,7 @@ export default function App() {
           <Route path="/nodes/:id" element={<AdminRoute><NodeDetail /></AdminRoute>} />
           <Route path="/proxy-services" element={<AdminRoute><ProxyServiceList /></AdminRoute>} />
           <Route path="/proxy-services/new" element={<AdminRoute><ProxyServiceWizard /></AdminRoute>} />
+          <Route path="/proxy-services/:id/edit" element={<AdminRoute><ProxyServiceWizard /></AdminRoute>} />
           <Route path="/proxy-services/:id" element={<AdminRoute><ProxyServiceDetail /></AdminRoute>} />
           <Route path="/rules" element={<AdminRoute><RulesList /></AdminRoute>} />
           <Route path="/rules/:id" element={<AdminRoute><RulesDetail /></AdminRoute>} />
