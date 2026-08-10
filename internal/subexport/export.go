@@ -139,37 +139,49 @@ func buildClashYAML(nodes []Node, opt Options, global bool) string {
 	}
 	b.WriteString("#\n")
 
-	b.WriteString("mixed-port: 7890\n")
-	b.WriteString("allow-lan: false\n")
-	b.WriteString("mode: rule\n")
-	b.WriteString("log-level: info\n")
-	b.WriteString("ipv6: false\n")
-	b.WriteString("\n")
-	b.WriteString("dns:\n")
-	b.WriteString("  enable: true\n")
-	b.WriteString("  ipv6: false\n")
-	b.WriteString("  enhanced-mode: fake-ip\n")
-	b.WriteString("  fake-ip-range: 198.18.0.1/16\n")
-	b.WriteString("  default-nameserver:\n")
-	b.WriteString("    - 223.5.5.5\n")
-	b.WriteString("    - 8.8.8.8\n")
-	if global {
-		b.WriteString("  nameserver:\n")
-		b.WriteString("    - https://1.1.1.1/dns-query\n")
-		b.WriteString("    - https://8.8.8.8/dns-query\n")
-		b.WriteString("  respect-rules: true\n")
-	} else {
-		b.WriteString("  nameserver:\n")
+		b.WriteString("mixed-port: 7890\n")
+		b.WriteString("allow-lan: false\n")
+		b.WriteString("mode: rule\n")
+		b.WriteString("log-level: info\n")
+		b.WriteString("ipv6: false\n")
+		b.WriteString("unified-delay: true\n")
+		b.WriteString("tcp-concurrent: true\n")
+		b.WriteString("\n")
+		// Anti-DNS-leak: fake-ip + DoH + respect-rules so app DNS follows proxy rules.
+		b.WriteString("dns:\n")
+		b.WriteString("  enable: true\n")
+		b.WriteString("  ipv6: false\n")
+		b.WriteString("  enhanced-mode: fake-ip\n")
+		b.WriteString("  fake-ip-range: 198.18.0.1/16\n")
+		b.WriteString("  fake-ip-filter:\n")
+		b.WriteString("    - \"*.lan\"\n")
+		b.WriteString("    - \"*.local\"\n")
+		b.WriteString("    - \"localhost.ptlogin2.qq.com\"\n")
+		b.WriteString("  use-hosts: true\n")
+		b.WriteString("  default-nameserver:\n")
+		b.WriteString("    - 223.5.5.5\n")
+		b.WriteString("    - 8.8.8.8\n")
+		b.WriteString("  proxy-server-nameserver:\n")
 		b.WriteString("    - https://dns.alidns.com/dns-query\n")
 		b.WriteString("    - https://doh.pub/dns-query\n")
-		b.WriteString("  fallback:\n")
-		b.WriteString("    - https://1.1.1.1/dns-query\n")
-		b.WriteString("    - https://8.8.8.8/dns-query\n")
-		b.WriteString("  fallback-filter:\n")
-		b.WriteString("    geoip: true\n")
-		b.WriteString("    geoip-code: CN\n")
-	}
-	b.WriteString("\n")
+		if global {
+			b.WriteString("  nameserver:\n")
+			b.WriteString("    - https://1.1.1.1/dns-query\n")
+			b.WriteString("    - https://8.8.8.8/dns-query\n")
+			b.WriteString("  respect-rules: true\n")
+		} else {
+			b.WriteString("  nameserver:\n")
+			b.WriteString("    - https://dns.alidns.com/dns-query\n")
+			b.WriteString("    - https://doh.pub/dns-query\n")
+			b.WriteString("  fallback:\n")
+			b.WriteString("    - https://1.1.1.1/dns-query\n")
+			b.WriteString("    - https://8.8.8.8/dns-query\n")
+			b.WriteString("  fallback-filter:\n")
+			b.WriteString("    geoip: true\n")
+			b.WriteString("    geoip-code: CN\n")
+			b.WriteString("  respect-rules: true\n")
+		}
+		b.WriteString("\n")
 	b.WriteString("proxies:\n")
 	if len(proxies) == 0 {
 		b.WriteString("  []\n")
@@ -218,17 +230,23 @@ func buildClashYAML(nodes []Node, opt Options, global bool) string {
 		}
 	}
 
-	b.WriteString("\nrules:\n")
-	if global {
-		b.WriteString("  - GEOIP,PRIVATE,DIRECT\n")
-		b.WriteString("  - MATCH,PROXY\n")
-	} else {
-		b.WriteString("  - GEOIP,PRIVATE,DIRECT\n")
-		b.WriteString("  - GEOIP,CN,DIRECT\n")
-		b.WriteString("  - MATCH,PROXY\n")
+		b.WriteString("\nrules:\n")
+		b.WriteString("  - DOMAIN-SUFFIX,local,DIRECT\n")
+		b.WriteString("  - DOMAIN-SUFFIX,localhost,DIRECT\n")
+		b.WriteString("  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n")
+		b.WriteString("  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve\n")
+		b.WriteString("  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve\n")
+		b.WriteString("  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve\n")
+		b.WriteString("  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve\n")
+		b.WriteString("  - GEOIP,PRIVATE,DIRECT,no-resolve\n")
+		if global {
+			b.WriteString("  - MATCH,PROXY\n")
+		} else {
+			b.WriteString("  - GEOIP,CN,DIRECT\n")
+			b.WriteString("  - MATCH,PROXY\n")
+		}
+		return b.String()
 	}
-	return b.String()
-}
 
 // ShadowrocketConf builds a native .conf with anti-leak defaults.
 func ShadowrocketConf(nodes []Node, opt Options) string {
