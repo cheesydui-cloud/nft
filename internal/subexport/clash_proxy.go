@@ -234,6 +234,10 @@ func vlessToClash(rest, forceName string) string {
 	if flow := params["flow"]; flow != "" {
 		fmt.Fprintf(&b, "  flow: %s\n", flow)
 	}
+	// Match server decryption=mlkem… — client must send same encryption material.
+	if enc := normalizeVLESSEncTokenLocal(params["encryption"]); enc != "" && !strings.EqualFold(enc, "none") {
+		fmt.Fprintf(&b, "  encryption: %s\n", strconv.Quote(enc))
+	}
 	sec := params["security"]
 	if sec == "tls" || sec == "reality" {
 		b.WriteString("  tls: true\n")
@@ -252,6 +256,9 @@ func vlessToClash(rest, forceName string) string {
 		if sid := params["sid"]; sid != "" {
 			fmt.Fprintf(&b, "    short-id: %s\n", sid)
 		}
+		if spx := params["spx"]; spx != "" {
+			fmt.Fprintf(&b, "    spider-x: %s\n", strconv.Quote(spx))
+		}
 	}
 	netw := params["type"]
 	if netw == "" {
@@ -261,8 +268,35 @@ func vlessToClash(rest, forceName string) string {
 		fmt.Fprintf(&b, "  network: %s\n", netw)
 	}
 	appendClashTransport(&b, netw, params)
+	if params["flow"] == "xtls-rprx-vision" {
+		b.WriteString("  packet-encoding: xudp\n")
+	}
 	b.WriteString("  udp: true")
 	return b.String()
+}
+
+// normalizeVLESSEncTokenLocal strips quotes; duplicated here to avoid importing proxysvc
+// into subexport (circular risk). Keep in sync with proxysvc.normalizeVLESSEncToken.
+func normalizeVLESSEncTokenLocal(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		if len(s) >= 2 {
+			if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+				s = strings.TrimSpace(s[1 : len(s)-1])
+				continue
+			}
+		}
+		if strings.HasPrefix(s, "\"") || strings.HasPrefix(s, "'") {
+			s = strings.TrimSpace(s[1:])
+			continue
+		}
+		if strings.HasSuffix(s, "\"") || strings.HasSuffix(s, "'") {
+			s = strings.TrimSpace(s[:len(s)-1])
+			continue
+		}
+		break
+	}
+	return s
 }
 
 func appendClashTransport(b *strings.Builder, netw string, params map[string]string) {

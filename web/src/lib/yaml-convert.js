@@ -282,6 +282,15 @@ function vlessToYaml(uri) {
   const uuid = rest.slice(0, at)
   const hp = hostport(rest.slice(at + 1))
   if (!hp) return null
+  // Strip accidental quotes around vlessenc material (xray / old paste).
+  const stripQ = (s) => {
+    let v = String(s || '').trim()
+    while (
+      (v.startsWith('"') && v.endsWith('"')) ||
+      (v.startsWith("'") && v.endsWith("'"))
+    ) v = v.slice(1, -1).trim()
+    return v
+  }
   const L = []
   L.push(`- name: "${esc(name)}"`)
   L.push(`  type: vless`)
@@ -289,6 +298,13 @@ function vlessToYaml(uri) {
   L.push(`  port: ${hp[1]}`)
   L.push(`  uuid: ${uuid}`)
   if (params.flow) L.push(`  flow: ${params.flow}`)
+  // Server decryption=mlkem… requires matching client encryption; omit only when none.
+  {
+    const enc = stripQ(params.encryption || '')
+    if (enc && enc.toLowerCase() !== 'none') {
+      L.push(`  encryption: "${esc(enc)}"`)
+    }
+  }
   if (params.security === 'tls' || params.security === 'reality') L.push(`  tls: true`)
   if (params.sni) L.push(`  servername: ${params.sni}`)
   if (params.fp) L.push(`  client-fingerprint: ${params.fp}`)
@@ -296,10 +312,14 @@ function vlessToYaml(uri) {
     L.push(`  reality-opts:`)
     if (params.pbk) L.push(`    public-key: ${params.pbk}`)
     if (params.sid) L.push(`    short-id: ${params.sid}`)
+    // spiderX is client-only (browser path probe); map spx if present.
+    if (params.spx) L.push(`    spider-x: "${esc(params.spx)}"`)
   }
   const net = params.type || 'tcp'
   if (net !== 'tcp') L.push(`  network: ${net}`)
   appendTransport(L, net, params)
+  // Vision + REALITY: xudp packet encoding improves UDP/QUIC through tunnel.
+  if (params.flow === 'xtls-rprx-vision') L.push(`  packet-encoding: xudp`)
   L.push(`  udp: true`)
   return L.join('\n')
 }

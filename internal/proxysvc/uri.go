@@ -39,9 +39,9 @@ type VLESSConfig struct {
 	UUID              string `json:"uuid"`
 	SubVisible        bool   `json:"sub_visible"`
 	// Transport extras (ws / httpupgrade / xhttp)
-	Path     string `json:"path"`
-	Host     string `json:"host"` // Host header / authority
-	SpiderX  string `json:"spider_x"`
+	Path      string `json:"path"`
+	Host      string `json:"host"` // Host header / authority
+	SpiderX   string `json:"spider_x"`
 	XHTTPMode string `json:"xhttp_mode"` // auto | packet-up | stream-up | stream-one
 }
 
@@ -115,6 +115,10 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 				c.ShortID = randomHex(8)
 			}
 		}
+		// xray vlessenc / paste often wraps material in quotes — strip so share URI
+		// and server config stay in sync (quoted encryption breaks clients).
+		c.Encryption = normalizeVLESSEncToken(c.Encryption)
+		c.Decryption = normalizeVLESSEncToken(c.Decryption)
 		if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
 			c.Path = "/"
 		}
@@ -192,8 +196,9 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		}
 		q := url.Values{}
 		// encryption: none unless ML-KEM / vlessenc material provided
-		if strings.TrimSpace(c.Encryption) != "" {
-			q.Set("encryption", strings.TrimSpace(c.Encryption))
+		enc := normalizeVLESSEncToken(c.Encryption)
+		if enc != "" && !strings.EqualFold(enc, "none") {
+			q.Set("encryption", enc)
 		} else {
 			q.Set("encryption", "none")
 		}
