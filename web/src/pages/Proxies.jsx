@@ -181,10 +181,6 @@ export default function Proxies() {
   const canClashYaml = (n) => {
     const item = proxyItemForClash(n)
     if (!item?.uri) return false
-    const uri = item.uri.toLowerCase()
-    if (uri.startsWith('mierus://') || uri.startsWith('mieru://')) return false
-    const proto = String(item.protocol || '').toLowerCase()
-    if (proto === 'mieru' || proto === 'mierus') return false
     return !!uriToClashYaml(item.uri)
   }
 
@@ -195,12 +191,7 @@ export default function Proxies() {
       return
     }
     if (!uriToClashYaml(item.uri)) {
-      const uri = item.uri.toLowerCase()
-      if (uri.startsWith('mieru') || String(item.protocol || '').toLowerCase().includes('mieru')) {
-        toast('Mihomo/Clash 不支持 mieru，请用「复制链接」', 'error')
-      } else {
-        toast('该链接无法转成 Mihomo YAML（格式无法识别）', 'error')
-      }
+      toast('该链接无法转成 Clash/Mihomo YAML（格式无法识别）', 'error')
       return
     }
     const { yaml, count, skipped } = buildClashProfile([item], {
@@ -209,18 +200,13 @@ export default function Proxies() {
       brand: 'nft-panel',
     })
     if (count === 0) {
-      toast(
-        skipped > 0
-          ? 'Mihomo/Clash 不支持该协议，请用复制链接'
-          : '生成 YAML 失败',
-        'error',
-      )
+      toast(skipped > 0 ? '该协议无法写入 Clash YAML' : '生成 YAML 失败', 'error')
       return
     }
     const safe = String(item.name || 'proxy').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 48)
-    const file = `mihomo-${safe}.yaml`
+    const file = `clash-${safe}.yaml`
     downloadTextFile(file, yaml)
-    toast(`已下载 ${file}（导入 Mihomo/Clash 即可使用）`)
+    toast(`已下载 ${file}（Clash/Mihomo 导入即可使用）`)
   }
 
   return (
@@ -303,18 +289,14 @@ export default function Proxies() {
                             type="button"
                             onClick={() => downloadRowYaml(n)}
                             className="text-emerald-600 font-sans text-xs font-semibold hover:underline"
-                            title="下载单节点完整 Mihomo/Clash YAML（含 DNS 防泄漏），导入即可使用该代理"
+                            title="下载单节点完整 Clash/Mihomo YAML（含 DNS 防泄漏），导入即可使用该代理"
                           >
                             下载 YAML
                           </button>
                         ) : (
                           <span
                             className="text-ink-mut font-sans text-xs font-semibold opacity-40 cursor-not-allowed"
-                            title={
-                              String(n.protocol || '').toLowerCase() === 'mieru'
-                                ? 'Mihomo 不支持 mieru，请用复制链接'
-                                : '该协议无法生成 Mihomo YAML'
-                            }
+                            title="该协议无法生成 Clash YAML"
                           >
                             下载 YAML
                           </span>

@@ -18,8 +18,97 @@ export function uriToClashYaml(uri) {
     case 'trojan': return trojanToYaml(raw)
     case 'hy2':
     case 'hysteria2': return hy2ToYaml(raw)
+    case 'mieru':
+    case 'mierus':
+      return mieruToYaml(raw)
     default: return null
   }
+}
+
+/** Mihomo native mieru (Meta). Official share: mierus://user:pass@host?port=P&protocol=TCP */
+function mieruToYaml(uri) {
+  const i = uri.indexOf('://')
+  let rest = uri.slice(i + 3)
+  let name = ''
+  const h = rest.indexOf('#')
+  if (h >= 0) { name = dec(rest.slice(h + 1)); rest = rest.slice(0, h) }
+  let params = {}
+  const q = rest.indexOf('?')
+  if (q >= 0) {
+    params = parseQSMulti(rest.slice(q + 1))
+    rest = rest.slice(0, q)
+  }
+  let username = '', password = ''
+  const at = rest.lastIndexOf('@')
+  if (at >= 0) {
+    const userinfo = rest.slice(0, at)
+    const colon = userinfo.indexOf(':')
+    if (colon >= 0) {
+      username = dec(userinfo.slice(0, colon))
+      password = dec(userinfo.slice(colon + 1))
+    } else {
+      username = dec(userinfo)
+    }
+    rest = rest.slice(at + 1)
+  }
+  // Authority is usually host only; port lives in query (may appear multiple times).
+  let host = rest
+  let port = 0
+  if (host.startsWith('[')) {
+    const close = host.indexOf(']')
+    if (close > 0) host = host.slice(1, close)
+  } else {
+    const c = host.lastIndexOf(':')
+    if (c > 0 && /^\d+$/.test(host.slice(c + 1))) {
+      port = Number(host.slice(c + 1))
+      host = host.slice(0, c)
+    }
+  }
+  const ports = [].concat(params.port || []).map(Number).filter(n => n > 0 && n <= 65535)
+  if (!port && ports.length) port = ports[0]
+  if (!host || !port) return null
+  if (!username || !password) return null
+
+  // protocol may be multi: TCP,UDP — Clash field is singular; prefer TCP then UDP.
+  const protos = [].concat(params.protocol || []).map(p => String(p).toUpperCase())
+  let transport = 'TCP'
+  if (protos.includes('TCP')) transport = 'TCP'
+  else if (protos.includes('UDP')) transport = 'UDP'
+  else if (protos[0]) transport = protos[0]
+
+  if (!name) name = params.profile || host
+
+  const L = []
+  L.push(`- name: "${esc(name)}"`)
+  L.push(`  type: mieru`)
+  L.push(`  server: ${host}`)
+  L.push(`  port: ${port}`)
+  L.push(`  transport: ${transport}`)
+  L.push(`  username: "${esc(username)}"`)
+  L.push(`  password: "${esc(password)}"`)
+  L.push(`  multiplexing: MULTIPLEXING_LOW`)
+  if (params['traffic-pattern'] || params.trafficPattern) {
+    const tp = params['traffic-pattern'] || params.trafficPattern
+    const v = Array.isArray(tp) ? tp[0] : tp
+    if (v) L.push(`  traffic-pattern: "${esc(v)}"`)
+  }
+  return L.join('\n')
+}
+
+/** Like parseQS but keeps multi-value keys as arrays (mieru port/protocol). */
+function parseQSMulti(qs) {
+  const m = {}
+  for (const p of String(qs || '').split('&')) {
+    if (!p) continue
+    const eq = p.indexOf('=')
+    const k = eq >= 0 ? dec(p.slice(0, eq)) : dec(p)
+    const v = eq >= 0 ? dec(p.slice(eq + 1)) : ''
+    if (!k) continue
+    if (m[k] === undefined) m[k] = v
+    else if (Array.isArray(m[k])) m[k].push(v)
+    else m[k] = [m[k], v]
+  }
+  return m
 }
 
 function ssToYaml(uri) {

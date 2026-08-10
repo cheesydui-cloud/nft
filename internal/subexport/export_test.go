@@ -18,9 +18,9 @@ func sampleNodes() []Node {
 			URI:      "ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206QUFBQUFBQUFBQUFBQUFBQUFBQUE=@5.6.7.8:8388#SS1",
 		},
 		{
-			Name:     "mieru-skip",
+			Name:     "mieru-1",
 			Protocol: "mieru",
-			URI:       "mierus://u:p@9.9.9.9?profile=x",
+			URI:      "mierus://u:p@9.9.9.9?profile=x&port=443&protocol=TCP",
 		},
 	}
 }
@@ -42,17 +42,30 @@ func TestClashSplit(t *testing.T) {
 		"mixed-port: 7890",
 		"type: vless",
 		"type: ss",
+		"type: mieru",
 		"GEOIP,CN,DIRECT",
 		"MATCH,PROXY",
-		"mieru",
 	} {
 		if !strings.Contains(yml, want) {
 			t.Fatalf("missing %q in:\n%s", want, yml)
 		}
 	}
-	// mieru should be comment-only, not a proxy entry type
-	if strings.Contains(yml, "type: mieru") {
-		t.Fatal("should not emit mieru proxy type")
+}
+
+func TestMieruToClash(t *testing.T) {
+	yml := URIToClashProxy("mierus://alice:secret@1.2.3.4?port=26582&protocol=TCP&protocol=UDP&profile=p1", "PV2")
+	for _, want := range []string{
+		`name: "PV2"`,
+		"type: mieru",
+		"server: 1.2.3.4",
+		"port: 26582",
+		"transport: TCP",
+		`username: "alice"`,
+		`password: "secret"`,
+	} {
+		if !strings.Contains(yml, want) {
+			t.Fatalf("missing %q in:\n%s", want, yml)
+		}
 	}
 }
 
@@ -66,6 +79,9 @@ func TestClashGlobalNoCN(t *testing.T) {
 	}
 	if !strings.Contains(yml, "1.1.1.1") {
 		t.Fatal("want cloudflare dns")
+	}
+	if !strings.Contains(yml, "type: mieru") {
+		t.Fatal("global should include mieru proxies")
 	}
 }
 

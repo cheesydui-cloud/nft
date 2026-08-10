@@ -22,12 +22,6 @@ export function buildClashProfile(items, opt = {}) {
   for (const it of items || []) {
     const uri = (it?.uri || '').trim()
     if (!uri) continue
-    const proto = String(it.protocol || '').toLowerCase()
-    const lower = uri.toLowerCase()
-    if (proto === 'mieru' || lower.startsWith('mierus://') || lower.startsWith('mieru://')) {
-      skipped++
-      continue
-    }
     let name = (it.name || '').trim() || nameFromURI(uri) || 'proxy'
     const base = name
     if (seen[base]) {
@@ -64,10 +58,10 @@ export function buildClashProfile(items, opt = {}) {
     L.push('# 客户端模式必须为 Rule（不要用 Global）')
   }
   if (skipped > 0) {
-    L.push(`# note: ${skipped} 条未写入 Clash（mieru 或不支持协议，请用 URI/普通订阅）`)
+    L.push(`# note: ${skipped} 条未写入 Clash（协议无法识别）`)
   }
   if (names.length === 0) {
-    L.push('# warning: 当前列表没有 Clash 可识别节点（ss/vless/vmess/trojan/hy2）')
+    L.push('# warning: 当前列表没有 Clash 可识别节点（ss/vless/vmess/trojan/hy2/mieru）')
   }
   L.push('#')
   L.push('mixed-port: 7890')

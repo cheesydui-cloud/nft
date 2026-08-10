@@ -21,13 +21,106 @@ func URIToClashProxy(uri, forceName string) string {
 		return ""
 	}
 	switch strings.ToLower(scheme) {
-	case "ss":
+	case "ss", "shadowsocks":
 		return ssToClash(rest, forceName)
 	case "vless":
 		return vlessToClash(rest, forceName)
+	case "mieru", "mierus":
+		return mieruToClash(rest, forceName)
 	default:
 		return ""
 	}
+}
+
+// mieruToClash maps mierus://user:pass@host?port=P&protocol=TCP to Mihomo type: mieru.
+func mieruToClash(rest, forceName string) string {
+	name := forceName
+	if i := strings.Index(rest, "#"); i >= 0 {
+		if name == "" {
+			name, _ = url.QueryUnescape(rest[i+1:])
+		}
+		rest = rest[:i]
+	}
+	params := url.Values{}
+	if i := strings.Index(rest, "?"); i >= 0 {
+		params, _ = url.ParseQuery(rest[i+1:])
+		rest = rest[:i]
+	}
+	var username, password string
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		userinfo := rest[:at]
+		if colon := strings.Index(userinfo, ":"); colon >= 0 {
+			username, _ = url.QueryUnescape(userinfo[:colon])
+			password, _ = url.QueryUnescape(userinfo[colon+1:])
+		} else {
+			username, _ = url.QueryUnescape(userinfo)
+		}
+		rest = rest[at+1:]
+	}
+	host := rest
+	port := 0
+	// authority may be host or host:port
+	if h, p, err := net.SplitHostPort(rest); err == nil {
+		host = h
+		if n, e := strconv.Atoi(p); e == nil {
+			port = n
+		}
+	} else if strings.HasPrefix(rest, "[") {
+		// bare IPv6 without port
+		if end := strings.Index(rest, "]"); end > 0 {
+			host = rest[1:end]
+		}
+	}
+	if port <= 0 {
+		for _, p := range params["port"] {
+			if n, err := strconv.Atoi(p); err == nil && n > 0 && n <= 65535 {
+				port = n
+				break
+			}
+		}
+	}
+	if host == "" || port <= 0 || username == "" || password == "" {
+		return ""
+	}
+	transport := "TCP"
+	protos := params["protocol"]
+	hasTCP, hasUDP := false, false
+	for _, p := range protos {
+		u := strings.ToUpper(strings.TrimSpace(p))
+		if u == "TCP" {
+			hasTCP = true
+		}
+		if u == "UDP" {
+			hasUDP = true
+		}
+	}
+	if hasTCP {
+		transport = "TCP"
+	} else if hasUDP {
+		transport = "UDP"
+	} else if len(protos) > 0 {
+		transport = strings.ToUpper(strings.TrimSpace(protos[0]))
+	}
+	if name == "" {
+		if pr := params.Get("profile"); pr != "" {
+			name = pr
+		} else {
+			name = host
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "- name: %s\n", strconv.Quote(name))
+	b.WriteString("  type: mieru\n")
+	fmt.Fprintf(&b, "  server: %s\n", host)
+	fmt.Fprintf(&b, "  port: %d\n", port)
+	fmt.Fprintf(&b, "  transport: %s\n", transport)
+	fmt.Fprintf(&b, "  username: %s\n", strconv.Quote(username))
+	fmt.Fprintf(&b, "  password: %s\n", strconv.Quote(password))
+	b.WriteString("  multiplexing: MULTIPLEXING_LOW")
+	if tp := params.Get("traffic-pattern"); tp != "" {
+		fmt.Fprintf(&b, "\n  traffic-pattern: %s", strconv.Quote(tp))
+	}
+	return b.String()
 }
 
 func ssToClash(rest, forceName string) string {
