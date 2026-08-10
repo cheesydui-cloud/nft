@@ -25,6 +25,29 @@ func sampleNodes() []Node {
 	}
 }
 
+func TestShadowrocketKeepsVlessEnc(t *testing.T) {
+	uri := "vless://83aca93f-7528-44d8-81f3-28f60f9b4eee@82.22.26.185:34675?" +
+		"encryption=mlkem768x25519plus.native.0rtt.kGaEswhJ3xgK3mOoroEmMKt5rz7BuhKlW-5hgsF58TU" +
+		"&flow=xtls-rprx-vision&fp=chrome&pbk=L3GMCXKxjGxnSuloZaYcClGs0TBIyxZNkQKlFJsnKS4" +
+		"&security=reality&sid=25504571db26a342&sni=www.kyoto-u.ac.jp&type=tcp#TEST7"
+	line := URIToShadowrocketLine(uri, "TEST7")
+	if line == "" {
+		t.Fatal("empty sr line")
+	}
+	if !strings.Contains(line, "encryption=mlkem768x25519plus.native.0rtt.kGaEswhJ3xgK3mOoroEmMKt5rz7BuhKlW-5hgsF58TU") {
+		t.Fatalf("sr line must keep vlessenc encryption:\n%s", line)
+	}
+	if !strings.Contains(line, "flow=xtls-rprx-vision") || !strings.Contains(line, "public-key=") {
+		t.Fatalf("sr line missing reality fields:\n%s", line)
+	}
+	// none → do not emit encryption=
+	lineNone := URIToShadowrocketLine(
+		"vless://u@1.2.3.4:443?encryption=none&security=reality&sni=a.com&pbk=x&type=tcp#n", "n")
+	if strings.Contains(lineNone, "encryption=") {
+		t.Fatalf("none should omit encryption field: %s", lineNone)
+	}
+}
+
 func TestPlainBase64(t *testing.T) {
 	b64 := PlainBase64(sampleNodes())
 	if b64 == "" {

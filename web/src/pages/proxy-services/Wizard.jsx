@@ -462,7 +462,8 @@ export default function ProxyServiceWizard() {
                         }}>清空</button>
                       </div>
                       <p className="text-[11px] text-ink-mut mt-1">
-                        可选 vlessenc：默认一键生成 X25519 短密钥（encryption 含 0rtt、decryption 含 600s，各约 70–80 字符，对齐 Weir）。改配置后须「重新发布」节点。留空即 none。
+                        可选 VLESS Encryption（vlessenc）：生成后服务端与客户端必须成对。默认 X25519 短密钥（0rtt / 600s，各约 70–80 字符）。改后须「重新发布」并重新导入节点。
+                        小火箭请用「复制 URI」或更新后的规则订阅；若客户端不支持 vlessenc，请点清空（none）——REALITY 本身已够用。
                       </p>
                     </div>
                   </div>

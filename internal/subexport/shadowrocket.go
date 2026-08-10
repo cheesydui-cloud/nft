@@ -122,24 +122,34 @@ func vlessToSR(rest, forceName string) string {
 	if fp := params["fp"]; fp != "" {
 		parts = append(parts, "client-fingerprint="+fp)
 	}
-	if flow := params["flow"]; flow != "" {
-		parts = append(parts, "flow="+flow)
-	}
-	netw := params["type"]
-	if netw == "" {
-		netw = "tcp"
-	}
-	if netw != "tcp" {
-		parts = append(parts, "obfs="+netw)
-		if path := params["path"]; path != "" {
-			parts = append(parts, "obfs-path="+path)
+		if flow := params["flow"]; flow != "" {
+			parts = append(parts, "flow="+flow)
 		}
-		if h := params["host"]; h != "" {
-			parts = append(parts, "obfs-host="+h)
+		// VLESS Encryption (vlessenc): must mirror URI encryption= when not none.
+		// Older exports dropped this field → Shadowrocket dialed as encryption=none
+		// while server had decryption=mlkem… → TCP OK, proxy dead.
+		if enc := strings.TrimSpace(params["encryption"]); enc != "" && !strings.EqualFold(enc, "none") {
+			// Strip accidental quotes from paste / old generators.
+			for len(enc) >= 2 && ((enc[0] == '"' && enc[len(enc)-1] == '"') || (enc[0] == '\'' && enc[len(enc)-1] == '\'')) {
+				enc = enc[1 : len(enc)-1]
+			}
+			parts = append(parts, "encryption="+enc)
 		}
+		netw := params["type"]
+		if netw == "" {
+			netw = "tcp"
+		}
+		if netw != "tcp" {
+			parts = append(parts, "obfs="+netw)
+			if path := params["path"]; path != "" {
+				parts = append(parts, "obfs-path="+path)
+			}
+			if h := params["host"]; h != "" {
+				parts = append(parts, "obfs-host="+h)
+			}
+		}
+		return strings.Join(parts, ", ")
 	}
-	return strings.Join(parts, ", ")
-}
 
 func escapeSRName(name string) string {
 	// Keep simple; strip commas that break conf
