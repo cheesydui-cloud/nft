@@ -200,22 +200,29 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	_ = os.Chmod(cfgPath, 0o640)
 
 	// Official order: mita run (daemon/RPC) → apply config → mita start (listen).
-	// Panel-only binary has no user/dirs/unit; prepareMitaRuntime installs them.
+	// prepare installs /usr/local/bin/mita + user/dirs/unit (bare cache path is not enough).
 	if err := ensureMitaDaemon(mitaPath); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
+	}
+	// After prepare, always talk to the system binary.
+	if p := resolveMitaBinary(); p != "" {
+		mitaPath = p
 	}
 
 	// apply merges into existing mita settings (multiple instances on one host OK).
 	if out, err := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err != nil {
 		// Daemon may have died; one more prepare+apply attempt.
 		_ = ensureMitaDaemon(mitaPath)
+		if p := resolveMitaBinary(); p != "" {
+			mitaPath = p
+		}
 		if out2, err2 := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err2 != nil {
-			jout, _ := runCmdTimeout(8*time.Second, "journalctl", "-u", "mita", "-n", "30", "--no-pager")
 			return wsproto.ProxyServiceApplyAck{
 				OK: false,
 				Error: fmt.Sprintf(
-					"mita apply config 失败: %v (%s); 重试: %v (%s)。journal: %s",
-					err, truncateOut(out), err2, truncateOut(out2), truncateOut(jout)),
+					"mita apply config 失败: %v (%s); 重试: %v (%s)。%s journal: %s",
+					err, truncateOut(out), err2, truncateOut(out2),
+					diagnoseMitaStart(mitaPath), truncateOut(mitaJournal())),
 			}
 		}
 	}
@@ -225,10 +232,13 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if err := mitaProxyStart(mitaPath); err != nil {
 		// Daemon may have flapped; re-ensure run daemon then start listen.
 		_ = ensureMitaDaemon(mitaPath)
+		if p := resolveMitaBinary(); p != "" {
+			mitaPath = p
+		}
 		if err2 := mitaProxyStart(mitaPath); err2 != nil {
 			return wsproto.ProxyServiceApplyAck{
 				OK:    false,
-				Error: "mita 应用配置后无法进入监听: " + err2.Error(),
+				Error: "mita 应用配置后无法进入监听: " + err2.Error() + "; " + diagnoseMitaStart(mitaPath),
 			}
 		}
 	}
