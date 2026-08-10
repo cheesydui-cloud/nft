@@ -397,7 +397,7 @@ export default function ProxyServiceDetail() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="tbl w-full min-w-[720px]">
+              <table className="tbl w-full min-w-[640px]">
                 <thead>
                   <tr>
                     <th>节点</th>
@@ -405,7 +405,7 @@ export default function ProxyServiceDetail() {
                     <th>分享地址</th>
                     <th>状态</th>
                     <th>延迟</th>
-                    <th>URI</th>
+                    <th>链接</th>
                     <th className="text-right">操作</th>
                   </tr>
                 </thead>
@@ -421,7 +421,7 @@ export default function ProxyServiceDetail() {
                     const nodeName = i.node_name || `#${i.node_id}`
                     return (
                       <tr key={i.id}>
-                        <td>
+                        <td className="whitespace-nowrap">
                           <Link
                             to={`/nodes/${i.node_id}`}
                             className="font-semibold text-emerald-600 hover:underline"
@@ -434,17 +434,17 @@ export default function ProxyServiceDetail() {
                             <span className="text-[11px] text-ink-mut ml-1.5">离线</span>
                           )}
                         </td>
-                        <td className="font-mono">{i.listen_port}</td>
-                        <td className="font-mono text-[12px]">{i.share_host || '—'}</td>
-                        <td>
+                        <td className="font-mono whitespace-nowrap">{i.listen_port}</td>
+                        <td className="font-mono text-[12px] whitespace-nowrap">{i.share_host || '—'}</td>
+                        <td className="whitespace-nowrap">
                           <Badge color={ds.color}>{ds.label}</Badge>
                           {i.last_error ? (
-                            <div className="text-[11px] text-amber-600 mt-0.5 max-w-[220px]" title={i.last_error}>
+                            <div className="text-[11px] text-amber-600 mt-0.5 max-w-[180px] truncate" title={i.last_error}>
                               {i.last_error}
                             </div>
                           ) : null}
                         </td>
-                        <td className="text-[12px] font-mono">
+                        <td className="text-[12px] font-mono whitespace-nowrap">
                           {probing ? (
                             <span className="text-ink-mut">…</span>
                           ) : !latR ? (
@@ -457,13 +457,13 @@ export default function ProxyServiceDetail() {
                             </span>
                           )}
                         </td>
-                        <td className="max-w-[280px]">
+                        <td className="whitespace-nowrap">
                           {i.uri ? (
-                            <span className="text-[11px] font-mono break-all block">
-                              <CopyText text={i.uri} />
-                            </span>
+                            <CopyText text={i.uri}>
+                              <span className="text-emerald-600 font-semibold text-[13px]">复制</span>
+                            </CopyText>
                           ) : (
-                            '—'
+                            <span className="text-ink-mut">—</span>
                           )}
                         </td>
                         <td className="text-right whitespace-nowrap text-sm">
