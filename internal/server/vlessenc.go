@@ -13,8 +13,9 @@ import (
 
 // generateVlessEncPair runs `xray vlessenc` from the panel core cache and
 // returns client encryption + server decryption strings.
+// auth: "x25519" (default, short keys, matches Weir / most clients) or "mlkem" (PQ, long).
 // Requires a cached xray binary that supports the vlessenc subcommand.
-func generateVlessEncPair() (encryption, decryption, version string, err error) {
+func generateVlessEncPair(auth string) (encryption, decryption, version string, err error) {
 	bin, version, err := resolveLocalXrayBinary()
 	if err != nil {
 		return "", "", "", err
@@ -29,7 +30,10 @@ func generateVlessEncPair() (encryption, decryption, version string, err error) 
 		}
 		out = out2
 	}
-	enc, dec, ok := parseVlessEncOutput(out)
+	preferPQ := strings.EqualFold(strings.TrimSpace(auth), "mlkem") ||
+		strings.EqualFold(strings.TrimSpace(auth), "pq") ||
+		strings.EqualFold(strings.TrimSpace(auth), "mlkem768")
+	enc, dec, ok := parseVlessEncOutputPrefer(out, preferPQ)
 	if !ok {
 		return "", "", version, fmt.Errorf("无法解析 xray vlessenc 输出（version=%s）:\n%s", version, truncateRunes(out, 400))
 	}
@@ -101,11 +105,31 @@ func runXrayCmd(bin string, timeout time.Duration, args ...string) (string, erro
 //	"decryption": "..."
 //	"encryption": "..."
 //
-// Prefer the last complete pair (ML-KEM-768 / Post-Quantum) when present.
-// Never trust token order alone — assign roles via 0rtt / 600s heuristics.
+// parseVlessEncOutput defaults to X25519 short keys (Weir-compatible).
 func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
-	type pair struct{ enc, dec string }
+	return parseVlessEncOutputPrefer(out, false)
+}
 
+// parseVlessEncOutputPrefer extracts client encryption + server decryption from
+// `xray vlessenc` stdout.
+//
+// Real xray output (XTLS/Xray-core main/commands/all/vlessenc.go):
+//
+//	Authentication: X25519, not Post-Quantum
+//	"decryption": "mlkem768x25519plus.native.600s...."   // 32-byte key (~43 chars)
+//	"encryption": "mlkem768x25519plus.native.0rtt...."
+//
+//	Authentication: ML-KEM-768, Post-Quantum
+//	"decryption": "..."  // 64-byte seed
+//	"encryption": "..."  // 1184-byte pubkey — breaks many clients / share URIs
+//
+// Default preferPQ=false → first (X25519) pair. Weir and most mobile clients
+// use the short pair; PQ material produces multi-KB encryption that Clash /
+// Shadowrocket / URI import often drop or fail to handshake.
+// Never trust token order alone — assign roles via 0rtt / 600s heuristics.
+type vlessEncPair struct{ enc, dec string }
+
+func parseVlessEncOutputPrefer(out string, preferPQ bool) (encryption, decryption string, ok bool) {
 	// 1) Exact xray JSON-ish lines: "decryption": "..." / "encryption": "..."
 	//    Also accept unquoted keys: decryption: ...
 	keyValRe := regexp.MustCompile(`(?i)["']?(decryption|encryption)["']?\s*:\s*["']?([mlkemvlessenc][0-9A-Za-z+./_=-]+)["']?`)
@@ -114,12 +138,12 @@ func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
 	// 3) Chinese labels
 	zhRe := regexp.MustCompile(`(?i)(客户端|服务端|client|server)\s*[:：]\s*["']?([mlkemvlessenc][0-9A-Za-z+./_=-]+)["']?`)
 
-	var pairs []pair
-	cur := pair{}
+	var pairs []vlessEncPair
+	cur := vlessEncPair{}
 	flush := func() {
 		if cur.enc != "" && cur.dec != "" {
 			pairs = append(pairs, cur)
-			cur = pair{}
+			cur = vlessEncPair{}
 		}
 	}
 
@@ -175,8 +199,7 @@ func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
 	flush()
 
 	if len(pairs) > 0 {
-		// Prefer last pair (ML-KEM-768 block is printed after X25519).
-		p := pairs[len(pairs)-1]
+		p := pickVlessEncPair(pairs, preferPQ)
 		encryption, decryption = alignVlessEncRoles(p.enc, p.dec)
 		return encryption, decryption, true
 	}
@@ -213,13 +236,40 @@ func parseVlessEncOutput(out string) (encryption, decryption string, ok bool) {
 		return "", "", false
 	}
 
-	// Pair last two tokens as one pair (handles dual X25519+PQ dumps).
-	a, b := tokens[len(tokens)-2], tokens[len(tokens)-1]
+	// Prefer short (X25519) pair: first two tokens when not preferPQ; last two when PQ.
+	var a, b string
+	if preferPQ || len(tokens) < 4 {
+		a, b = tokens[len(tokens)-2], tokens[len(tokens)-1]
+	} else {
+		// tokens order: dec0, enc0, dec1, enc1 — take first pair then align roles
+		a, b = tokens[0], tokens[1]
+	}
 	encryption, decryption = alignVlessEncRoles(a, b)
 	if encryption == "" || decryption == "" {
 		return "", "", false
 	}
 	return encryption, decryption, true
+}
+
+// pickVlessEncPair chooses X25519 (short) or ML-KEM (long) from parsed pairs.
+// xray prints X25519 first, PQ second. Short encryption key ≈ 40–80 chars after prefix.
+func pickVlessEncPair(pairs []vlessEncPair, preferPQ bool) vlessEncPair {
+	if len(pairs) == 1 {
+		return pairs[0]
+	}
+	if preferPQ {
+		return pairs[len(pairs)-1]
+	}
+	// Prefer shortest client encryption (X25519 public ≈ 43 chars; PQ ≈ 1500+).
+	best := pairs[0]
+	bestLen := len(best.enc)
+	for _, p := range pairs[1:] {
+		if len(p.enc) < bestLen {
+			best = p
+			bestLen = len(p.enc)
+		}
+	}
+	return best
 }
 
 // alignVlessEncRoles ensures encryption is the client (0rtt) string and

@@ -831,7 +831,15 @@ func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) 
 	case "short_id":
 		jsonOK(w, map[string]any{"short_id": proxysvc.GenerateShortID()})
 	case "vlessenc", "mlkem", "encryption":
-		enc, dec, ver, err := generateVlessEncPair()
+		// auth=x25519 (default, short, Weir-compatible) | mlkem (PQ, long keys)
+		auth := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("auth")))
+		if kind == "mlkem" && auth == "" {
+			auth = "mlkem"
+		}
+		if auth == "" {
+			auth = "x25519"
+		}
+		enc, dec, ver, err := generateVlessEncPair(auth)
 		if err != nil {
 			jsonErr(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -841,6 +849,7 @@ func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) 
 			"decryption":   dec,
 			"xray_version": ver,
 			"kind":         "vlessenc",
+			"auth":         auth,
 		})
 	default:
 		priv, pub := proxysvc.GenerateRealityKeyPair()

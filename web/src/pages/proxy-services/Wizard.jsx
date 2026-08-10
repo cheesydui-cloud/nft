@@ -144,11 +144,17 @@ export default function ProxyServiceWizard() {
   const genKeys = async (kind) => {
     try {
       if (kind === 'vlessenc') setGenEncBusy(true)
-      const d = await api.get(`/proxy-services/gen-keys?kind=${kind || 'reality'}`)
+      // vlessenc: default auth=x25519 (short keys, matches Weir). Use kind=mlkem for PQ.
+      const q = kind === 'vlessenc'
+        ? 'kind=vlessenc&auth=x25519'
+        : kind === 'mlkem'
+          ? 'kind=vlessenc&auth=mlkem'
+          : `kind=${kind || 'reality'}`
+      const d = await api.get(`/proxy-services/gen-keys?${q}`)
       if (kind === 'short_id') {
         setCfg('short_id', d.short_id)
         toast('已生成 short_id')
-      } else if (kind === 'vlessenc') {
+      } else if (kind === 'vlessenc' || kind === 'mlkem') {
         const stripQ = (s) => {
           let v = String(s || '').trim()
           while (
@@ -181,9 +187,16 @@ export default function ProxyServiceWizard() {
         if (!looksClient(enc) || !looksServer(dec)) {
           toast('vlessenc 密钥角色异常（encryption 应含 0rtt，decryption 应含 600s）', 'error')
         }
+        // Guard: X25519 encryption is ~80 chars; PQ is 1500+. Warn if unexpected long default.
+        if ((d.auth === 'x25519' || !d.auth) && enc.length > 200) {
+          toast('生成结果异常偏长（可能取了 PQ 密钥）。请再点一次生成，或清空改用 none', 'error')
+        }
         setCfg('encryption', enc)
         setCfg('decryption', dec)
-        toast(d.xray_version ? `已生成 vlessenc（xray ${d.xray_version}）` : '已生成 vlessenc')
+        const authHint = d.auth === 'mlkem' ? 'ML-KEM PQ' : 'X25519 短密钥'
+        toast(d.xray_version
+          ? `已生成 vlessenc（${authHint} · xray ${d.xray_version}）`
+          : `已生成 vlessenc（${authHint}）`)
       } else {
         setCfg('private_key', d.private_key)
         setCfg('public_key', d.public_key)

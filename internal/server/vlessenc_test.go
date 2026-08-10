@@ -22,9 +22,11 @@ Decryption (server): mlkem768x25519plus.native.600s.BBBB.servermaterial
 	}
 }
 
-// Real xray vlessenc stdout: decryption line first, encryption second, two auth blocks.
-// Prefer ML-KEM-768 (last) pair; never swap roles.
+// Real xray vlessenc stdout: decryption first, encryption second, two auth blocks.
+// Default must pick X25519 short pair (Weir-compatible), not multi-KB PQ.
 func TestParseVlessEncOutputRealXrayFormat(t *testing.T) {
+	// PQ client key is intentionally much longer (simulates 1184-byte pubkey).
+	pqEnc := "mlkem768x25519plus.native.0rtt." + strings.Repeat("PQclientKeyMaterialXXXX", 40)
 	out := `Choose one Authentication to use, do not mix them. Ephemeral key exchange is Post-Quantum safe anyway.
 
 Authentication: X25519, not Post-Quantum
@@ -33,7 +35,7 @@ Authentication: X25519, not Post-Quantum
 
 Authentication: ML-KEM-768, Post-Quantum
 "decryption": "mlkem768x25519plus.native.600s.8ZxOJD32Q0kRda9m00A8snbjArPjF4WUeqV5qIJlEj0"
-"encryption": "mlkem768x25519plus.native.0rtt.x1v9HcOJSSq8mVUWIKYdAigJQ7yaPonEeKe56CvsejM"
+"encryption": "` + pqEnc + `"
 `
 	enc, dec, ok := parseVlessEncOutput(out)
 	if !ok {
@@ -45,12 +47,15 @@ Authentication: ML-KEM-768, Post-Quantum
 	if !strings.HasPrefix(dec, "mlkem768x25519plus.native.600s.") {
 		t.Fatalf("dec=%q", dec)
 	}
-	// Must pick PQ pair (last), not X25519.
-	if !strings.Contains(enc, "x1v9HcOJSSq8mVUWIKYdAigJQ7yaPonEeKe56CvsejM") {
-		t.Fatalf("expected PQ client key in enc, got %q", enc)
+	// Default: X25519 short pair (first block), not PQ.
+	if !strings.Contains(enc, "ClientKeyX25519aaaaaaaaaaaa") {
+		t.Fatalf("expected X25519 client key in enc, got %q (len=%d)", enc, len(enc))
 	}
-	if !strings.Contains(dec, "8ZxOJD32Q0kRda9m00A8snbjArPjF4WUeqV5qIJlEj0") {
-		t.Fatalf("expected PQ server key in dec, got %q", dec)
+	if !strings.Contains(dec, "ServerKeyX25519aaaaaaaaaaaa") {
+		t.Fatalf("expected X25519 server key in dec, got %q", dec)
+	}
+	if len(enc) > 120 {
+		t.Fatalf("default encryption too long (picked PQ?): len=%d", len(enc))
 	}
 	// Critical: never put 0rtt into decryption.
 	if strings.Contains(dec, "0rtt") {
@@ -58,6 +63,18 @@ Authentication: ML-KEM-768, Post-Quantum
 	}
 	if strings.Contains(enc, "600s") {
 		t.Fatalf("encryption still has 600s (swapped): %q", enc)
+	}
+
+	// Explicit PQ request still works.
+	encPQ, decPQ, ok := parseVlessEncOutputPrefer(out, true)
+	if !ok {
+		t.Fatal("pq expected ok")
+	}
+	if !strings.Contains(encPQ, "PQclientKeyMaterial") {
+		t.Fatalf("preferPQ should pick long PQ enc, got len=%d", len(encPQ))
+	}
+	if !strings.Contains(decPQ, "8ZxOJD32Q0kRda9m00A8snbjArPjF4WUeqV5qIJlEj0") {
+		t.Fatalf("preferPQ dec=%q", decPQ)
 	}
 }
 
