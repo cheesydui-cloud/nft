@@ -39,6 +39,9 @@ func handleCoreInstall(req wsproto.CoreInstall) wsproto.CoreInstallAck {
 		if hex.EncodeToString(sum[:]) == strings.ToLower(req.SHA256) ||
 			hex.EncodeToString(sum[:]) == req.SHA256 {
 			log.Printf("core_install: %s already at %s (sha match)", typ, destPath)
+			if typ == "mita" {
+				installMitaRuntimeAfterBinary(destPath)
+			}
 			return wsproto.CoreInstallAck{OK: true, Version: req.Version, Path: destPath}
 		}
 	}
@@ -54,6 +57,21 @@ func handleCoreInstall(req wsproto.CoreInstall) wsproto.CoreInstallAck {
 		return wsproto.CoreInstallAck{OK: false, Error: "安装失败: " + err.Error()}
 	}
 	log.Printf("core_install: installed %s %s -> %s (%d bytes)", typ, req.Version, destPath, len(binary))
+
+	// mita is not a standalone listen binary: it needs user/dirs/`mita run` unit.
+	// Install runtime now so the first publish does not hit RPC connection errors.
+	if typ == "mita" {
+		// Also expose as /usr/local/bin/mita when missing so unit/PATH resolve cleanly.
+		if _, err := os.Stat("/usr/local/bin/mita"); err != nil {
+			if linkErr := os.Symlink(destPath, "/usr/local/bin/mita"); linkErr != nil {
+				// Copy if symlink blocked (some filesystems).
+				if data, rerr := os.ReadFile(destPath); rerr == nil {
+					_ = atomicWriteExec("/usr/local/bin/mita", data)
+				}
+			}
+		}
+		installMitaRuntimeAfterBinary(destPath)
+	}
 	return wsproto.CoreInstallAck{OK: true, Version: req.Version, Path: destPath}
 }
 

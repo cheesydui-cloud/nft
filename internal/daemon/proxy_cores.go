@@ -141,7 +141,8 @@ func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyService
 }
 
 // deployMieru writes a mita server config fragment and applies it via the mita CLI.
-// Requires the mita server binary (not the mieru client).
+// Requires the mita server binary (not the mieru client) plus a running `mita run`
+// management daemon (installed automatically from a bare panel-pushed binary).
 func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	mitaPath := findMitaBinary()
 	if mitaPath == "" {
@@ -182,7 +183,7 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		"loggingLevel": "INFO",
 	}
 
-	dir := "/var/lib/nft/cores/mieru"
+	dir := filepath.Join(coreStateDir(), "mieru")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "创建配置目录失败: " + err.Error()}
 	}
@@ -194,34 +195,42 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 mita 配置失败: " + err.Error()}
 	}
+	// mita process runs as user mita; make instance JSON readable.
+	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", cfgPath)
+	_ = os.Chmod(cfgPath, 0o640)
 
-	// mita CLI talks to a local RPC daemon. Official flow is: start daemon → apply config.
-	// Applying while the daemon is down yields:
-	//   get mita server status failed ... rpc error ... connection error
-	// which looks like "core missing" but the binary is present.
+	// Official order: mita run (daemon/RPC) → apply config → mita start (listen).
+	// Panel-only binary has no user/dirs/unit; prepareMitaRuntime installs them.
 	if err := ensureMitaDaemon(mitaPath); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
 	}
 
 	// apply merges into existing mita settings (multiple instances on one host OK).
 	if out, err := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err != nil {
-		// Daemon may have died; one more start+apply attempt.
+		// Daemon may have died; one more prepare+apply attempt.
 		_ = ensureMitaDaemon(mitaPath)
 		if out2, err2 := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err2 != nil {
+			jout, _ := runCmdTimeout(8*time.Second, "journalctl", "-u", "mita", "-n", "30", "--no-pager")
 			return wsproto.ProxyServiceApplyAck{
 				OK: false,
 				Error: fmt.Sprintf(
-					"mita apply config 失败（二进制已找到，但守护进程 RPC 不可用或配置无效）: %v (%s); 重试: %v (%s)。"+
-						"可在节点执行: systemctl status mita; %s start; journalctl -u mita -n 50",
-					err, truncateOut(out), err2, truncateOut(out2), mitaPath),
+					"mita apply config 失败: %v (%s); 重试: %v (%s)。journal: %s",
+					err, truncateOut(out), err2, truncateOut(out2), truncateOut(jout)),
 			}
 		}
 	}
 
-	// Restart so new portBindings take effect (reload only covers users/logging).
-	_, _ = runCmdTimeout(15*time.Second, mitaPath, "stop")
-	if err := ensureMitaDaemon(mitaPath); err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "mita 重启失败: " + err.Error()}
+	// portBindings / non-user changes need stop → start (proxy listen), daemon stays up.
+	mitaProxyStop(mitaPath)
+	if err := mitaProxyStart(mitaPath); err != nil {
+		// Daemon may have flapped; re-ensure run daemon then start listen.
+		_ = ensureMitaDaemon(mitaPath)
+		if err2 := mitaProxyStart(mitaPath); err2 != nil {
+			return wsproto.ProxyServiceApplyAck{
+				OK:    false,
+				Error: "mita 应用配置后无法进入监听: " + err2.Error(),
+			}
+		}
 	}
 
 	ver := probeCoreVersion(mitaPath)
@@ -230,48 +239,6 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		DryRun:      false,
 		CoreVersion: ver,
 	}
-}
-
-// ensureMitaDaemon starts the mita server process if RPC is down.
-// Order: systemctl start mita → mita start → wait until status succeeds.
-func ensureMitaDaemon(mitaPath string) error {
-	// Already healthy?
-	if out, err := runCmdTimeout(8*time.Second, mitaPath, "status"); err == nil {
-		_ = out
-		return nil
-	}
-	// Prefer packaged unit when present.
-	_, _ = runCmdTimeout(20*time.Second, "systemctl", "start", "mita")
-	_, _ = runCmdTimeout(20*time.Second, "systemctl", "enable", "mita")
-	if out, err := runCmdTimeout(8*time.Second, mitaPath, "status"); err == nil {
-		_ = out
-		return nil
-	}
-	// CLI start (standalone / panel-pushed binary without unit).
-	if out, err := runCmdTimeout(20*time.Second, mitaPath, "start"); err != nil {
-		// Last try: systemctl restart
-		out2, err2 := runCmdTimeout(20*time.Second, "systemctl", "restart", "mita")
-		if err2 != nil {
-			return fmt.Errorf(
-				"无法启动 mita 守护进程（apply/status 需要本机 RPC）。"+
-					"CLI start: %v (%s); systemctl: %v (%s)。"+
-					"面板缓存的 mita 二进制在 /var/lib/nft/cores/mieru/mita，但官方安装通常还带 systemd unit；"+
-					"可在节点: curl 安装脚本或 systemctl enable --now mita",
-				err, truncateOut(out), err2, truncateOut(out2))
-		}
-	}
-	// Wait briefly for socket.
-	deadline := time.Now().Add(8 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
-		out, err := runCmdTimeout(5*time.Second, mitaPath, "status")
-		if err == nil {
-			return nil
-		}
-		last = truncateOut(out)
-		time.Sleep(400 * time.Millisecond)
-	}
-	return fmt.Errorf("mita 已尝试启动但 status 仍失败: %s", last)
 }
 
 func mitaPortBindings(port int, transports []string) []map[string]any {
@@ -299,20 +266,7 @@ func mitaPortBindings(port int, transports []string) []map[string]any {
 
 // findMitaBinary returns the mita server binary path (not the mieru client).
 func findMitaBinary() string {
-	paths := []string{
-		"/usr/local/bin/mita",
-		"/usr/bin/mita",
-		"/var/lib/nft/cores/mieru/mita",
-	}
-	for _, p := range paths {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
-	}
-	if p, err := exec.LookPath("mita"); err == nil {
-		return p
-	}
-	return ""
+	return resolveMitaBinary()
 }
 
 func runCmdTimeout(d time.Duration, name string, args ...string) (string, error) {
