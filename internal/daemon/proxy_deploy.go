@@ -197,17 +197,22 @@ func looksLikeConfigError(out string) bool {
 }
 
 // stopPIDFile kills a previously started core process if the pid file is still live.
+// Also drops the durable runspec so the watchdog will not revive a deliberately
+// stopped instance (failed listen / undeploy / replace).
 func stopPIDFile(pidPath string) {
+	removeRunSpec(pidPath)
 	b, err := os.ReadFile(pidPath)
 	if err != nil {
 		return
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 1 {
+		_ = os.Remove(pidPath)
 		return
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
+		_ = os.Remove(pidPath)
 		return
 	}
 	_ = proc.Signal(syscall.SIGTERM)
@@ -222,9 +227,24 @@ func stopPIDFile(pidPath string) {
 	_ = os.Remove(pidPath)
 }
 
-// restartDetached stops any prior instance pid, then starts name args... in background.
+// restartDetached stops any prior instance pid, then starts name args... in
+// background and registers a durable runspec so the core-watchdog can restart
+// it if the process dies or the agent itself restarts.
 func restartDetached(pidPath, logPath, name string, args ...string) error {
-	stopPIDFile(pidPath)
+	if err := restartDetachedTracked(pidPath, logPath, name, args...); err != nil {
+		return err
+	}
+	writeRunSpec(pidPath, logPath, name, args)
+	return nil
+}
+
+// restartDetachedTracked is the raw start path used by both deploy and the
+// watchdog. It does not write/register the runspec (caller owns that) so a
+// failed start cannot leave a half-registered recipe that thrash-restarts.
+func restartDetachedTracked(pidPath, logPath, name string, args ...string) error {
+	// Kill old pid without dropping runspec when the watchdog is refreshing —
+	// only stopPIDFile drops the runspec. Here we only signal the old pid.
+	killPIDFileOnly(pidPath)
 	logF, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log: %w", err)
@@ -250,6 +270,33 @@ func restartDetached(pidPath, logPath, name string, args ...string) error {
 		return fmt.Errorf("process exited immediately (pid %d): %s", pid, truncateOut(string(tail)))
 	}
 	return nil
+}
+
+// killPIDFileOnly signals the process in pidPath without removing the runspec.
+// Used when replacing a live process during restart so the watchdog stays armed.
+func killPIDFileOnly(pidPath string) {
+	b, err := os.ReadFile(pidPath)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 {
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = proc.Signal(syscall.SIGKILL)
+	_ = os.Remove(pidPath)
 }
 
 func pidAlive(pid int) bool {

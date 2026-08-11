@@ -260,10 +260,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	serveErr := make(chan error, 1)
 	safeGo(func() { serveErr <- srv.Serve(l) })
 
-	safeGo(d.probeFirewallEnvironment)
-	safeGo(func() { d.refreshLoop(ctx) })
+		safeGo(d.probeFirewallEnvironment)
+		safeGo(func() { d.refreshLoop(ctx) })
+		// Keep detached xray/sing-box instances alive across crashes and agent restarts.
+		safeGo(func() { startCoreWatchdog(ctx) })
 
-	if d.connectURL != "" {
+		if d.connectURL != "" {
 		dl := NewDialer(DialerConfig{
 			URL:                 d.connectURL,
 			Token:               d.connectTok,
