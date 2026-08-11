@@ -80,7 +80,6 @@ export default function ProxyServiceWizard() {
 
   const [step, setStep] = useState(0)
   const [protocol, setProtocol] = useState('vless')
-  const [showAdv, setShowAdv] = useState(false)
   const [core, setCore] = useState('xray')
   const [name, setName] = useState('')
   const [subVisible, setSubVisible] = useState(true)
@@ -571,39 +570,29 @@ export default function ProxyServiceWizard() {
                     </p>
 
                     <div className="border border-dashed border-line rounded-xl p-3 space-y-2">
-                      <button
-                        type="button"
-                        className="text-sm text-brand font-medium hover:underline"
-                        onClick={() => setShowAdv(v => !v)}
-                      >
-                        {showAdv ? '收起高级' : '展开高级'}
-                      </button>
-                      {showAdv && (
-                        <div className="space-y-2 pt-1">
-                          <label className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={!!config.tcp_fast_open}
-                              onChange={e => setCfg('tcp_fast_open', e.target.checked)}
-                            />
-                            <span className="font-mono">tcp_fast_open</span>
-                          </label>
-                          <p className="text-[11px] text-ink-mut m-0 pl-6">
-                            TCP Fast Open：略减建连延迟，需节点内核开启 TFO；默认关更稳。
-                          </p>
-                          <label className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={config.sniffing !== false}
-                              onChange={e => setCfg('sniffing', e.target.checked)}
-                            />
-                            <span className="font-mono">sniffing</span>
-                          </label>
-                          <p className="text-[11px] text-ink-mut m-0 pl-6">
-                            入站嗅探（http/tls/quic）：识别真实域名便于分流；默认开。改后须重新发布。
-                          </p>
-                        </div>
-                      )}
+                      <div className="text-sm font-bold text-ink-soft">高级</div>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={!!config.tcp_fast_open}
+                          onChange={e => setCfg('tcp_fast_open', e.target.checked)}
+                        />
+                        <span className="font-mono">tcp_fast_open</span>
+                      </label>
+                      <p className="text-[11px] text-ink-mut m-0 pl-6">
+                        TCP Fast Open：略减建连延迟，需节点内核开启 TFO；默认关更稳。
+                      </p>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={config.sniffing !== false}
+                          onChange={e => setCfg('sniffing', e.target.checked)}
+                        />
+                        <span className="font-mono">sniffing</span>
+                      </label>
+                      <p className="text-[11px] text-ink-mut m-0 pl-6">
+                        入站嗅探（http/tls/quic）：识别真实域名便于分流；默认开。改后须重新发布。
+                      </p>
                     </div>
                   </div>
                 </div>
