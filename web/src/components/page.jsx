@@ -74,7 +74,7 @@ export function SearchInput({ value, onChange, placeholder }) {
     <div className="relative flex-1 min-w-0 md:min-w-[240px] md:max-w-[340px]">
       <svg className="w-4 h-4 absolute left-[13px] top-1/2 -translate-y-1/2 text-ink-mut pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-[10px] outline-none text-ink transition-all hover:border-zinc-400 focus:border-zinc-900 dark:focus:border-zinc-100 focus:shadow-[0_0_0_3px_rgba(24,24,27,0.08)]" />
+        className="w-full text-[13.5px] pl-[38px] pr-3.5 py-[10px] bg-surface border border-line rounded-[10px] outline-none text-ink transition-all hover:border-slate-300 focus:border-blue-500 dark:focus:border-blue-400 focus:shadow-[0_0_0_3px_rgba(37,99,235,0.15)]" />
     </div>
   )
 }

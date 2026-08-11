@@ -55,8 +55,8 @@ export default function Login() {
     <div className="login-shell">
       <div className="login-card">
         <div className="flex items-center gap-3.5 mb-8">
-          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_8px_20px_-10px_rgba(24,24,27,0.55)] ring-1 ring-black/10 dark:ring-white/15"
-            style={{ background: 'linear-gradient(145deg, #18181b 0%, #3f3f46 100%)' }}>
+          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_10px_28px_-8px_rgba(37,99,235,0.55)] ring-1 ring-white/30"
+            style={{ background: 'linear-gradient(145deg, #3b82f6 0%, #2563eb 55%, #1d4ed8 100%)' }}>
             <BrandMark className="w-[28px] h-[28px]" />
           </div>
           <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
