@@ -260,7 +260,6 @@ export default function UserDetail() {
             </div>
             <div className="flex items-end gap-5">
               <div>
-                <div className="text-[11px] text-ink-mut mb-0.5">真实</div>
                 <div className="text-[18px] font-bold tabular-nums text-ink leading-tight">{fmtBytes(todayRaw)}</div>
               </div>
               <div>
@@ -276,7 +275,6 @@ export default function UserDetail() {
             </div>
             <div className="flex items-end gap-5">
               <div>
-                <div className="text-[11px] text-ink-mut mb-0.5">真实</div>
                 <div className="text-[18px] font-bold tabular-nums text-ink leading-tight">{fmtBytes(yesterdayRaw)}</div>
               </div>
               <div>
