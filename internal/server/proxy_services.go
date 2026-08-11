@@ -33,26 +33,28 @@ func (s *Server) apiListProxyServices(w http.ResponseWriter, r *http.Request) {
 		LastErrorSample string `json:"last_error_sample,omitempty"`
 	}
 	out := make([]svcOut, 0, len(list))
-	for _, svc := range list {
-		row := svcOut{ProxyService: svc}
-		if svc.Status == db.ProxyStatusError || svc.Status == "error" || svc.Status == db.ProxyStatusPartial || svc.Status == "partial" {
-			if inst, err := db.ListProxyInstances(s.DB, svc.ID); err == nil {
-				for _, i := range inst {
-					if strings.TrimSpace(i.LastError) != "" {
-						msg := strings.TrimSpace(i.LastError)
-						if len(msg) > 120 {
-							msg = msg[:120] + "…"
+		for _, svc := range list {
+			// Redact secrets before embedding in list response.
+			svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+			row := svcOut{ProxyService: svc}
+			if svc.Status == db.ProxyStatusError || svc.Status == "error" || svc.Status == db.ProxyStatusPartial || svc.Status == "partial" {
+				if inst, err := db.ListProxyInstances(s.DB, svc.ID); err == nil {
+					for _, i := range inst {
+						if strings.TrimSpace(i.LastError) != "" {
+							msg := strings.TrimSpace(i.LastError)
+							if len(msg) > 120 {
+								msg = msg[:120] + "…"
+							}
+							row.LastErrorSample = msg
+							break
 						}
-						row.LastErrorSample = msg
-						break
 					}
 				}
 			}
+			out = append(out, row)
 		}
-		out = append(out, row)
+		jsonOK(w, map[string]any{"services": out})
 	}
-	jsonOK(w, map[string]any{"services": out})
-}
 
 // apiGetProxyService returns one service with instances.
 func (s *Server) apiGetProxyService(w http.ResponseWriter, r *http.Request) {
@@ -71,17 +73,19 @@ func (s *Server) apiGetProxyService(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	svc.Instances = inst
-	svc.InstanceCount = len(inst)
-	ready := 0
-	for _, i := range inst {
-		if i.DeployStatus == db.ProxyDeployReady {
-			ready++
+		svc.Instances = inst
+		svc.InstanceCount = len(inst)
+		ready := 0
+		for _, i := range inst {
+			if i.DeployStatus == db.ProxyDeployReady {
+				ready++
+			}
 		}
+		svc.ReadyCount = ready
+		// Redact PEM / private keys for API responses (DB still holds full secrets).
+		svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+		jsonOK(w, map[string]any{"service": svc})
 	}
-	svc.ReadyCount = ready
-	jsonOK(w, map[string]any{"service": svc})
-}
 
 type proxyServiceBody struct {
 	Name       string          `json:"name"`
@@ -108,12 +112,16 @@ func (s *Server) apiCreateProxyService(w http.ResponseWriter, r *http.Request) {
 	if body.SubVisible != nil {
 		sub = *body.SubVisible
 	}
-	cfg, err := proxysvc.EnsureSecrets(protocol, body.Config)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	svc, err := db.CreateProxyService(s.DB, body.Name, protocol, core, cfg, sub)
+		cfg, err := proxysvc.EnsureSecrets(protocol, body.Config)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateProxyConfigForSave(protocol, cfg); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		svc, err := db.CreateProxyService(s.DB, body.Name, protocol, core, cfg, sub)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -153,6 +161,10 @@ func (s *Server) apiUpdateProxyService(w http.ResponseWriter, r *http.Request) {
 				jsonErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			if err := validateProxyConfigForSave(svc.Protocol, cfg); err != nil {
+				jsonErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 	sub := svc.SubVisible
 	if body.SubVisible != nil {
@@ -177,13 +189,16 @@ func (s *Server) apiUpdateProxyService(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		svc, _ = db.GetProxyService(s.DB, id)
-		if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
-			svc.Instances = inst
+			if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
+				svc.Instances = inst
+			}
+			if svc != nil {
+				svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+			}
+			jsonOK(w, map[string]any{"service": svc})
 		}
-		jsonOK(w, map[string]any{"service": svc})
-	}
 
-// apiDeleteProxyService removes a service and instances.
+	// apiDeleteProxyService removes a service and instances.
 func (s *Server) apiDeleteProxyService(w http.ResponseWriter, r *http.Request) {
 	id, err := urlParamInt64(r, "id")
 	if err != nil {
@@ -243,26 +258,16 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// Fail fast on illegal security/transport or missing TLS certs before contacting agents.
-		if strings.EqualFold(svc.Protocol, "vless") {
-			var vc proxysvc.VLESSConfig
-			if err := json.Unmarshal(cfg, &vc); err == nil {
-				// Panel-side: TLS needs PEM (agent injects cert_file later).
-				if proxysvc.NormalizeSecurity(vc.Security) == "tls" {
-					if strings.TrimSpace(vc.CertPEM) == "" || strings.TrimSpace(vc.KeyPEM) == "" {
-						jsonErr(w, http.StatusBadRequest, "TLS 发布需要证书与私钥（cert_pem / key_pem）")
+			// Fail fast on illegal security/transport or missing/invalid TLS certs before agents.
+			if strings.EqualFold(svc.Protocol, "vless") {
+				var vc proxysvc.VLESSConfig
+				if err := json.Unmarshal(cfg, &vc); err == nil {
+					if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
+						jsonErr(w, http.StatusBadRequest, err.Error())
 						return
 					}
-					// Temporarily mark files so ValidateVLESSDeploy passes matrix+SNI checks.
-					vc.CertFile = "pending"
-					vc.KeyFile = "pending"
-				}
-				if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
-					jsonErr(w, http.StatusBadRequest, err.Error())
-					return
 				}
 			}
-		}
 		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
 		svc.ConfigJSON = cfg
 
@@ -852,6 +857,30 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 	}
 }
 
+// validateProxyConfigForSave runs deploy-level checks when enough material is present.
+// TLS with empty PEM is allowed on draft save only if not tls — for tls we require valid PEM when provided.
+func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
+	if !strings.EqualFold(protocol, "vless") {
+		return nil
+	}
+	var vc proxysvc.VLESSConfig
+	if err := json.Unmarshal(cfg, &vc); err != nil {
+		return nil
+	}
+	sec := proxysvc.NormalizeSecurity(vc.Security)
+	// Soft: only hard-validate TLS when PEM is present (or always for tls so bad paste fails early).
+	if sec == "tls" {
+		if strings.TrimSpace(vc.CertPEM) != "" || strings.TrimSpace(vc.KeyPEM) != "" {
+			return proxysvc.ValidateTLSCertPair(vc.CertPEM, vc.KeyPEM, vc.ServerName)
+		}
+	}
+	// Always check network matrix when security known.
+	if !proxysvc.NetworkAllowed(sec, vc.Network) {
+		return fmt.Errorf("安全层 %s 不支持传输 %q", sec, proxysvc.NormalizeNetwork(vc.Network))
+	}
+	return nil
+}
+
 // mergePreservedProxySecrets restores sensitive fields that the UI may re-send
 // as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
 // unrelated fields does not wipe cert_pem / private_key / passwords.
@@ -919,8 +948,8 @@ func isRedactedSecret(s string) bool {
 	return strings.HasPrefix(s, "***") || strings.HasPrefix(s, "__KEEP")
 }
 
-// apiProxyServiceGenKeys generates REALITY key material for the wizard UI.
-// kind=reality (default) | short_id | vlessenc
+// apiProxyServiceGenKeys generates REALITY / TLS key material for the wizard UI.
+// kind=reality (default) | short_id | vlessenc | selfsigned | tls
 func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
 	switch kind {
@@ -946,6 +975,31 @@ func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) 
 			"xray_version": ver,
 			"kind":         "vlessenc",
 			"auth":         auth,
+		})
+	case "selfsigned", "tls", "self-signed":
+		// Lab/debug self-signed cert. Clients typically need allowInsecure=true.
+		serverName := strings.TrimSpace(r.URL.Query().Get("server_name"))
+		if serverName == "" {
+			serverName = strings.TrimSpace(r.URL.Query().Get("domain"))
+		}
+		days := 365
+		if d := strings.TrimSpace(r.URL.Query().Get("days")); d != "" {
+			if n, err := strconv.Atoi(d); err == nil && n > 0 {
+				days = n
+			}
+		}
+		cert, key, info, err := proxysvc.GenerateSelfSignedTLS(serverName, days)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		jsonOK(w, map[string]any{
+			"cert_pem":    cert,
+			"key_pem":     key,
+			"cert_info":   info,
+			"kind":        "selfsigned",
+			"server_name": serverName,
+			"warning":     "自签证书仅供调试；客户端需 allowInsecure 或导入信任此证书",
 		})
 	default:
 		priv, pub := proxysvc.GenerateRealityKeyPair()

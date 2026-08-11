@@ -152,6 +152,13 @@ func ValidateVLESSDeploy(c *VLESSConfig) error {
 		if !hasFiles && !hasPEM {
 			return fmt.Errorf("TLS 需要证书与私钥（cert_pem / key_pem）")
 		}
+		// When PEM is present (panel publish path), fully validate parse/key/SAN/expiry.
+		// Agent path only has files — skip PEM parse here (files already written).
+		if hasPEM {
+			if err := ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName); err != nil {
+				return err
+			}
+		}
 	case "none":
 		// no cert / reality keys required
 	default:

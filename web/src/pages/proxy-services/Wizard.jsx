@@ -162,15 +162,33 @@ export default function ProxyServiceWizard() {
     try {
       if (kind === 'vlessenc') setGenEncBusy(true)
       // vlessenc: default auth=x25519 (short keys, matches Weir). Use kind=mlkem for PQ.
-      const q = kind === 'vlessenc'
-        ? 'kind=vlessenc&auth=x25519'
-        : kind === 'mlkem'
-          ? 'kind=vlessenc&auth=mlkem'
-          : `kind=${kind || 'reality'}`
+      let q = `kind=${kind || 'reality'}`
+      if (kind === 'vlessenc') q = 'kind=vlessenc&auth=x25519'
+      else if (kind === 'mlkem') q = 'kind=vlessenc&auth=mlkem'
+      else if (kind === 'selfsigned' || kind === 'tls') {
+        const sn = (config.server_name || '').trim()
+        if (!sn) {
+          toast('请先填写域名（server_name），再生成自签证书', 'error')
+          return
+        }
+        q = `kind=selfsigned&server_name=${encodeURIComponent(sn)}&days=365`
+      }
       const d = await api.get(`/proxy-services/gen-keys?${q}`)
       if (kind === 'short_id') {
         setCfg('short_id', d.short_id)
         toast('已生成 short_id')
+      } else if (kind === 'selfsigned' || kind === 'tls') {
+        setConfig(prev => ({
+          ...prev,
+          cert_pem: d.cert_pem || '',
+          key_pem: d.key_pem || '',
+          cert_info: d.cert_info || null,
+          cert_configured: true,
+          key_configured: true,
+          // Self-signed almost always needs client skip-verify for quick test.
+          allow_insecure: true,
+        }))
+        toast(d.warning || '已生成自签证书（调试用，已勾选 allowInsecure）')
       } else if (kind === 'vlessenc' || kind === 'mlkem') {
         const stripQ = (s) => {
           let v = String(s || '').trim()
@@ -264,8 +282,10 @@ export default function ProxyServiceWizard() {
           toast('TLS 需要填写域名（SNI / 证书域名）', 'error')
           return false
         }
-        if (!(config.cert_pem || '').trim() || !(config.key_pem || '').trim()) {
-          toast('TLS 需要粘贴或上传证书 PEM 与私钥 PEM', 'error')
+        const hasPEM = !!(config.cert_pem || '').trim() && !!(config.key_pem || '').trim()
+        const kept = !!(config.cert_configured && config.key_configured)
+        if (!hasPEM && !kept) {
+          toast('TLS 需要粘贴/上传证书与私钥，或使用「生成自签证书」', 'error')
           return false
         }
       }
@@ -689,20 +709,46 @@ export default function ProxyServiceWizard() {
                     <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
                       <div className="text-sm font-bold">安全层 · TLS 证书</div>
                       <p className="text-[12px] text-ink-mut m-0">
-                        粘贴 PEM 或上传 <span className="font-mono">.crt/.pem</span> 与私钥。证书将随配置下发到节点，写入 xray 实例目录（0600）。本版不提供 ACME 自动签证书。
+                        粘贴 PEM 或上传 <span className="font-mono">.crt/.pem</span> 与私钥；也可一键生成<strong>自签调试证书</strong>。
+                        正式环境请用正规 CA。本版不提供 ACME。证书下发到节点后写入 xray 实例目录（0600）。
                       </p>
+                      {(config.cert_configured || config.key_configured || config.cert_info) && !(config.cert_pem || '').trim() && (
+                        <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] space-y-1">
+                          <div className="font-semibold text-ink">
+                            已保存证书{config.key_configured ? '与私钥' : ''}
+                            {!(config.cert_pem || '').trim() && '（脱敏，留空保存将保留原值）'}
+                          </div>
+                          {config.cert_info?.not_after && (
+                            <div className={`font-mono text-[11px] ${
+                              config.cert_info.expired ? 'text-rose-600' : config.cert_info.expiring ? 'text-amber-600' : 'text-ink-mut'
+                            }`}>
+                              有效期至 {config.cert_info.not_after}
+                              {config.cert_info.expired ? ' · 已过期' : config.cert_info.days_left != null ? ` · 剩余 ${config.cert_info.days_left} 天` : ''}
+                              {config.cert_info.cn ? ` · CN ${config.cert_info.cn}` : ''}
+                            </div>
+                          )}
+                          {config.cert_info?.fingerprint && (
+                            <div className="font-mono text-[10px] text-ink-mut break-all">SHA256 {config.cert_info.fingerprint}</div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className="btn-primary text-sm" onClick={() => genKeys('selfsigned')}>
+                          生成自签证书（调试）
+                        </button>
+                      </div>
                       <div>
                         <label className="fl block mb-1">证书 PEM（cert）</label>
                         <textarea className="input-field font-mono text-xs min-h-[100px]" value={config.cert_pem || ''}
                           onChange={e => setCfg('cert_pem', e.target.value)}
-                          placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" />
+                          placeholder={config.cert_configured ? '已配置 · 留空保留原证书；粘贴新证书将覆盖' : '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----'} />
                         <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
                       </div>
                       <div>
                         <label className="fl block mb-1">私钥 PEM（key）</label>
                         <textarea className="input-field font-mono text-xs min-h-[100px]" value={config.key_pem || ''}
                           onChange={e => setCfg('key_pem', e.target.value)}
-                          placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" />
+                          placeholder={config.key_configured ? '已配置 · 留空保留原私钥；粘贴新私钥将覆盖' : '-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'} />
                         <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
                       </div>
                       <div className="grid sm:grid-cols-2 gap-3">

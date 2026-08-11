@@ -74,8 +74,9 @@ const CONFIG_GROUPS = {
         ['fingerprint', 'fingerprint'],
         ['alpn', 'alpn'],
         ['allow_insecure', 'allow_insecure'],
-        ['cert_pem', '证书'],
-        ['key_pem', '私钥'],
+        ['cert_configured', '证书'],
+        ['key_configured', '私钥'],
+        ['cert_info', '证书信息'],
       ],
       when: (cfg) => cfg.security === 'tls',
     },
@@ -130,6 +131,24 @@ function parseConfig(raw) {
 
 function formatValue(val, key) {
   if (val === null || val === undefined) return null
+  if (key === 'cert_configured' || key === 'key_configured' || key === 'private_key_configured' || key === 'decryption_configured') {
+    return val ? '已配置' : null
+  }
+  if (key === 'cert_info' && typeof val === 'object') {
+    const parts = []
+    if (val.cn) parts.push(`CN ${val.cn}`)
+    if (val.not_after) {
+      let exp = `至 ${val.not_after}`
+      if (val.expired) exp += ' · 已过期'
+      else if (val.days_left != null) exp += ` · 剩 ${val.days_left} 天`
+      if (val.expiring && !val.expired) exp += ' · 即将到期'
+      parts.push(exp)
+    }
+    if (val.key_match === false) parts.push('私钥不匹配')
+    if (val.san_match === false) parts.push('SNI 不在 SAN')
+    if (val.fingerprint) parts.push(`SHA256 ${String(val.fingerprint).slice(0, 16)}…`)
+    return parts.length ? parts.join(' · ') : '已配置'
+  }
   if (typeof val === 'boolean') return val ? 'true' : 'false'
   if (Array.isArray(val)) return val.length ? val.join(', ') : null
   if (typeof val === 'object') return JSON.stringify(val)
@@ -137,8 +156,7 @@ function formatValue(val, key) {
   if (s === '') return null
   // Redact bulky / sensitive PEM material in detail view.
   if (key === 'cert_pem' || key === 'key_pem') {
-    const lines = s.split(/\r?\n/).filter(Boolean).length
-    return `已配置（约 ${lines} 行 PEM）`
+    return '已配置（服务端已脱敏）'
   }
   if (key === 'private_key' && s.length > 12) {
     return s.slice(0, 6) + '…' + s.slice(-4)
@@ -430,11 +448,18 @@ export default function ProxyServiceDetail() {
               </p>
             )}
             {proto === 'vless' && cfg.security === 'tls' && cfg.server_name && (
-              <p className="text-[12px] text-ink-mut m-0">
+              <p className={`text-[12px] m-0 ${
+                cfg.cert_info?.expired ? 'text-rose-600 dark:text-rose-300'
+                  : cfg.cert_info?.expiring ? 'text-amber-700 dark:text-amber-300'
+                  : 'text-ink-mut'
+              }`}>
                 TLS SNI：
                 <span className="font-mono text-ink">{cfg.server_name}</span>
                 {' · security=tls'}
-                {cfg.cert_pem ? ' · 证书已配置' : ' · 证书缺失'}
+                {(cfg.cert_configured || cfg.cert_pem) ? ' · 证书已配置' : ' · 证书缺失'}
+                {cfg.cert_info?.not_after && (
+                  <> · 到期 {cfg.cert_info.not_after}{cfg.cert_info.expired ? '（已过期）' : cfg.cert_info.expiring ? '（即将到期）' : ''}</>
+                )}
               </p>
             )}
             {proto === 'vless' && cfg.security === 'none' && (
