@@ -830,7 +830,9 @@ func (s *Server) Router() http.Handler {
 
 			// Proxy core cache (Weir-style panel-side binary cache)
 			r.Get("/proxy-cores", s.apiListProxyCores)
+			r.Get("/proxy-cores/check", s.apiCheckProxyCores)
 			r.Post("/proxy-cores/fetch", s.apiFetchProxyCores)
+			r.Post("/proxy-cores/upgrade", s.apiUpgradeProxyCores)
 			r.Delete("/proxy-cores/{type}/{arch}", s.apiDeleteProxyCore)
 
 		})

@@ -660,6 +660,191 @@ func pickAssetFiltered(rel *ghRelease, coreType, arch string, names []string) (s
 
 // --- HTTP handlers ---
 
+func coreGitHubRepo(coreType string) string {
+	switch sanitizeCoreType(coreType) {
+	case "xray":
+		return "XTLS/Xray-core"
+	case "sing-box":
+		return "SagerNet/sing-box"
+	case "mita":
+		return "enfein/mieru"
+	default:
+		return ""
+	}
+}
+
+func isKnownCoreType(t string) bool {
+	switch sanitizeCoreType(t) {
+	case "xray", "sing-box", "mita":
+		return true
+	default:
+		return false
+	}
+}
+
+// coreVersionBehind reports whether cached is older / different from latest.
+func coreVersionBehind(cached, latest string) bool {
+	c := strings.TrimSpace(cached)
+	l := strings.TrimSpace(latest)
+	if l == "" {
+		return false
+	}
+	if c == "" {
+		return true
+	}
+	if c == l {
+		return false
+	}
+	// same tag ignoring leading v
+	if strings.TrimPrefix(c, "v") == strings.TrimPrefix(l, "v") {
+		return false
+	}
+	// cached already >= latest → not behind
+	if parseSemver(c) != nil && parseSemver(l) != nil && semverGE(c, l) {
+		return false
+	}
+	return true
+}
+
+// apiCheckProxyCores compares cached versions against GitHub latest (semver).
+// GET /api/proxy-cores/check
+func (s *Server) apiCheckProxyCores(w http.ResponseWriter, r *http.Request) {
+	types := []string{"xray", "sing-box", "mita"}
+	if raw := strings.TrimSpace(r.URL.Query().Get("type")); raw != "" {
+		t := sanitizeCoreType(raw)
+		if !isKnownCoreType(t) {
+			jsonErr(w, http.StatusBadRequest, "type 须为 xray / sing-box / mita")
+			return
+		}
+		types = []string{t}
+	}
+	var items []map[string]any
+	anyUpdate := false
+	for _, typ := range types {
+		repo := coreGitHubRepo(typ)
+		cachedList := []map[string]any{}
+		item := map[string]any{
+			"type":             typ,
+			"repo":             repo,
+			"cached":           cachedList,
+			"latest_version":   "",
+			"update_available": false,
+			"error":            "",
+		}
+		for _, arch := range []string{"amd64", "arm64"} {
+			if e, err := readCoreMeta(typ, arch); err == nil && e != nil {
+				cachedList = append(cachedList, map[string]any{
+					"arch": e.Arch, "version": e.Version, "size": e.Size, "fetched_at": e.FetchedAt,
+				})
+			}
+		}
+		item["cached"] = cachedList
+		if repo == "" {
+			item["error"] = "unknown type"
+			items = append(items, item)
+			continue
+		}
+		rel, err := fetchGitHubLatestSemverRelease(repo)
+		if err != nil {
+			item["error"] = err.Error()
+			items = append(items, item)
+			continue
+		}
+		latest := strings.TrimSpace(rel.TagName)
+		item["latest_version"] = latest
+		need := false
+		if len(cachedList) == 0 {
+			need = latest != ""
+		} else {
+			if len(cachedList) < 2 {
+				need = true // incomplete cache (want both arches for panel push)
+			}
+			for _, c := range cachedList {
+				ver, _ := c["version"].(string)
+				if coreVersionBehind(ver, latest) {
+					need = true
+					break
+				}
+			}
+		}
+		item["update_available"] = need
+		if need {
+			anyUpdate = true
+		}
+		items = append(items, item)
+	}
+	list, _ := listCoreCache()
+	jsonOK(w, map[string]any{
+		"items":            items,
+		"update_available": anyUpdate,
+		"cores":            list,
+	})
+}
+
+// apiUpgradeProxyCores downloads latest (or specified version) for one/all core types.
+// POST /api/proxy-cores/upgrade  body: { "type"?: "all"|"xray"|"sing-box"|"mita", "arch"?: "" }
+func (s *Server) apiUpgradeProxyCores(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Type    string `json:"type"`
+		Version string `json:"version"`
+		Arch    string `json:"arch"`
+	}
+	if r.Body != nil {
+		_ = decodeJSON(r, &body)
+	}
+	typIn := strings.ToLower(strings.TrimSpace(body.Type))
+	var types []string
+	switch typIn {
+	case "", "all":
+		types = []string{"xray", "sing-box", "mita"}
+	default:
+		t := sanitizeCoreType(typIn)
+		if !isKnownCoreType(t) {
+			jsonErr(w, http.StatusBadRequest, "type 须为 all / xray / sing-box / mita")
+			return
+		}
+		types = []string{t}
+	}
+	arches := []string{"amd64", "arm64"}
+	if a := sanitizeArch(body.Arch); a == "amd64" || a == "arm64" {
+		arches = []string{a}
+	}
+	ver := strings.TrimSpace(body.Version) // empty = latest
+	var results []map[string]any
+	okN := 0
+	var lastErr string
+	for _, typ := range types {
+		for _, arch := range arches {
+			e, err := fetchCoreToCache(typ, arch, ver, "", "")
+			if err != nil {
+				lastErr = err.Error()
+				results = append(results, map[string]any{"type": typ, "arch": arch, "ok": false, "error": err.Error()})
+				continue
+			}
+			okN++
+			results = append(results, map[string]any{
+				"type": e.Type, "arch": e.Arch, "ok": true,
+				"version": e.Version, "sha256": e.SHA256, "size": e.Size,
+			})
+		}
+	}
+	if okN == 0 {
+		msg := lastErr
+		if msg == "" {
+			msg = "升级失败"
+		}
+		jsonErr(w, http.StatusBadGateway, msg)
+		return
+	}
+	list, _ := listCoreCache()
+	jsonOK(w, map[string]any{
+		"ok":      true,
+		"results": results,
+		"cores":   list,
+		"message": fmt.Sprintf("已更新 %d 个缓存项", okN),
+	})
+}
+
 func (s *Server) apiListProxyCores(w http.ResponseWriter, r *http.Request) {
 	list, err := listCoreCache()
 	if err != nil {
