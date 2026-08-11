@@ -195,41 +195,39 @@ export default function RulesList() {
         </div>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索规则名称、节点、目标…" />
+          {(users.length > 0 || nodes.length > 0) && (
+            <div className="relative flex items-center gap-2 flex-wrap z-10">
+              <FilterDropdown
+                label="用户"
+                icon={<svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>}
+                options={userOptions}
+                selected={selectedOwners}
+                onChange={setSelectedOwners}
+                searchPlaceholder="搜索用户…"
+              />
+              <FilterDropdown
+                label="节点"
+                icon={<svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="6" rx="1.5"/><rect x="3" y="13" width="18" height="6" rx="1.5"/><path d="M7 8h.01M7 16h.01"/></svg>}
+                options={nodeOptions}
+                selected={selectedNodes}
+                onChange={setSelectedNodes}
+                searchPlaceholder="搜索节点…"
+              />
+              {filterActive && (
+                <button onClick={clearFilters}
+                  className="inline-flex items-center gap-1 text-xs text-ink-mut hover:text-ink transition-colors cursor-pointer bg-transparent border-0 p-0">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  清除
+                </button>
+              )}
+            </div>
+          )}
           <ToolbarActions className="hidden md:flex">
             <ToolbarButton onClick={() => openCreate(tab)}>
               {tab === 'chain' ? '＋ 链式转发' : '＋ 端口转发'}
             </ToolbarButton>
           </ToolbarActions>
         </PanelToolbar>
-
-        {(users.length > 0 || nodes.length > 0) && (
-          <div className="relative flex items-center gap-2.5 px-[22px] py-2.5 border-b border-line-soft flex-wrap z-10">
-            <span className="text-xs text-ink-mut">筛选</span>
-            <FilterDropdown
-              label="用户"
-              icon={<svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>}
-              options={userOptions}
-              selected={selectedOwners}
-              onChange={setSelectedOwners}
-              searchPlaceholder="搜索用户…"
-            />
-            <FilterDropdown
-              label="节点"
-              icon={<svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="6" rx="1.5"/><rect x="3" y="13" width="18" height="6" rx="1.5"/><path d="M7 8h.01M7 16h.01"/></svg>}
-              options={nodeOptions}
-              selected={selectedNodes}
-              onChange={setSelectedNodes}
-              searchPlaceholder="搜索节点…"
-            />
-            {filterActive && (
-              <button onClick={clearFilters}
-                className="inline-flex items-center gap-1 text-xs text-ink-mut hover:text-ink transition-colors cursor-pointer bg-transparent border-0 p-0">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                清除筛选
-              </button>
-            )}
-          </div>
-        )}
 
         {rules.length === 0 ? (
           <Empty title="暂无规则" desc={tab === 'chain' ? '点击右上角「链式转发」添加。' : '点击右上角「端口转发」添加。'} />

@@ -1294,3 +1294,27 @@ html, body {
 
 /* Success toast: status green (info dots stay brand blue above) */
 .toast-item.is-success { border-color: color-mix(in srgb, #22c55e 35%, transparent); }
+
+
+/* Compact row action — outline, soft brand hover (list tables) */
+.row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.row-action-btn:hover {
+  border-color: color-mix(in srgb, var(--brand-from) 45%, var(--color-line));
+  color: var(--brand-to);
+  background: var(--brand-soft);
+}

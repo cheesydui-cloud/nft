@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Layout, useToast } from '../components/Layout'
 import { Loading, Empty, Badge, CopyText, Modal, useConfirm, DateInput } from '../components/ui'
+import { MoreMenu } from '../components/RulesTable'
 import { PageHeader, Panel, PanelToolbar, ToolbarButton, ToolbarActions, TableScroll, SearchInput } from '../components/page'
 import FolderBar, { MoveToFolderModal } from '../components/FolderBar'
 import { parseURIs, tryParseURI } from '../lib/landing'
@@ -174,19 +175,37 @@ export default function NodeRepo() {
             <thead><tr>
               <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                 checked={filtered.length > 0 && sel.size === filtered.length} onChange={toggleSelAll} /></th>
-              <th>名称</th><th>分组</th><th>协议</th><th>地址</th><th>使用</th><th>到期时间</th><th>备注</th><th>创建时间</th><th className="text-right">操作</th></tr></thead>
+              <th>节点</th>
+              <th>地址</th>
+              <th>使用</th>
+              <th>到期</th>
+              <th className="text-right w-[1%] whitespace-nowrap">操作</th>
+            </tr></thead>
             <tbody>
               {filtered.map(n => (
                 <tr key={n.id}>
                   <td><input type="checkbox" className="accent-emerald-600" checked={sel.has(n.id)} onChange={() => toggleSel(n.id)} /></td>
-                  <td className="font-semibold">{n.name}</td>
-                  <td className="text-xs">{n.group_name ? <Badge color="blue">{n.group_name}</Badge> : <span className="text-ink-mut">—</span>}</td>
-                  <td className="font-mono text-xs text-ink-soft">{n.protocol || '—'}</td>
+                  <td className="!whitespace-normal min-w-[9rem]">
+                    <div className="font-semibold text-[13.5px] text-ink leading-snug">{n.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11.5px] text-ink-mut">
+                      {n.group_name
+                        ? <span className="text-[var(--brand-to)] font-medium">{n.group_name}</span>
+                        : <span>—</span>}
+                      <span className="opacity-40">·</span>
+                      <span className="font-mono uppercase">{n.protocol || '—'}</span>
+                      {n.remark && (
+                        <>
+                          <span className="opacity-40">·</span>
+                          <span className="truncate max-w-[12rem]" title={n.remark}>{n.remark}</span>
+                        </>
+                      )}
+                    </div>
+                  </td>
                   <td className="text-xs"><AddrCell n={n} onRetry={() => resyncCF(n)} busy={busyId === n.id} /></td>
                   <td className="text-xs">
                     {(n.user_count || 0) > 0 ? (
                       <button type="button" onClick={() => openUsers(n)}
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11.5px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700 transition-colors"
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11.5px] font-semibold border border-line bg-surface text-ink-soft hover:bg-[var(--brand-soft)] hover:text-[var(--brand-to)] hover:border-[color-mix(in_srgb,var(--brand-from)_40%,var(--color-line))] transition-colors"
                         title="查看使用此落地的用户">
                         {n.user_count} 人
                       </button>
@@ -194,13 +213,14 @@ export default function NodeRepo() {
                       <span className="text-ink-mut">—</span>
                     )}
                   </td>
-                  <td className="text-xs">
+                  <td className="text-xs !whitespace-normal">
                     {n.expires_at > 0 ? (
-                      <span className="inline-flex items-center gap-1.5">{fmtDate(n.expires_at)}{(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}</span>
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="text-ink-soft">{fmtDate(n.expires_at)}</span>
+                        {(() => { const b = expiryBadge(n.expires_at); return b ? <Badge color={b.color}>{b.label}</Badge> : null })()}
+                      </span>
                     ) : <span className="text-ink-mut">—</span>}
                   </td>
-                  <td className="text-xs text-ink-soft">{n.remark || '—'}</td>
-                  <td className="text-xs text-ink-mut">{new Date(n.created_at * 1000).toLocaleDateString('zh-CN')}</td>
                   <td className="text-right">
                     <RowActions
                       n={n}
@@ -246,7 +266,7 @@ export default function NodeRepo() {
                     <span className="font-mono">{n.protocol || '—'}</span>
                     {(n.user_count || 0) > 0 ? (
                       <button type="button" onClick={() => openUsers(n)}
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border border-line bg-surface text-ink-soft">
                         {n.user_count} 人
                       </button>
                     ) : (
@@ -365,11 +385,6 @@ function looksDomain(host) {
   return /[a-zA-Z]/.test(host)
 }
 
-const rowBtn = 'inline-flex items-center justify-center h-7 px-2.5 rounded-lg text-[12px] font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap'
-const rowBtnNeutral = `${rowBtn} border-line bg-surface text-ink-soft hover:bg-raised hover:text-ink`
-const rowBtnPrimary = `${rowBtn} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/25 dark:text-emerald-300 dark:hover:bg-emerald-900/40`
-const rowBtnDanger = `${rowBtn} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-300 dark:hover:bg-rose-900/35`
-
 function CFStatus({ n, onRetry, busy }) {
   if (!n?.cf_sync) return null
   if (n.cf_last_error) {
@@ -398,11 +413,12 @@ function CFStatus({ n, onRetry, busy }) {
 
 function AddrCell({ n, onRetry, busy }) {
   return (
-    <div className="min-w-[11rem] py-0.5">
+    <div className="min-w-[10rem] py-0.5">
       <div className="font-mono text-[12.5px] text-ink leading-snug">{n.host}:{n.port}</div>
       {(n.backend_ip || n.cf_sync) && (
-        <div className="mt-1 flex items-center gap-2 flex-wrap">
-          {n.backend_ip && <span className="font-mono text-[12px] text-ink-mut leading-none">{n.backend_ip}</span>}
+        <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11.5px]">
+          {n.backend_ip && <span className="font-mono text-ink-mut leading-none">{n.backend_ip}</span>}
+          {n.backend_ip && n.cf_sync && <span className="text-ink-mut/40">·</span>}
           <CFStatus n={n} onRetry={onRetry} busy={busy} />
         </div>
       )}
@@ -413,31 +429,20 @@ function AddrCell({ n, onRetry, busy }) {
 function RowActions({ n, busy, onProbe, onChangeIP, onEdit, onDelete, compact }) {
   const showDNS = looksDomain(n.host)
   const showChangeIP = showDNS || n.cf_sync
+  const menuItems = [
+    showDNS && { label: busy ? '检测中…' : '检测 DNS', onClick: onProbe },
+    showChangeIP && { label: '改 IP', onClick: onChangeIP },
+    { label: '删除', onClick: onDelete, danger: true },
+  ].filter(Boolean)
   return (
-    <div className={`inline-flex items-center flex-wrap justify-end ${compact ? 'gap-1.5' : 'gap-1.5'}`}>
-      {(showDNS || showChangeIP) && (
-        <div className="inline-flex items-center gap-1.5">
-          {showDNS && (
-            <button type="button" disabled={busy} onClick={onProbe} className={rowBtnNeutral} title="解析域名并对比当前 IP">
-              检测
-            </button>
-          )}
-          {showChangeIP && (
-            <button type="button" onClick={onChangeIP} className={rowBtnPrimary} title="只改当前 IP 并同步 CF">
-              改 IP
-            </button>
-          )}
-        </div>
+    <div className={`inline-flex items-center justify-end ${compact ? 'gap-1' : 'gap-1.5'}`}>
+      {n.uri && (
+        <CopyText text={n.uri}>
+          <span className="row-action-btn cursor-pointer">复制</span>
+        </CopyText>
       )}
-      <div className="inline-flex items-center gap-1.5">
-        {n.uri && (
-          <CopyText text={n.uri}>
-            <span className={`${rowBtnPrimary} cursor-pointer`}>复制</span>
-          </CopyText>
-        )}
-        <button type="button" onClick={onEdit} className={rowBtnPrimary}>编辑</button>
-        <button type="button" onClick={onDelete} className={rowBtnDanger}>删除</button>
-      </div>
+      <button type="button" onClick={onEdit} className="row-action-btn">编辑</button>
+      <MoreMenu items={menuItems} />
     </div>
   )
 }

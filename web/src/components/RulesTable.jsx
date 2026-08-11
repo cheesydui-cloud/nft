@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, ProtoBadge, SensText, CopyText, Tooltip, ExitKindBadge, Spinner, NodeTypeIcon } from './ui'
+import { Badge, ProtoBadge, SensText, CopyText, Tooltip, Spinner, NodeTypeIcon } from './ui'
 import { useCopyFmt, useToast } from './Layout'
 import { fmtBytes, fmtDate, isExpired, expiryBadge } from '../lib/fmt'
 import { buildRelayDisplayName } from '../lib/landing'
@@ -88,24 +88,17 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
     <table className="tbl">
       <thead>
         <tr>
-          {isAdmin && <th className="w-12">ID</th>}
-          <th>名称</th>
+          <th>{isAdmin ? '规则' : '名称'}</th>
           <th className="cursor-pointer select-none" onClick={() => cycleSort('node')}>
             <span className="inline-flex items-center">节点<SortArrow dir={sort.col === 'node' ? sort.dir : null} /></span>
           </th>
-          {isAdmin && <th>入口 / 出口</th>}
-          <th>协议</th>
-          {isAdmin && (
-            <th className="cursor-pointer select-none" onClick={() => cycleSort('owner')}>
-              <span className="inline-flex items-center">所有者<SortArrow dir={sort.col === 'owner' ? sort.dir : null} /></span>
-            </th>
-          )}
-          <th>备注</th>
-          {isAdmin && <th className="whitespace-nowrap">网速</th>}
+          {isAdmin && <th>链路</th>}
+          {!isAdmin && <th>协议</th>}
+          {isAdmin && <th className="whitespace-nowrap">实时</th>}
           <th className="text-right cursor-pointer select-none" onClick={() => cycleSort('traffic')}>
             <span className="inline-flex items-center justify-end">流量<SortArrow dir={sort.col === 'traffic' ? sort.dir : null} /></span>
           </th>
-          <th className="text-right">操作</th>
+          <th className="text-right w-[1%] whitespace-nowrap">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -116,35 +109,54 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
             <tr key={r.id}
               className={onRowClick ? 'cursor-pointer' : ''}
               onClick={onRowClick ? () => onRowClick(r) : undefined}>
-              {isAdmin && <td className="font-mono text-xs text-ink-mut">#{r.id}</td>}
-              <td className="font-semibold">{r.name}</td>
+              {/* 规则：主行名称 · 副行 #ID · 所有者 · 备注 */}
+              <td className="!whitespace-normal min-w-[8rem]">
+                <div className="font-semibold text-[13.5px] text-ink leading-snug">{r.name}</div>
+                <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11.5px] text-ink-mut">
+                  {isAdmin && <span className="font-mono">#{r.id}</span>}
+                  {isAdmin && r.owner_name && (
+                    <>
+                      <span className="opacity-40">·</span>
+                      <span className="text-ink-soft">{r.owner_name}</span>
+                    </>
+                  )}
+                  {r.comment && (
+                    <>
+                      <span className="opacity-40">·</span>
+                      {r.comment.length > 16
+                        ? <Tooltip content={r.comment}><span className="cursor-help truncate max-w-[10rem]">{r.comment.slice(0, 16)}…</span></Tooltip>
+                        : <span className="truncate max-w-[10rem]">{r.comment}</span>}
+                    </>
+                  )}
+                </div>
+              </td>
+
               <td>
-                <span className="inline-flex items-center gap-1.5 font-mono text-ink-soft">
+                <span className="inline-flex items-center gap-1.5 font-mono text-[13px] text-ink-soft">
                   <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
                   <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
                   {r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
                 </span>
               </td>
+
               {isAdmin && (
-              <td className="font-mono text-xs !whitespace-normal">
-                <div className="inline-block" onClick={e => e.stopPropagation()}>
+              <td className="font-mono text-xs !whitespace-normal min-w-[12rem]">
+                <div className="inline-block max-w-[22rem]" onClick={e => e.stopPropagation()}>
                   {(() => {
-                    // Entry shows the node's name:port (never the raw ip/host);
-                    // the copy still carries the real host:port so a client can
-                    // dial it. A dual-stack rule lists v4 and v6 separately —
-                    // same display, different copied endpoint.
                     const nodeLabel = node?.name || `#${r.node_id}`
                     const shown = r.entry_listen_port ? `${nodeLabel}:${r.entry_listen_port}` : nodeLabel
                     return (
                       <>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <Badge color="gray">{r.entry_v6 ? '入口v4' : '入口'}</Badge>
-                          {r.entry ? <CopyText text={r.entry}><span className="font-sans">{shown}</span></CopyText> : '--'}
+                        <div className="flex items-center gap-1.5 leading-snug">
+                          <span className="text-[10.5px] font-semibold text-ink-mut shrink-0 w-7">{r.entry_v6 ? '入v4' : '入口'}</span>
+                          {r.entry
+                            ? <CopyText text={r.entry}><span className="font-sans text-[12.5px] text-ink">{shown}</span></CopyText>
+                            : <span className="text-ink-mut">—</span>}
                         </div>
                         {r.entry_v6 && (
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <Badge color="gray">入口v6</Badge>
-                            <CopyText text={r.entry_v6}><span className="font-sans">{shown}</span></CopyText>
+                          <div className="flex items-center gap-1.5 leading-snug mt-0.5">
+                            <span className="text-[10.5px] font-semibold text-ink-mut shrink-0 w-7">入v6</span>
+                            <CopyText text={r.entry_v6}><span className="font-sans text-[12.5px] text-ink">{shown}</span></CopyText>
                           </div>
                         )}
                       </>
@@ -152,11 +164,10 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                   })()}
                   {(() => {
                     const exitLabel = !isAdmin && r.exit_kind === 'landing' && r.landing_name
-                      ? <span className="font-sans">{r.landing_name}{renderLandingExpiry(r)}</span>
-                      : <SensText blurred={blurred}>{exitOf(r) || '--'}</SensText>
+                      ? <span className="font-sans text-[12.5px]">{r.landing_name}{renderLandingExpiry(r)}</span>
+                      : <SensText blurred={blurred}><span className="text-[12.5px]">{exitOf(r) || '—'}</span></SensText>
+                    const protoTag = (r.landing_protocol || (r.exit_type === 'socks5' ? 'sk5' : '') || '').toLowerCase()
                     const proxyRow = (uri, tag) => {
-                      // List label stays landing name; clipboard uses 用户名-到期/规则名.
-                      // Expiry = 用户下发落地到期 (landing_expires_at / user_landing_exits).
                       const expiresAt = (r.landing_expires_at > 0)
                         ? r.landing_expires_at
                         : relayExpiryFromMap(landingExpiry, r.exit_host, r.exit_port)
@@ -174,25 +185,26 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                         displayName,
                       })
                       return (
-                        <div className="flex items-center gap-1.5 flex-wrap text-ink-soft">
-                          <ExitKindBadge kind={r.exit_kind} protocol={r.landing_protocol} />
-                          {tag && <span className="text-[10px] font-semibold text-ink-mut">{tag}</span>}
+                        <div className="flex items-center gap-1.5 flex-wrap text-ink-soft mt-0.5 leading-snug">
+                          <span className="text-[10.5px] font-semibold text-ink-mut shrink-0 w-7">{tag || '出口'}</span>
+                          {protoTag && <span className="font-mono text-[10.5px] font-bold uppercase text-[var(--brand-to)] opacity-80">{protoTag}</span>}
                           <CopyText text={text || uri}>{exitLabel}</CopyText>
                         </div>
                       )
                     }
                     if (r.relay_uri && r.relay_uri_v6) {
-                      return <>{proxyRow(r.relay_uri, 'v4')}{proxyRow(r.relay_uri_v6, 'v6')}</>
+                      return <>{proxyRow(r.relay_uri, '出v4')}{proxyRow(r.relay_uri_v6, '出v6')}</>
                     }
-                    if (r.relay_uri) return proxyRow(r.relay_uri, null)
+                    if (r.relay_uri) return proxyRow(r.relay_uri, '出口')
                     return (
-                      <div className="flex items-center gap-1.5 flex-wrap text-ink-soft">
+                      <div className="flex items-center gap-1.5 flex-wrap text-ink-soft mt-0.5 leading-snug">
+                        <span className="text-[10.5px] font-semibold text-ink-mut shrink-0 w-7">出口</span>
                         {r.exit_type === 'socks5'
-                          ? <Badge color="blue">SK5</Badge>
-                          : <ExitKindBadge kind={r.exit_kind} protocol={r.landing_protocol} />}
+                          ? <span className="font-mono text-[10.5px] font-bold uppercase text-[var(--brand-to)] opacity-80">sk5</span>
+                          : (protoTag ? <span className="font-mono text-[10.5px] font-bold uppercase text-[var(--brand-to)] opacity-80">{protoTag}</span> : null)}
                         {exitLabel}
                         {r.exit_type === 'socks5' && r.exit_uri && (
-                          <span className="text-[11px] text-ink-mut font-mono truncate max-w-[180px]" title={r.exit_uri}>
+                          <span className="text-[11px] text-ink-mut font-mono truncate max-w-[160px]" title={r.exit_uri}>
                             via {r.exit_uri}
                           </span>
                         )}
@@ -202,32 +214,29 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                 </div>
               </td>
               )}
-              <td><ProtoBadge proto={r.proto} /></td>
-              {isAdmin && <td className="text-ink-soft">{r.owner_name || '--'}</td>}
-              <td className="text-xs text-ink-soft">
-                {r.comment
-                  ? r.comment.length > 8
-                    ? <Tooltip content={r.comment}><span className="cursor-help">{r.comment.slice(0, 8)}…</span></Tooltip>
-                    : r.comment
-                  : <span className="text-ink-mut">-</span>}
-              </td>
+
+              {!isAdmin && <td><ProtoBadge proto={r.proto} /></td>}
+
               {isAdmin && (
               <td className="font-mono text-xs whitespace-nowrap">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="text-emerald-600">↑{fmtSpeed(sp.up)}</span>
-                  <span className="text-emerald-600">↓{fmtSpeed(sp.down)}</span>
+                <span className={`inline-flex items-center gap-1.5 ${(sp.up || sp.down) ? 'text-[var(--brand-to)]' : 'text-ink-mut'}`}>
+                  <span>↑{fmtSpeed(sp.up)}</span>
+                  <span>↓{fmtSpeed(sp.down)}</span>
                 </span>
               </td>
               )}
+
               <td className="text-right font-mono text-xs text-ink-mut">{fmtBytes(Math.round(((r.exit_bytes || 0)) * displayRate))}</td>
               <td className="text-right whitespace-nowrap">
-                <div className="inline-flex gap-2 justify-end items-center" onClick={e => e.stopPropagation()}>
+                <div className="inline-flex gap-1.5 justify-end items-center" onClick={e => e.stopPropagation()}>
+                  {isAdmin && onCopy && (
+                    <button type="button" onClick={() => onCopy(r)} className="row-action-btn" title="复制规则链接">复制</button>
+                  )}
+                  {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} className="row-action-btn" />}
                   <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
-                  {/* QR lives on「我的代理」for users; admin list keeps one-tap scan. */}
-                  {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} />}
                   <MoreMenu items={[
                     onEdit && { label: '编辑', onClick: () => onEdit(r) },
-                    onCopy && { label: '复制', onClick: () => onCopy(r) },
+                    !isAdmin && onCopy && { label: '复制', onClick: () => onCopy(r) },
                     { label: '删除', onClick: () => onDelete(r), danger: true },
                   ].filter(Boolean)} />
                 </div>
@@ -252,7 +261,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <span className="font-semibold text-[14px]">{r.name}</span>
               <div className="flex items-center gap-2">
                 <ProbeIconButton ruleId={r.id} probeAllTrigger={probeAllTrigger} />
-                {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} />}
+                {isAdmin && <QRCodeButton text={ruleQRText(r)} toast={toast} className="row-action-btn" />}
                 <ProtoBadge proto={r.proto} />
               </div>
             </div>
@@ -343,7 +352,7 @@ function ProbeIconButton({ ruleId, probeAllTrigger }) {
   )
 }
 
-function MoreMenu({ items }) {
+export function MoreMenu({ items }) {
   const [open, setOpen] = useState(false)
   const [dropUp, setDropUp] = useState(false)
   const ref = useRef(null)
