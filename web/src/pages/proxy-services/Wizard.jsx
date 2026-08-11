@@ -5,12 +5,18 @@ import { Layout, useToast } from '../../components/Layout'
 import { Loading, Badge, Select } from '../../components/ui'
 import { PageHeader, Panel } from '../../components/page'
 import { copyToClipboard } from '../../lib/clipboard'
-import { REALITY_DOMAIN_POOL, REALITY_FP_OPTIONS, REALITY_NETWORK_OPTIONS } from '../../lib/realityDomains'
+import {
+  REALITY_DOMAIN_POOL,
+  REALITY_FP_OPTIONS,
+  SECURITY_OPTIONS,
+  networksForSecurity,
+  visionAllowed,
+} from '../../lib/realityDomains'
 
 const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完成']
 
 const TEMPLATES = [
-  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: '免证书 REALITY，抗封锁默认推荐' },
+  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
   { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: '轻量、客户端生态最广' },
   { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，TCP/UDP 双传输' },
 ]
@@ -43,6 +49,11 @@ const emptyVless = () => ({
   host: '',
   spider_x: '',
   xhttp_mode: 'auto',
+  service_name: 'GunService',
+  alpn: '',
+  allow_insecure: false,
+  cert_pem: '',
+  key_pem: '',
 })
 
 const emptySS = () => ({
@@ -111,10 +122,14 @@ export default function ProxyServiceWizard() {
       setSubVisible(!!s.sub_visible)
       try {
         const cfg = typeof s.config_json === 'string' ? JSON.parse(s.config_json) : (s.config_json || {})
-        // Xray REALITY 不支持 ws/httpupgrade；旧配置编辑时自动改回 tcp，避免再发一次必失败
-        if (s.protocol === 'vless' && cfg && (cfg.network === 'ws' || cfg.network === 'httpupgrade' || cfg.network === 'websocket')) {
-          cfg.network = 'tcp'
-          if (!cfg.flow || cfg.flow === 'none') cfg.flow = 'xtls-rprx-vision'
+        // REALITY 不支持 ws/httpupgrade；仅在 security=reality 时强制回 tcp
+        const sec = (cfg.security || 'reality').toLowerCase()
+        if (s.protocol === 'vless' && cfg && sec === 'reality') {
+          const n = (cfg.network || 'tcp').toLowerCase()
+          if (n === 'ws' || n === 'httpupgrade' || n === 'websocket') {
+            cfg.network = 'tcp'
+            if (!cfg.flow || cfg.flow === 'none') cfg.flow = 'xtls-rprx-vision'
+          }
         }
         setConfig(cfg)
       } catch { /* keep */ }
@@ -238,9 +253,22 @@ export default function ProxyServiceWizard() {
 
   const saveConfig = async () => {
     if (!name.trim()) { toast('请填写名称', 'error'); return false }
-    if (protocol === 'vless' && !(config.server_name || '').trim()) {
-      toast('请填写 server-name（REALITY 回源 SNI），可从域名池选择', 'error')
-      return false
+    if (protocol === 'vless') {
+      const sec = (config.security || 'reality').toLowerCase()
+      if (sec === 'reality' && !(config.server_name || '').trim()) {
+        toast('请填写 server-name（REALITY 回源 SNI），可从域名池选择', 'error')
+        return false
+      }
+      if (sec === 'tls') {
+        if (!(config.server_name || '').trim()) {
+          toast('TLS 需要填写域名（SNI / 证书域名）', 'error')
+          return false
+        }
+        if (!(config.cert_pem || '').trim() || !(config.key_pem || '').trim()) {
+          toast('TLS 需要粘贴或上传证书 PEM 与私钥 PEM', 'error')
+          return false
+        }
+      }
     }
     const body = {
       name: name.trim(),
@@ -385,65 +413,138 @@ export default function ProxyServiceWizard() {
                 </div>
               </div>
 
-              {protocol === 'vless' && (
+              {protocol === 'vless' && (() => {
+                const sec = (config.security || 'reality').toLowerCase()
+                const netOpts = networksForSecurity(sec)
+                const netw = (config.network || 'tcp').toLowerCase()
+                const canVision = visionAllowed(sec, netw)
+                const setSecurity = (v) => {
+                  const next = (v || 'reality').toLowerCase()
+                  const allowed = networksForSecurity(next).map(o => o.value)
+                  let n = (config.network || 'tcp').toLowerCase()
+                  if (!allowed.includes(n)) n = 'tcp'
+                  const patch = { security: next, network: n }
+                  if (visionAllowed(next, n)) {
+                    if (!config.flow || config.flow === 'none') patch.flow = 'xtls-rprx-vision'
+                  } else {
+                    patch.flow = 'none'
+                  }
+                  setConfig(prev => ({ ...prev, ...patch }))
+                }
+                const setNetwork = (v) => {
+                  const n = v || 'tcp'
+                  const patch = { network: n }
+                  if (visionAllowed(sec, n)) {
+                    if (!config.flow || config.flow === 'none') patch.flow = 'xtls-rprx-vision'
+                  } else {
+                    patch.flow = 'none'
+                  }
+                  if (n === 'grpc' && !config.service_name) patch.service_name = 'GunService'
+                  if ((n === 'ws' || n === 'httpupgrade' || n === 'xhttp') && !config.path) patch.path = '/'
+                  setConfig(prev => ({ ...prev, ...patch }))
+                }
+                const readPemFile = (file, key) => {
+                  if (!file) return
+                  const reader = new FileReader()
+                  reader.onload = () => {
+                    const text = String(reader.result || '')
+                    setCfg(key, text)
+                    toast(`已读入 ${file.name}`, 'success')
+                  }
+                  reader.onerror = () => toast('读取文件失败', 'error')
+                  reader.readAsText(file)
+                }
+                return (
                 <div className="space-y-3 border-t border-line pt-4">
+                  <div>
+                    <label className="fl block mb-1">安全层</label>
+                    <Select value={sec} onChange={setSecurity} options={SECURITY_OPTIONS} />
+                    <p className="text-[11px] text-ink-mut mt-1">
+                      默认 REALITY（免证书、抗封锁）。TLS 需自备域名证书；无加密仅建议内网测试。
+                    </p>
+                  </div>
+
+                  {sec === 'none' && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100 dark:border-amber-700 px-3 py-2 text-[12.5px]">
+                      <strong>警告：</strong>安全层为「无」时流量明文传输，请勿暴露在公网。
+                    </div>
+                  )}
+
                   <div className="grid sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="fl block mb-1">server-name（回源 / REALITY SNI）</label>
-                      <input className="input-field font-mono" value={config.server_name || ''} onChange={e => setCfg('server_name', e.target.value)} placeholder="cdn.example.com" />
-                      <p className="text-[11px] text-ink-mut mt-1">回源站 / REALITY SNI / TLS SNI</p>
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">域名池</label>
-                      <Select
-                        value={config.server_name && REALITY_DOMAIN_POOL.some(d => d.domain === config.server_name) ? config.server_name : ''}
-                        onChange={v => { if (v) setCfg('server_name', v) }}
-                        options={[
-                          { value: '', label: '选择预置域名…' },
-                          ...REALITY_DOMAIN_POOL.map(d => ({
-                            value: d.domain,
-                            label: `${d.flag} ${d.domain} · ${d.label}`,
-                          })),
-                        ]}
-                      />
-                      <p className="text-[11px] text-ink-mut mt-1">按节点所在地区挑选；一个 inbound 只有一个 dest。上线前请在该节点实测 TLS1.3 + h2 + X25519</p>
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">server-port</label>
-                      <input className="input-field font-mono" type="number" value={config.server_port || 443} onChange={e => setCfg('server_port', Number(e.target.value) || 443)} />
-                      <p className="text-[11px] text-ink-mut mt-1">回源端口，默认 443</p>
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">指纹</label>
-                      <Select value={config.fingerprint || 'chrome'} onChange={v => setCfg('fingerprint', v)}
-                        options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
-                      <p className="text-[11px] text-ink-mut mt-1">客户端 ClientHello 伪装；默认 chrome 即可</p>
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">max_time_difference</label>
-                      <input className="input-field font-mono" type="number" value={config.max_time_difference ?? 60000}
-                        onChange={e => setCfg('max_time_difference', Number(e.target.value))} />
-                      <p className="text-[11px] text-ink-mut mt-1">毫秒整数，如 60000=1m，可空</p>
-                    </div>
+                    {(sec === 'reality' || sec === 'tls') && (
+                      <div>
+                        <label className="fl block mb-1">
+                          {sec === 'reality' ? 'server-name（回源 / REALITY SNI）' : '域名（TLS SNI / 证书域名）'}
+                        </label>
+                        <input className="input-field font-mono" value={config.server_name || ''} onChange={e => setCfg('server_name', e.target.value)}
+                          placeholder={sec === 'reality' ? 'cdn.example.com' : 'vpn.example.com'} />
+                        <p className="text-[11px] text-ink-mut mt-1">
+                          {sec === 'reality' ? '回源站 / REALITY SNI' : '须与证书 CN/SAN 一致；客户端 SNI'}
+                        </p>
+                      </div>
+                    )}
+                    {sec === 'reality' && (
+                      <div>
+                        <label className="fl block mb-1">域名池</label>
+                        <Select
+                          value={config.server_name && REALITY_DOMAIN_POOL.some(d => d.domain === config.server_name) ? config.server_name : ''}
+                          onChange={v => { if (v) setCfg('server_name', v) }}
+                          options={[
+                            { value: '', label: '选择预置域名…' },
+                            ...REALITY_DOMAIN_POOL.map(d => ({
+                              value: d.domain,
+                              label: `${d.flag} ${d.domain} · ${d.label}`,
+                            })),
+                          ]}
+                        />
+                        <p className="text-[11px] text-ink-mut mt-1">按节点地区挑选 dest；上线前请实测 TLS1.3 + h2</p>
+                      </div>
+                    )}
+                    {sec === 'reality' && (
+                      <div>
+                        <label className="fl block mb-1">server-port（回源）</label>
+                        <input className="input-field font-mono" type="number" value={config.server_port || 443}
+                          onChange={e => setCfg('server_port', Number(e.target.value) || 443)} />
+                      </div>
+                    )}
+                    {(sec === 'reality' || sec === 'tls') && (
+                      <div>
+                        <label className="fl block mb-1">指纹（客户端）</label>
+                        <Select value={config.fingerprint || 'chrome'} onChange={v => setCfg('fingerprint', v)}
+                          options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
+                        <p className="text-[11px] text-ink-mut mt-1">ClientHello 伪装；默认 chrome</p>
+                      </div>
+                    )}
+                    {sec === 'reality' && (
+                      <div>
+                        <label className="fl block mb-1">max_time_difference</label>
+                        <input className="input-field font-mono" type="number" value={config.max_time_difference ?? 60000}
+                          onChange={e => setCfg('max_time_difference', Number(e.target.value))} />
+                        <p className="text-[11px] text-ink-mut mt-1">毫秒，如 60000=1m</p>
+                      </div>
+                    )}
                     <div>
                       <label className="fl block mb-1">传输层</label>
-                      <Select value={config.network || 'tcp'} onChange={v => {
-                        setCfg('network', v)
-                        // vision only valid on tcp
-                        if (v !== 'tcp' && config.flow === 'xtls-rprx-vision') setCfg('flow', 'none')
-                        if (v === 'tcp' && (!config.flow || config.flow === 'none')) setCfg('flow', 'xtls-rprx-vision')
-                      }} options={REALITY_NETWORK_OPTIONS} />
-                      <p className="text-[11px] text-ink-mut mt-1">Xray REALITY 仅支持 tcp / xhttp（默认 tcp 最稳）；勿用 ws</p>
+                      <Select value={netOpts.some(o => o.value === netw) ? netw : 'tcp'} onChange={setNetwork} options={netOpts} />
+                      <p className="text-[11px] text-ink-mut mt-1">
+                        {sec === 'reality'
+                          ? 'REALITY 仅 tcp / xhttp / gRPC（Xray 限制）'
+                          : 'TLS/无：tcp · ws · gRPC · xhttp · HTTPUpgrade'}
+                      </p>
                     </div>
                     <div>
                       <label className="fl block mb-1">flow</label>
-                      <Select value={config.flow === '' || config.flow === 'none' ? 'none' : (config.flow || 'xtls-rprx-vision')}
+                      <Select
+                        value={config.flow === '' || config.flow === 'none' ? 'none' : (config.flow || 'xtls-rprx-vision')}
                         onChange={v => setCfg('flow', v === 'none' ? 'none' : v)}
                         options={[
-                          { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
+                          { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision', disabled: !canVision },
                           { value: 'none', label: '关' },
-                        ]} />
-                      <p className="text-[11px] text-ink-mut mt-1">仅 tcp 推荐 vision；其它传输层自动关闭</p>
+                        ].filter(o => !o.disabled || o.value === 'none')}
+                      />
+                      <p className="text-[11px] text-ink-mut mt-1">
+                        {canVision ? 'tcp + REALITY/TLS 可用 vision' : '当前组合不支持 vision，已关闭'}
+                      </p>
                     </div>
                     <div>
                       <label className="fl block mb-1">decryption（服务端）</label>
@@ -464,58 +565,59 @@ export default function ProxyServiceWizard() {
                         }}>清空</button>
                       </div>
                       <p className="text-[11px] text-ink-mut mt-1">
-                        可选 VLESS Encryption（vlessenc）：生成后服务端与客户端必须成对。默认 X25519 短密钥（0rtt / 600s，各约 70–80 字符）。改后须「重新发布」并重新导入节点。
-                        启用 vlessenc 时面板会强制推送最新 xray（旧系统包会 none 通、带 encryption 超时）。小火箭请用「复制 URI」或规则订阅；仅 REALITY 时点清空（none）即可。
+                        可选 VLESS Encryption（vlessenc）。改后须重新发布并重新导入客户端。
                       </p>
                     </div>
                   </div>
 
-                  <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
-                    <div className="text-sm font-bold">REALITY dest 探测</div>
-                    <p className="text-[12px] text-ink-mut m-0">
-                      从线路节点侧对 <span className="font-mono">server-name:server-port</span> 做 TLS 握手，检查 TLS1.3 / h2 / 证书与 SNI。比面板本机探测更接近真实回源路径。
-                    </p>
-                    <div className="grid sm:grid-cols-2 gap-3 items-end">
-                      <div>
-                        <label className="fl block mb-1">探测节点</label>
-                        <Select
-                          value={probeNodeId || (onlineNodes[0] ? String(onlineNodes[0].id) : '')}
-                          onChange={v => setProbeNodeId(v)}
-                          options={[
-                            ...(onlineNodes.length === 0 ? [{ value: '', label: '无在线节点（将用面板本机）' }] : []),
-                            ...onlineNodes.map(n => ({
-                              value: String(n.id),
-                              label: `${n.name || '#' + n.id}${n.region ? ' · ' + n.region : ''}`,
-                            })),
-                          ]}
-                        />
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" className="btn-primary text-sm" disabled={probingDest}
-                          onClick={probeDest}>{probingDest ? '探测中…' : '探测 dest'}</button>
-                      </div>
-                    </div>
-                    {destProbe && (
-                      <div className={`text-[12.5px] rounded-lg border px-3 py-2 ${
-                        destProbe.score === 'good' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-700'
-                          : destProbe.score === 'ok' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100'
-                          : 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-900/20 dark:text-rose-200'
-                      }`}>
-                        <div className="font-semibold">{destProbe.summary || (destProbe.ok ? '完成' : (destProbe.error || '失败'))}</div>
-                        <div className="mt-1 font-mono text-[11px] opacity-90 space-y-0.5">
-                          {destProbe.latency_ms != null && <div>延迟 {destProbe.latency_ms} ms</div>}
-                          {destProbe.tls_version && <div>TLS {destProbe.tls_version}{destProbe.alpn ? ` · ALPN ${destProbe.alpn}` : ''}{destProbe.tls13 ? ' · TLS1.3✓' : ''}{destProbe.h2 ? ' · h2✓' : ''}</div>}
-                          {destProbe.cert_cn && <div>证书 CN {destProbe.cert_cn}{destProbe.sni_match ? ' · SNI 匹配' : ' · SNI 未匹配'}</div>}
-                          {destProbe.cipher && <div>套件 {destProbe.cipher}</div>}
-                          {destProbe.error && !destProbe.ok && <div className="text-rose-700 dark:text-rose-300">{destProbe.error}</div>}
+                  {sec === 'reality' && (
+                    <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                      <div className="text-sm font-bold">REALITY dest 探测</div>
+                      <p className="text-[12px] text-ink-mut m-0">
+                        从线路节点侧对 <span className="font-mono">server-name:server-port</span> 做 TLS 握手，检查 TLS1.3 / h2 / 证书与 SNI。
+                      </p>
+                      <div className="grid sm:grid-cols-2 gap-3 items-end">
+                        <div>
+                          <label className="fl block mb-1">探测节点</label>
+                          <Select
+                            value={probeNodeId || (onlineNodes[0] ? String(onlineNodes[0].id) : '')}
+                            onChange={v => setProbeNodeId(v)}
+                            options={[
+                              ...(onlineNodes.length === 0 ? [{ value: '', label: '无在线节点（将用面板本机）' }] : []),
+                              ...onlineNodes.map(n => ({
+                                value: String(n.id),
+                                label: `${n.name || '#' + n.id}${n.region ? ' · ' + n.region : ''}`,
+                              })),
+                            ]}
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" className="btn-primary text-sm" disabled={probingDest}
+                            onClick={probeDest}>{probingDest ? '探测中…' : '探测 dest'}</button>
                         </div>
                       </div>
-                    )}
-                  </div>
+                      {destProbe && (
+                        <div className={`text-[12.5px] rounded-lg border px-3 py-2 ${
+                          destProbe.score === 'good' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-700'
+                            : destProbe.score === 'ok' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100'
+                            : 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-900/20 dark:text-rose-200'
+                        }`}>
+                          <div className="font-semibold">{destProbe.summary || (destProbe.ok ? '完成' : (destProbe.error || '失败'))}</div>
+                          <div className="mt-1 font-mono text-[11px] opacity-90 space-y-0.5">
+                            {destProbe.latency_ms != null && <div>延迟 {destProbe.latency_ms} ms</div>}
+                            {destProbe.tls_version && <div>TLS {destProbe.tls_version}{destProbe.alpn ? ` · ALPN ${destProbe.alpn}` : ''}{destProbe.tls13 ? ' · TLS1.3✓' : ''}{destProbe.h2 ? ' · h2✓' : ''}</div>}
+                            {destProbe.cert_cn && <div>证书 CN {destProbe.cert_cn}{destProbe.sni_match ? ' · SNI 匹配' : ' · SNI 未匹配'}</div>}
+                            {destProbe.cipher && <div>套件 {destProbe.cipher}</div>}
+                            {destProbe.error && !destProbe.ok && <div className="text-rose-700 dark:text-rose-300">{destProbe.error}</div>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                  {config.network === 'xhttp' && (
+                  {(netw === 'xhttp' || netw === 'ws' || netw === 'httpupgrade') && (
                     <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
-                      <div className="text-sm font-bold">传输层参数 · xhttp</div>
+                      <div className="text-sm font-bold">传输层参数 · {netw}</div>
                       <div className="grid sm:grid-cols-2 gap-3">
                         <div>
                           <label className="fl block mb-1">path</label>
@@ -525,78 +627,117 @@ export default function ProxyServiceWizard() {
                           <label className="fl block mb-1">host（可选）</label>
                           <input className="input-field font-mono" value={config.host || ''} onChange={e => setCfg('host', e.target.value)} placeholder="默认与 SNI 一致时可留空" />
                         </div>
-                        <div>
-                          <label className="fl block mb-1">xhttp mode</label>
-                          <Select value={config.xhttp_mode || 'auto'} onChange={v => setCfg('xhttp_mode', v)}
-                            options={['auto', 'packet-up', 'stream-up', 'stream-one'].map(v => ({ value: v, label: v }))} />
-                        </div>
+                        {netw === 'xhttp' && (
+                          <div>
+                            <label className="fl block mb-1">xhttp mode</label>
+                            <Select value={config.xhttp_mode || 'auto'} onChange={v => setCfg('xhttp_mode', v)}
+                              options={['auto', 'packet-up', 'stream-up', 'stream-one'].map(v => ({ value: v, label: v }))} />
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
-                  <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
-                    <div className="text-sm font-bold">安全层 · REALITY</div>
-                    <div className="grid sm:grid-cols-2 gap-3">
+                  {netw === 'grpc' && (
+                    <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                      <div className="text-sm font-bold">传输层参数 · gRPC</div>
                       <div>
-                        <label className="fl block mb-1">private_key</label>
-                        <input className="input-field font-mono text-xs" value={config.private_key || ''} onChange={e => setCfg('private_key', e.target.value)} />
-                      </div>
-                      <div>
-                        <label className="fl block mb-1">public_key</label>
-                        <input className="input-field font-mono text-xs" value={config.public_key || ''} onChange={e => setCfg('public_key', e.target.value)} />
+                        <label className="fl block mb-1">serviceName</label>
+                        <input className="input-field font-mono" value={config.service_name || 'GunService'}
+                          onChange={e => setCfg('service_name', e.target.value || 'GunService')} />
+                        <p className="text-[11px] text-ink-mut mt-1">默认 GunService；须与客户端一致</p>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" className="btn-primary text-sm" onClick={() => genKeys('reality')}>生成密钥</button>
-                      <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('short_id')}>生成 short_id</button>
-                    </div>
-                    <div className="grid sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="fl block mb-1">short_id</label>
-                        <input className="input-field font-mono" value={config.short_id || ''} onChange={e => setCfg('short_id', e.target.value)} />
-                      </div>
-                      <div>
-                        <label className="fl block mb-1">spiderX（可选）</label>
-                        <input className="input-field font-mono" value={config.spider_x || ''} onChange={e => setCfg('spider_x', e.target.value)} placeholder="/" />
-                      </div>
-                    </div>
-                    <label className="inline-flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={!!config.allow_empty_short_id}
-                        onChange={e => setCfg('allow_empty_short_id', e.target.checked)} />
-                      允许空 shortId（兼容旧客户端；默认关闭更严）
-                    </label>
-                    <p className="text-[11px] text-ink-mut m-0">
-                      密钥始终成对生成/覆盖。部署默认仅 REALITY；shortId 默认只接受已配置值。
-                    </p>
+                  )}
 
-                    <div className="border border-dashed border-line rounded-xl p-3 space-y-2">
-                      <div className="text-sm font-bold text-ink-soft">高级</div>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={!!config.tcp_fast_open}
-                          onChange={e => setCfg('tcp_fast_open', e.target.checked)}
-                        />
-                        <span className="font-mono">tcp_fast_open</span>
+                  {sec === 'reality' && (
+                    <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                      <div className="text-sm font-bold">安全层 · REALITY</div>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="fl block mb-1">private_key</label>
+                          <input className="input-field font-mono text-xs" value={config.private_key || ''} onChange={e => setCfg('private_key', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="fl block mb-1">public_key</label>
+                          <input className="input-field font-mono text-xs" value={config.public_key || ''} onChange={e => setCfg('public_key', e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className="btn-primary text-sm" onClick={() => genKeys('reality')}>生成密钥</button>
+                        <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('short_id')}>生成 short_id</button>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="fl block mb-1">short_id</label>
+                          <input className="input-field font-mono" value={config.short_id || ''} onChange={e => setCfg('short_id', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="fl block mb-1">spiderX（可选）</label>
+                          <input className="input-field font-mono" value={config.spider_x || ''} onChange={e => setCfg('spider_x', e.target.value)} placeholder="/" />
+                        </div>
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={!!config.allow_empty_short_id}
+                          onChange={e => setCfg('allow_empty_short_id', e.target.checked)} />
+                        允许空 shortId（兼容旧客户端；默认关闭更严）
                       </label>
-                      <p className="text-[11px] text-ink-mut m-0 pl-6">
-                        TCP Fast Open：略减建连延迟，需节点内核开启 TFO；默认关更稳。
-                      </p>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={config.sniffing !== false}
-                          onChange={e => setCfg('sniffing', e.target.checked)}
-                        />
-                        <span className="font-mono">sniffing</span>
-                      </label>
-                      <p className="text-[11px] text-ink-mut m-0 pl-6">
-                        入站嗅探（http/tls/quic）：识别真实域名便于分流；默认开。改后须重新发布。
-                      </p>
                     </div>
+                  )}
+
+                  {sec === 'tls' && (
+                    <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
+                      <div className="text-sm font-bold">安全层 · TLS 证书</div>
+                      <p className="text-[12px] text-ink-mut m-0">
+                        粘贴 PEM 或上传 <span className="font-mono">.crt/.pem</span> 与私钥。证书将随配置下发到节点，写入 xray 实例目录（0600）。本版不提供 ACME 自动签证书。
+                      </p>
+                      <div>
+                        <label className="fl block mb-1">证书 PEM（cert）</label>
+                        <textarea className="input-field font-mono text-xs min-h-[100px]" value={config.cert_pem || ''}
+                          onChange={e => setCfg('cert_pem', e.target.value)}
+                          placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" />
+                        <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">私钥 PEM（key）</label>
+                        <textarea className="input-field font-mono text-xs min-h-[100px]" value={config.key_pem || ''}
+                          onChange={e => setCfg('key_pem', e.target.value)}
+                          placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" />
+                        <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="fl block mb-1">ALPN（可选）</label>
+                          <input className="input-field font-mono" value={config.alpn || ''} onChange={e => setCfg('alpn', e.target.value)}
+                            placeholder="h2,http/1.1" />
+                        </div>
+                        <label className="inline-flex items-center gap-2 text-sm mt-6">
+                          <input type="checkbox" checked={!!config.allow_insecure}
+                            onChange={e => setCfg('allow_insecure', e.target.checked)} />
+                          客户端 allowInsecure（跳过校验证书，仅调试）
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border border-dashed border-line rounded-xl p-3 space-y-2">
+                    <div className="text-sm font-bold text-ink-soft">高级</div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.tcp_fast_open}
+                        onChange={e => setCfg('tcp_fast_open', e.target.checked)} />
+                      <span className="font-mono">tcp_fast_open</span>
+                    </label>
+                    <p className="text-[11px] text-ink-mut m-0 pl-6">TCP Fast Open；需节点内核开启 TFO；默认关更稳。</p>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.sniffing !== false}
+                        onChange={e => setCfg('sniffing', e.target.checked)} />
+                      <span className="font-mono">sniffing</span>
+                    </label>
+                    <p className="text-[11px] text-ink-mut m-0 pl-6">入站嗅探（http/tls/quic）；默认开。改后须重新发布。</p>
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {protocol === 'shadowsocks' && (
                 <div className="border-t border-line pt-4 space-y-3">

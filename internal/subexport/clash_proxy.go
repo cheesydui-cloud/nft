@@ -238,28 +238,42 @@ func vlessToClash(rest, forceName string) string {
 	if enc := normalizeVLESSEncTokenLocal(params["encryption"]); enc != "" && !strings.EqualFold(enc, "none") {
 		fmt.Fprintf(&b, "  encryption: %s\n", strconv.Quote(enc))
 	}
-	sec := params["security"]
-	if sec == "tls" || sec == "reality" {
-		b.WriteString("  tls: true\n")
-	}
-	if sni := params["sni"]; sni != "" {
-		fmt.Fprintf(&b, "  servername: %s\n", sni)
-	}
-	if fp := params["fp"]; fp != "" {
-		fmt.Fprintf(&b, "  client-fingerprint: %s\n", fp)
-	}
-	if sec == "reality" {
-		b.WriteString("  reality-opts:\n")
-		if pbk := params["pbk"]; pbk != "" {
-			fmt.Fprintf(&b, "    public-key: %s\n", pbk)
+		sec := params["security"]
+		if sec == "tls" || sec == "reality" {
+			b.WriteString("  tls: true\n")
 		}
-		if sid := params["sid"]; sid != "" {
-			fmt.Fprintf(&b, "    short-id: %s\n", sid)
+		if sni := params["sni"]; sni != "" {
+			fmt.Fprintf(&b, "  servername: %s\n", sni)
 		}
-		if spx := params["spx"]; spx != "" {
-			fmt.Fprintf(&b, "    spider-x: %s\n", strconv.Quote(spx))
+		if fp := params["fp"]; fp != "" {
+			fmt.Fprintf(&b, "  client-fingerprint: %s\n", fp)
 		}
-	}
+		if alpn := params["alpn"]; alpn != "" && (sec == "tls" || sec == "reality") {
+			// Clash expects a list; emit YAML array of comma-split tokens.
+			parts := strings.Split(alpn, ",")
+			b.WriteString("  alpn:\n")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					fmt.Fprintf(&b, "    - %s\n", p)
+				}
+			}
+		}
+		if ai := params["allowInsecure"]; ai == "1" || strings.EqualFold(ai, "true") {
+			b.WriteString("  skip-cert-verify: true\n")
+		}
+		if sec == "reality" {
+			b.WriteString("  reality-opts:\n")
+			if pbk := params["pbk"]; pbk != "" {
+				fmt.Fprintf(&b, "    public-key: %s\n", pbk)
+			}
+			if sid := params["sid"]; sid != "" {
+				fmt.Fprintf(&b, "    short-id: %s\n", sid)
+			}
+			if spx := params["spx"]; spx != "" {
+				fmt.Fprintf(&b, "    spider-x: %s\n", strconv.Quote(spx))
+			}
+		}
 	netw := params["type"]
 	if netw == "" {
 		netw = "tcp"
@@ -323,10 +337,14 @@ func appendClashTransport(b *strings.Builder, netw string, params map[string]str
 			fmt.Fprintf(b, "      Host: %s\n", host)
 		}
 	case "grpc":
-		if path != "" {
-			b.WriteString("  grpc-opts:\n")
-			fmt.Fprintf(b, "    grpc-service-name: %s\n", strconv.Quote(path))
-		}
+			svc := params["serviceName"]
+			if svc == "" {
+				svc = path
+			}
+			if svc != "" {
+				b.WriteString("  grpc-opts:\n")
+				fmt.Fprintf(b, "    grpc-service-name: %s\n", strconv.Quote(svc))
+			}
 	case "xhttp", "splithttp", "h2":
 		// Best-effort for Meta
 		if path != "" || host != "" {

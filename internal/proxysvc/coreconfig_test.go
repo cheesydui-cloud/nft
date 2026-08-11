@@ -242,6 +242,145 @@ func TestBuildXrayVLESSConfigSwappedPairAutoAlign(t *testing.T) {
 	}
 }
 
+func TestBuildXrayVLESSConfigTLS(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "vpn.example.com",
+		Security: "tls", Network: "ws", Path: "/ray", Host: "vpn.example.com",
+		CertFile: "/var/lib/nft/cores/xray/instance-1.crt",
+		KeyFile:  "/var/lib/nft/cores/xray/instance-1.key",
+		ALPN:     "h2,http/1.1",
+		Flow:     "xtls-rprx-vision", // must be stripped on ws
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	for _, want := range []string{
+		`"security": "tls"`,
+		`"wsSettings"`,
+		`/ray`,
+		`certificateFile`,
+		`instance-1.crt`,
+		`"h2"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "xtls-rprx-vision") {
+		t.Fatal("vision must not appear on ws")
+	}
+}
+
+func TestBuildXrayVLESSConfigNone(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555",
+		Security: "none", Network: "tcp",
+	})
+	cfg, err := BuildXrayVLESSConfig(8443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, `"security": "none"`) {
+		t.Fatalf("expected none: %s", s)
+	}
+	if strings.Contains(s, "realitySettings") || strings.Contains(s, "tlsSettings") {
+		t.Fatalf("none must not include tls/reality settings: %s", s)
+	}
+}
+
+func TestBuildXrayVLESSConfigRealityGRPC(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.example.com",
+		PrivateKey: priv, PublicKey: pub, ShortID: "abcd", Security: "reality",
+		Network: "grpc", ServiceName: "GunService",
+	})
+	cfg, err := BuildXrayVLESSConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, `"grpcSettings"`) || !strings.Contains(s, "GunService") {
+		t.Fatalf("missing grpc: %s", s)
+	}
+	if strings.Contains(s, "xtls-rprx-vision") {
+		t.Fatal("vision must not appear on grpc")
+	}
+}
+
+func TestBuildXrayVLESSConfigTLSRequiresCert(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "vpn.example.com",
+		Security: "tls", Network: "tcp",
+	})
+	if _, err := BuildXrayVLESSConfig(443, raw); err == nil {
+		t.Fatal("expected error without cert")
+	}
+}
+
+func TestNetworkMatrix(t *testing.T) {
+	if !NetworkAllowed("reality", "grpc") {
+		t.Fatal("reality should allow grpc")
+	}
+	if NetworkAllowed("reality", "ws") {
+		t.Fatal("reality must reject ws")
+	}
+	if !NetworkAllowed("tls", "ws") {
+		t.Fatal("tls should allow ws")
+	}
+	if !VisionAllowed("tls", "tcp") {
+		t.Fatal("tls+tcp vision ok")
+	}
+	if VisionAllowed("none", "tcp") {
+		t.Fatal("none+tcp vision not allowed")
+	}
+}
+
+func TestEnsureSecretsSoftCorrectsIllegalNetwork(t *testing.T) {
+	raw, err := EnsureSecrets("vless", json.RawMessage(`{"security":"reality","network":"ws","server_name":"a.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c VLESSConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Network != "tcp" {
+		t.Fatalf("expected soft-correct to tcp, got %q", c.Network)
+	}
+}
+
+func TestBuildShareURITLSAndNone(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555",
+		Security: "tls", Network: "ws", ServerName: "vpn.example.com",
+		Path: "/v", Host: "vpn.example.com", Fingerprint: "chrome", ALPN: "h2",
+	})
+	uri, err := BuildShareURI("vless", "t1", "1.2.3.4", 443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"security=tls", "type=ws", "sni=vpn.example.com", "path=%2Fv", "alpn=h2"} {
+		if !strings.Contains(uri, want) {
+			t.Fatalf("uri missing %q: %s", want, uri)
+		}
+	}
+	raw2, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555",
+		Security: "none", Network: "tcp",
+	})
+	uri2, err := BuildShareURI("vless", "t2", "1.2.3.4", 8443, raw2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(uri2, "security=none") {
+		t.Fatalf("uri2=%s", uri2)
+	}
+}
+
 func TestGenerateVlessEncX25519Shape(t *testing.T) {
 	enc, dec := GenerateVlessEncX25519()
 	if !strings.HasPrefix(enc, "mlkem768x25519plus.native.0rtt.") {

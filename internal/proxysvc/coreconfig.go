@@ -10,8 +10,9 @@ import (
 )
 
 // BuildXrayVLESSConfig builds a standalone xray-core JSON config for one VLESS inbound.
-// Deploy requires REALITY. Xray-core REALITY only accepts tcp (RAW) / xhttp / gRPC —
-// ws and httpupgrade are rejected early with a clear error (xray 26.x).
+// Supports security=reality | tls | none with the transport matrix in NetworksForSecurity.
+// For TLS, prefer cert_file/key_file (agent-written paths); falls back to cert_pem/key_pem
+// only when file paths are set by deploy before calling this builder.
 func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	var c VLESSConfig
 	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -26,50 +27,20 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if c.UUID == "" {
 		return nil, fmt.Errorf("vless uuid missing")
 	}
-	sec := strings.ToLower(strings.TrimSpace(c.Security))
-	if sec == "" {
-		sec = "reality"
-	}
-	if sec != "reality" {
-		return nil, fmt.Errorf("目前部署仅支持 REALITY（security=reality），got %q", c.Security)
-	}
-	privKey, err := normalizeRealityPrivateKey(strings.TrimSpace(c.PrivateKey))
-	if err != nil {
+	sec := NormalizeSecurity(c.Security)
+	c.Security = sec
+	network := NormalizeNetwork(c.Network)
+	c.Network = network
+	if err := ValidateVLESSDeploy(&c); err != nil {
 		return nil, err
 	}
-	sni := strings.TrimSpace(c.ServerName)
-	if sni == "" {
-		return nil, fmt.Errorf("server_name (REALITY SNI / dest) required for deploy")
-	}
-	destPort := c.ServerPort
-	if destPort <= 0 {
-		destPort = 443
-	}
-	dest := sni + ":" + strconv.Itoa(destPort)
-	network := strings.ToLower(strings.TrimSpace(c.Network))
-	if network == "" {
-		network = "tcp"
-	}
-	// Xray REALITY: "REALITY only supports RAW, XHTTP and gRPC for now."
-	// We expose tcp + xhttp in the panel; reject the rest before writing config.
-	switch network {
-	case "tcp", "xhttp":
-	case "ws", "httpupgrade", "websocket":
-		return nil, fmt.Errorf(
-			"Xray REALITY 不支持传输层 %q（仅 tcp / xhttp）。请改回 tcp（推荐）或 xhttp 后重新发布",
-			network,
-		)
-	default:
-		return nil, fmt.Errorf("unsupported network %q for REALITY (tcp/xhttp)", network)
-	}
 
-	// Vision flow is only valid with tcp (+ REALITY). Strip on other transports
-	// so xray does not reject the config.
+	// Vision flow only on tcp + (reality|tls).
 	flow := strings.TrimSpace(c.Flow)
 	if flow == "none" || flow == "off" || flow == "关" || flow == "-" {
 		flow = ""
 	}
-	if network != "tcp" {
+	if !VisionAllowed(sec, network) {
 		flow = ""
 	}
 	if flow != "" && flow != "xtls-rprx-vision" {
@@ -80,52 +51,82 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		client["flow"] = flow
 	}
 
-	sid := strings.TrimSpace(c.ShortID)
-	if sid != "" {
-		if err := validateRealityShortID(sid); err != nil {
+	stream := map[string]any{
+		"network":  network,
+		"security": sec,
+	}
+
+	switch sec {
+	case "reality":
+		privKey, err := normalizeRealityPrivateKey(strings.TrimSpace(c.PrivateKey))
+		if err != nil {
 			return nil, err
 		}
-	}
-	var shortIDs []string
-	if sid == "" {
-		shortIDs = []string{""}
-	} else if c.AllowEmptyShortID {
-		// Loose: configured sid + empty (older clients / misconfigured sid still work).
-		shortIDs = []string{sid, ""}
-	} else {
-		// Strict default: only the configured short_id.
-		shortIDs = []string{sid}
+		sni := strings.TrimSpace(c.ServerName)
+		destPort := c.ServerPort
+		if destPort <= 0 {
+			destPort = 443
+		}
+		dest := sni + ":" + strconv.Itoa(destPort)
+		sid := strings.TrimSpace(c.ShortID)
+		if sid != "" {
+			if err := validateRealityShortID(sid); err != nil {
+				return nil, err
+			}
+		}
+		var shortIDs []string
+		if sid == "" {
+			shortIDs = []string{""}
+		} else if c.AllowEmptyShortID {
+			shortIDs = []string{sid, ""}
+		} else {
+			shortIDs = []string{sid}
+		}
+		maxDiff := c.MaxTimeDifference
+		if maxDiff <= 0 {
+			maxDiff = 60000
+		}
+		// Server-side REALITY: dest/serverNames/privateKey/shortIds only.
+		// spiderX / fingerprint are client outbound fields — do not put them here.
+		stream["realitySettings"] = map[string]any{
+			"show":        false,
+			"dest":        dest,
+			"xver":        0,
+			"serverNames": []string{sni},
+			"privateKey":  privKey,
+			"shortIds":    shortIDs,
+			"maxTimeDiff": maxDiff,
+		}
+	case "tls":
+		certFile := strings.TrimSpace(c.CertFile)
+		keyFile := strings.TrimSpace(c.KeyFile)
+		if certFile == "" || keyFile == "" {
+			return nil, fmt.Errorf("TLS 部署需要 cert_file / key_file（由 agent 落盘后注入）")
+		}
+		tlsSettings := map[string]any{
+			"certificates": []any{
+				map[string]any{
+					"certificateFile": certFile,
+					"keyFile":         keyFile,
+				},
+			},
+		}
+		if alpn := parseALPNList(c.ALPN); len(alpn) > 0 {
+			tlsSettings["alpn"] = alpn
+		}
+		stream["tlsSettings"] = tlsSettings
+	case "none":
+		// no security settings
 	}
 
-	maxDiff := c.MaxTimeDifference
-	if maxDiff <= 0 {
-		maxDiff = 60000
-	}
-
-	// Server-side REALITY: dest/serverNames/privateKey/shortIds only.
-	// spiderX / fingerprint are client outbound fields — do not put them here.
-	reality := map[string]any{
-		"show":        false,
-		"dest":        dest,
-		"xver":        0,
-		"serverNames": []string{sni},
-		"privateKey":  privKey,
-		"shortIds":    shortIDs,
-		"maxTimeDiff": maxDiff,
-	}
-
-	stream := map[string]any{
-		"network":         network,
-		"security":        "reality",
-		"realitySettings": reality,
-	}
 	// Transport-specific settings
 	path := strings.TrimSpace(c.Path)
 	if path == "" {
 		path = "/"
 	}
 	hostHdr := strings.TrimSpace(c.Host)
-	if network == "xhttp" {
+	switch network {
+	case "xhttp":
 		mode := strings.TrimSpace(c.XHTTPMode)
 		if mode == "" {
 			mode = "auto"
@@ -135,9 +136,29 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 			xh["host"] = hostHdr
 		}
 		stream["xhttpSettings"] = xh
+	case "ws":
+		ws := map[string]any{"path": path}
+		if hostHdr != "" {
+			ws["headers"] = map[string]any{"Host": hostHdr}
+		}
+		stream["wsSettings"] = ws
+	case "httpupgrade":
+		hu := map[string]any{"path": path}
+		if hostHdr != "" {
+			hu["host"] = hostHdr
+		}
+		stream["httpupgradeSettings"] = hu
+	case "grpc":
+		svcName := strings.TrimSpace(c.ServiceName)
+		if svcName == "" {
+			svcName = "GunService"
+		}
+		stream["grpcSettings"] = map[string]any{
+			"serviceName": svcName,
+		}
 	}
 
-		// Align swapped client/server material before writing inbound decryption.
+	// Align swapped client/server material before writing inbound decryption.
 	_, decAligned := alignVLESSEncPair(c.Encryption, c.Decryption)
 	decryption := normalizeVLESSEncToken(decAligned)
 	if decryption == "" {
@@ -146,7 +167,7 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if decryption == "" {
 		decryption = "none"
 	}
-		if err := validateVLESSDecryption(decryption); err != nil {
+	if err := validateVLESSDecryption(decryption); err != nil {
 		return nil, err
 	}
 
@@ -190,6 +211,22 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// parseALPNList splits "h2,http/1.1" into ["h2","http/1.1"].
+func parseALPNList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // normalizeRealityPrivateKey matches xray: base64.RawURLEncoding of exactly 32 bytes.

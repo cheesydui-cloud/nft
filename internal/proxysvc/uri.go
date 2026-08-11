@@ -16,40 +16,149 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// VLESSConfig is the subset of fields we persist for VLESS (+ REALITY) publish.
-// Extra transport / PQ fields are optional; defaults stay tcp + REALITY + vision.
+// VLESSConfig is the subset of fields we persist for VLESS publish.
+// Security: reality (default) | tls | none. Transports are filtered by security matrix.
 type VLESSConfig struct {
 	ListenPort        int    `json:"listen_port"`
 	ShareHost         string `json:"share_host"`
-	ServerName        string `json:"server_name"`
-	ServerPort        int    `json:"server_port"`
+	ServerName        string `json:"server_name"` // REALITY dest SNI | TLS SNI / cert domain
+	ServerPort        int    `json:"server_port"` // REALITY dest port (default 443)
 	Fingerprint       string `json:"fingerprint"`
-	Network           string `json:"network"` // tcp | ws | httpupgrade | xhttp
+	Network           string `json:"network"` // tcp | ws | grpc | httpupgrade | xhttp
 	Flow              string `json:"flow"`    // xtls-rprx-vision | none | ""
 	MaxTimeDifference int    `json:"max_time_difference"`
-	Security          string `json:"security"` // reality (deploy) | tls | none (uri-only stubs)
+	Security          string `json:"security"` // reality | tls | none
 	PrivateKey        string `json:"private_key"`
 	PublicKey         string `json:"public_key"`
 	ShortID           string `json:"short_id"`
 	// AllowEmptyShortID when true appends "" to shortIds so clients without sid still connect.
 	// Default false = only configured short_id (stricter).
 	AllowEmptyShortID bool   `json:"allow_empty_short_id"`
-		Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
-		Decryption        string `json:"decryption"` // server settings.decryption (optional)
-		UUID              string `json:"uuid"`
-		SubVisible        bool   `json:"sub_visible"`
-		// Sniffing enables inbound traffic sniffing (http/tls/quic destOverride).
-		// nil = default on (matches historical hard-coded behavior); false disables.
-		Sniffing *bool `json:"sniffing,omitempty"`
-		// TcpFastOpen writes streamSettings.sockopt.tcpFastOpen. Off by default —
-		// needs kernel support; leave false unless you know the node enables TFO.
-		TcpFastOpen bool `json:"tcp_fast_open,omitempty"`
-		// Transport extras (ws / httpupgrade / xhttp)
-		Path      string `json:"path"`
-		Host      string `json:"host"` // Host header / authority
-		SpiderX   string `json:"spider_x"`
-		XHTTPMode string `json:"xhttp_mode"` // auto | packet-up | stream-up | stream-one
+	Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
+	Decryption        string `json:"decryption"` // server settings.decryption (optional)
+	UUID              string `json:"uuid"`
+	SubVisible        bool   `json:"sub_visible"`
+	// Sniffing enables inbound traffic sniffing (http/tls/quic destOverride).
+	// nil = default on (matches historical hard-coded behavior); false disables.
+	Sniffing *bool `json:"sniffing,omitempty"`
+	// TcpFastOpen writes streamSettings.sockopt.tcpFastOpen. Off by default —
+	// needs kernel support; leave false unless you know the node enables TFO.
+	TcpFastOpen bool `json:"tcp_fast_open,omitempty"`
+	// Transport extras (ws / httpupgrade / xhttp / grpc)
+	Path        string `json:"path"`
+	Host        string `json:"host"`         // Host header / authority
+	SpiderX     string `json:"spider_x"`
+	XHTTPMode   string `json:"xhttp_mode"`   // auto | packet-up | stream-up | stream-one
+	ServiceName string `json:"service_name"` // gRPC service name
+	// TLS fields (security=tls)
+	ALPN          string `json:"alpn"`           // e.g. "h2,http/1.1"
+	AllowInsecure bool   `json:"allow_insecure"` // client skip verify (URI only)
+	CertPEM       string `json:"cert_pem"`       // server certificate PEM
+	KeyPEM        string `json:"key_pem"`        // server private key PEM
+	// Deploy-only: absolute paths written by agent before BuildXrayVLESSConfig.
+	// Not set by panel; never required in config_json from API.
+	CertFile string `json:"cert_file,omitempty"`
+	KeyFile  string `json:"key_file,omitempty"`
+}
+
+// NetworksForSecurity returns allowed transport networks for a security mode.
+func NetworksForSecurity(security string) []string {
+	switch NormalizeSecurity(security) {
+	case "reality":
+		return []string{"tcp", "xhttp", "grpc"}
+	case "tls", "none":
+		return []string{"tcp", "ws", "grpc", "xhttp", "httpupgrade"}
+	default:
+		return []string{"tcp"}
 	}
+}
+
+// NormalizeSecurity maps empty / aliases to canonical security values.
+func NormalizeSecurity(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "reality":
+		return "reality"
+	case "tls", "xtls":
+		return "tls"
+	case "none", "plain", "raw":
+		return "none"
+	default:
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+}
+
+// NormalizeNetwork maps aliases (websocket → ws) and lowercases.
+func NormalizeNetwork(n string) string {
+	n = strings.ToLower(strings.TrimSpace(n))
+	switch n {
+	case "", "raw":
+		return "tcp"
+	case "websocket":
+		return "ws"
+	case "http_upgrade", "http-upgrade":
+		return "httpupgrade"
+	case "splithttp":
+		return "xhttp"
+	case "gun":
+		return "grpc"
+	default:
+		return n
+	}
+}
+
+// NetworkAllowed reports whether network is valid under security.
+func NetworkAllowed(security, network string) bool {
+	sec := NormalizeSecurity(security)
+	netw := NormalizeNetwork(network)
+	for _, n := range NetworksForSecurity(sec) {
+		if n == netw {
+			return true
+		}
+	}
+	return false
+}
+
+// VisionAllowed reports whether xtls-rprx-vision may be used.
+func VisionAllowed(security, network string) bool {
+	sec := NormalizeSecurity(security)
+	netw := NormalizeNetwork(network)
+	return netw == "tcp" && (sec == "reality" || sec == "tls")
+}
+
+// ValidateVLESSDeploy checks fields required to deploy an inbound (not just URI).
+func ValidateVLESSDeploy(c *VLESSConfig) error {
+	if c == nil {
+		return fmt.Errorf("nil config")
+	}
+	sec := NormalizeSecurity(c.Security)
+	netw := NormalizeNetwork(c.Network)
+	if !NetworkAllowed(sec, netw) {
+		return fmt.Errorf("安全层 %s 不支持传输 %q（允许: %s）", sec, netw, strings.Join(NetworksForSecurity(sec), "/"))
+	}
+	switch sec {
+	case "reality":
+		if strings.TrimSpace(c.ServerName) == "" {
+			return fmt.Errorf("server_name（REALITY SNI / dest）必填")
+		}
+		if strings.TrimSpace(c.PrivateKey) == "" {
+			return fmt.Errorf("reality private_key missing")
+		}
+	case "tls":
+		if strings.TrimSpace(c.ServerName) == "" {
+			return fmt.Errorf("server_name（TLS SNI / 证书域名）必填")
+		}
+		hasFiles := strings.TrimSpace(c.CertFile) != "" && strings.TrimSpace(c.KeyFile) != ""
+		hasPEM := strings.TrimSpace(c.CertPEM) != "" && strings.TrimSpace(c.KeyPEM) != ""
+		if !hasFiles && !hasPEM {
+			return fmt.Errorf("TLS 需要证书与私钥（cert_pem / key_pem）")
+		}
+	case "none":
+		// no cert / reality keys required
+	default:
+		return fmt.Errorf("不支持的安全层 %q（reality / tls / none）", c.Security)
+	}
+	return nil
+}
 
 // SSConfig is Shadowsocks 2022 (sing-box) config.
 type SSConfig struct {
@@ -89,38 +198,45 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 		if c.ServerPort <= 0 {
 			c.ServerPort = 443
 		}
-		if c.Fingerprint == "" {
-			c.Fingerprint = "chrome"
-		}
-		if c.Network == "" {
-			c.Network = "tcp"
-		}
-		c.Network = strings.ToLower(strings.TrimSpace(c.Network))
-		// flow: "none" / "off" / "关" = explicitly disabled; empty = default vision for tcp+reality
-		switch strings.ToLower(strings.TrimSpace(c.Flow)) {
-		case "none", "off", "关", "-":
-			c.Flow = ""
-		case "":
-			// Only auto-enable vision on classic REALITY+tcp (best anti-block default).
-			if c.Network == "tcp" && (c.Security == "" || c.Security == "reality") {
-				c.Flow = "xtls-rprx-vision"
+			if c.Fingerprint == "" {
+				c.Fingerprint = "chrome"
 			}
-		}
-		if c.Security == "" {
-			c.Security = "reality"
-		}
-		if c.Security == "reality" {
-			// Always keep private/public as a matched pair. Partial fill used to
-			// generate only the missing side and break client handshakes.
-			if c.PrivateKey == "" || c.PublicKey == "" {
-				priv, pub := GenerateRealityKeyPair()
-				c.PrivateKey = priv
-				c.PublicKey = pub
+			c.Security = NormalizeSecurity(c.Security)
+			c.Network = NormalizeNetwork(c.Network)
+			if !NetworkAllowed(c.Security, c.Network) {
+				// Soft-correct illegal combo (e.g. old ws+reality) back to tcp.
+				c.Network = "tcp"
 			}
-			if c.ShortID == "" {
-				c.ShortID = randomHex(8)
+			// flow: "none" / "off" / "关" = explicitly disabled; empty = default vision when allowed
+			switch strings.ToLower(strings.TrimSpace(c.Flow)) {
+			case "none", "off", "关", "-":
+				c.Flow = ""
+			case "":
+				if VisionAllowed(c.Security, c.Network) {
+					c.Flow = "xtls-rprx-vision"
+				}
+			default:
+				if !VisionAllowed(c.Security, c.Network) {
+					c.Flow = ""
+				}
 			}
-		}
+			switch c.Security {
+			case "reality":
+				// Always keep private/public as a matched pair. Partial fill used to
+				// generate only the missing side and break client handshakes.
+				if c.PrivateKey == "" || c.PublicKey == "" {
+					priv, pub := GenerateRealityKeyPair()
+					c.PrivateKey = priv
+					c.PublicKey = pub
+				}
+				if c.ShortID == "" {
+					c.ShortID = randomHex(8)
+				}
+			case "tls":
+				// TLS uses cert_pem/key_pem; do not auto-generate REALITY keys.
+			case "none":
+				// plain: no keys required
+			}
 			// xray vlessenc / paste often wraps material in quotes — strip so share URI
 			// and server config stay in sync (quoted encryption breaks clients).
 			// Also auto-swap if user/panel put client (0rtt) into decryption and server (600s) into encryption.
@@ -128,12 +244,15 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 			c.Decryption = normalizeVLESSEncToken(c.Decryption)
 			c.Encryption, c.Decryption = alignVLESSEncPair(c.Encryption, c.Decryption)
 			if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
-			c.Path = "/"
-		}
-		if c.XHTTPMode == "" && c.Network == "xhttp" {
-			c.XHTTPMode = "auto"
-		}
-		return json.Marshal(c)
+				c.Path = "/"
+			}
+			if c.XHTTPMode == "" && c.Network == "xhttp" {
+				c.XHTTPMode = "auto"
+			}
+			if c.ServiceName == "" && c.Network == "grpc" {
+				c.ServiceName = "GunService"
+			}
+			return json.Marshal(c)
 	case "shadowsocks", "ss":
 		var c SSConfig
 		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -215,48 +334,60 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		if c.Flow != "" {
 			q.Set("flow", c.Flow)
 		}
-		sec := c.Security
-		if sec == "" {
-			sec = "reality"
-		}
-		q.Set("security", sec)
-		network := c.Network
-		if network == "" {
-			network = "tcp"
-		}
-		q.Set("type", network)
-		if c.Fingerprint != "" {
-			q.Set("fp", c.Fingerprint)
-		}
-		if sec == "reality" || sec == "tls" {
-			if c.ServerName != "" {
-				q.Set("sni", c.ServerName)
+			sec := NormalizeSecurity(c.Security)
+			q.Set("security", sec)
+			network := NormalizeNetwork(c.Network)
+			q.Set("type", network)
+			if c.Fingerprint != "" && (sec == "reality" || sec == "tls") {
+				q.Set("fp", c.Fingerprint)
 			}
-		}
-		if sec == "reality" {
-			if c.PublicKey != "" {
-				q.Set("pbk", c.PublicKey)
+			if sec == "reality" || sec == "tls" {
+				if c.ServerName != "" {
+					q.Set("sni", c.ServerName)
+				}
 			}
-			if c.ShortID != "" {
-				q.Set("sid", c.ShortID)
+			if sec == "tls" {
+				if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
+					q.Set("alpn", alpn)
+				}
+				if c.AllowInsecure {
+					q.Set("allowInsecure", "1")
+				}
 			}
-			if c.SpiderX != "" {
-				q.Set("spx", c.SpiderX)
+			if sec == "reality" {
+				if c.PublicKey != "" {
+					q.Set("pbk", c.PublicKey)
+				}
+				if c.ShortID != "" {
+					q.Set("sid", c.ShortID)
+				}
+				if c.SpiderX != "" {
+					q.Set("spx", c.SpiderX)
+				}
 			}
-		}
-		// Transport-specific client params
-		switch network {
-		case "ws", "httpupgrade", "xhttp", "http":
-			if c.Path != "" {
-				q.Set("path", c.Path)
+			// Transport-specific client params
+			switch network {
+			case "ws", "httpupgrade", "xhttp", "http":
+				if c.Path != "" {
+					q.Set("path", c.Path)
+				}
+				if c.Host != "" {
+					q.Set("host", c.Host)
+				}
+				if network == "xhttp" && c.XHTTPMode != "" {
+					q.Set("mode", c.XHTTPMode)
+				}
+			case "grpc":
+				svcName := strings.TrimSpace(c.ServiceName)
+				if svcName == "" {
+					svcName = "GunService"
+				}
+				q.Set("serviceName", svcName)
+				// Some clients also read path as service name
+				if c.Path != "" && c.Path != "/" {
+					q.Set("path", c.Path)
+				}
 			}
-			if c.Host != "" {
-				q.Set("host", c.Host)
-			}
-			if network == "xhttp" && c.XHTTPMode != "" {
-				q.Set("mode", c.XHTTPMode)
-			}
-		}
 		u := url.URL{
 			Scheme:   "vless",
 			User:     url.User(c.UUID),

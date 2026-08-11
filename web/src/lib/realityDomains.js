@@ -38,9 +38,50 @@ export const REALITY_FP_OPTIONS = [
   'chrome', 'firefox', 'edge', 'safari', '360', 'qq', 'ios', 'android', 'random', 'randomized',
 ]
 
-// Xray-core REALITY only supports RAW(tcp) / XHTTP / gRPC (v26.x).
-// ws / httpupgrade + REALITY → "Failed to start: main … REALITY only supports …"
-export const REALITY_NETWORK_OPTIONS = [
-  { value: 'tcp', label: 'tcp（裸 TCP · 推荐）' },
-  { value: 'xhttp', label: 'xhttp' },
+/** Security modes shown in Wizard (default reality). */
+export const SECURITY_OPTIONS = [
+  { value: 'reality', label: 'REALITY（推荐 · 免证书）' },
+  { value: 'tls', label: 'TLS（证书 + 域名）' },
+  { value: 'none', label: '无（明文 · 仅测试）' },
 ]
+
+/**
+ * Transport options by security layer.
+ * REALITY: Xray only allows tcp / xhttp / gRPC.
+ * TLS / none: tcp, ws, grpc, xhttp, httpupgrade.
+ */
+export const NETWORK_BY_SECURITY = {
+  reality: [
+    { value: 'tcp', label: 'tcp（裸 TCP · 推荐）' },
+    { value: 'xhttp', label: 'xhttp' },
+    { value: 'grpc', label: 'gRPC' },
+  ],
+  tls: [
+    { value: 'tcp', label: 'tcp' },
+    { value: 'ws', label: 'WebSocket' },
+    { value: 'grpc', label: 'gRPC' },
+    { value: 'xhttp', label: 'xhttp' },
+    { value: 'httpupgrade', label: 'HTTPUpgrade' },
+  ],
+  none: [
+    { value: 'tcp', label: 'tcp' },
+    { value: 'ws', label: 'WebSocket' },
+    { value: 'grpc', label: 'gRPC' },
+    { value: 'xhttp', label: 'xhttp' },
+    { value: 'httpupgrade', label: 'HTTPUpgrade' },
+  ],
+}
+
+/** @deprecated use NETWORK_BY_SECURITY.reality — kept for any leftover imports */
+export const REALITY_NETWORK_OPTIONS = NETWORK_BY_SECURITY.reality
+
+export function networksForSecurity(security) {
+  const s = (security || 'reality').toLowerCase()
+  return NETWORK_BY_SECURITY[s] || NETWORK_BY_SECURITY.reality
+}
+
+export function visionAllowed(security, network) {
+  const s = (security || 'reality').toLowerCase()
+  const n = (network || 'tcp').toLowerCase()
+  return n === 'tcp' && (s === 'reality' || s === 'tls')
+}

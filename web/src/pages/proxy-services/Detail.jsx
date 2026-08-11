@@ -33,6 +33,7 @@ const CONFIG_GROUPS = {
       title: '协议参数',
       keys: [
         ['uuid', 'uuid'],
+        ['security', 'security'],
         ['flow', 'flow'],
         ['decryption', 'decryption'],
         ['encryption', 'encryption'],
@@ -47,12 +48,12 @@ const CONFIG_GROUPS = {
         ['path', 'path'],
         ['host', 'host'],
         ['xhttp_mode', 'xhttp_mode'],
+        ['service_name', 'service_name'],
       ],
     },
     {
       title: '安全层 · REALITY',
       keys: [
-        ['security', 'security'],
         ['server_name', 'server_name'],
         ['server_port', 'server_port'],
         ['fingerprint', 'fingerprint'],
@@ -62,6 +63,27 @@ const CONFIG_GROUPS = {
         ['allow_empty_short_id', 'allow_empty_short_id'],
         ['spider_x', 'spider_x'],
         ['max_time_difference', 'max_time_difference'],
+      ],
+      // only show when security is reality (or empty legacy)
+      when: (cfg) => !cfg.security || cfg.security === 'reality',
+    },
+    {
+      title: '安全层 · TLS',
+      keys: [
+        ['server_name', 'server_name'],
+        ['fingerprint', 'fingerprint'],
+        ['alpn', 'alpn'],
+        ['allow_insecure', 'allow_insecure'],
+        ['cert_pem', '证书'],
+        ['key_pem', '私钥'],
+      ],
+      when: (cfg) => cfg.security === 'tls',
+    },
+    {
+      title: '高级',
+      keys: [
+        ['sniffing', 'sniffing'],
+        ['tcp_fast_open', 'tcp_fast_open'],
       ],
     },
   ],
@@ -106,13 +128,22 @@ function parseConfig(raw) {
   return {}
 }
 
-function formatValue(val) {
+function formatValue(val, key) {
   if (val === null || val === undefined) return null
   if (typeof val === 'boolean') return val ? 'true' : 'false'
   if (Array.isArray(val)) return val.length ? val.join(', ') : null
   if (typeof val === 'object') return JSON.stringify(val)
   const s = String(val)
-  return s === '' ? null : s
+  if (s === '') return null
+  // Redact bulky / sensitive PEM material in detail view.
+  if (key === 'cert_pem' || key === 'key_pem') {
+    const lines = s.split(/\r?\n/).filter(Boolean).length
+    return `已配置（约 ${lines} 行 PEM）`
+  }
+  if (key === 'private_key' && s.length > 12) {
+    return s.slice(0, 6) + '…' + s.slice(-4)
+  }
+  return s
 }
 
 function formatTime(ts) {
@@ -159,11 +190,14 @@ export default function ProxyServiceDetail() {
   const groupedRows = useMemo(() => {
     return groups
       .map((g) => {
+        if (typeof g.when === 'function' && !g.when(cfg)) return null
         const rows = g.keys
           .map(([key, label]) => {
-            const text = formatValue(cfg[key])
+            const text = formatValue(cfg[key], key)
             if (text == null) return null
-            return { key, label, text, raw: cfg[key] }
+            // Don't put full PEM on clipboard for CopyText
+            const raw = (key === 'cert_pem' || key === 'key_pem') ? text : cfg[key]
+            return { key, label, text, raw }
           })
           .filter(Boolean)
         return rows.length ? { title: g.title, rows } : null
@@ -386,13 +420,26 @@ export default function ProxyServiceDetail() {
                 </div>
               ))
             )}
-            {proto === 'vless' && cfg.server_name && (
+            {proto === 'vless' && cfg.server_name && (cfg.security === 'reality' || !cfg.security) && (
               <p className="text-[12px] text-ink-mut m-0">
                 REALITY dest：
                 <span className="font-mono text-ink">
                   {cfg.server_name}:{cfg.server_port || 443}
                 </span>
-                {(cfg.security === 'reality' || !cfg.security) && ' · security=reality'}
+                {' · security=reality'}
+              </p>
+            )}
+            {proto === 'vless' && cfg.security === 'tls' && cfg.server_name && (
+              <p className="text-[12px] text-ink-mut m-0">
+                TLS SNI：
+                <span className="font-mono text-ink">{cfg.server_name}</span>
+                {' · security=tls'}
+                {cfg.cert_pem ? ' · 证书已配置' : ' · 证书缺失'}
+              </p>
+            )}
+            {proto === 'vless' && cfg.security === 'none' && (
+              <p className="text-[12px] text-amber-700 dark:text-amber-300 m-0">
+                安全层为「无」· 明文传输，勿暴露公网
               </p>
             )}
           </div>

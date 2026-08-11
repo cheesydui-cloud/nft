@@ -69,15 +69,6 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 	if port <= 0 {
 		port = proxysvc.ListenPortFromConfig(req.Config)
 	}
-	cfgBytes, err := proxysvc.BuildXrayVLESSConfig(port, req.Config)
-	if err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
-	}
-	// Validate JSON shape early.
-	if !json.Valid(cfgBytes) {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "xray 配置不是合法 JSON"}
-	}
-	// Prefer xray run -test when available.
 	dir := filepath.Join(coreStateDir(), "xray")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "创建配置目录失败: " + err.Error()}
@@ -85,6 +76,27 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 	cfgPath := filepath.Join(dir, fmt.Sprintf("instance-%d.json", req.InstanceID))
 	pidPath := filepath.Join(dir, fmt.Sprintf("instance-%d.pid", req.InstanceID))
 	logPath := filepath.Join(dir, fmt.Sprintf("instance-%d.log", req.InstanceID))
+	certPath := filepath.Join(dir, fmt.Sprintf("instance-%d.crt", req.InstanceID))
+	keyPath := filepath.Join(dir, fmt.Sprintf("instance-%d.key", req.InstanceID))
+
+	// TLS: write PEM to disk and inject cert_file/key_file for xray tlsSettings.
+	buildCfg := req.Config
+	if tlsCfg, ok := materializeTLSCerts(req.Config, certPath, keyPath); ok {
+		buildCfg = tlsCfg
+	} else {
+		// Non-TLS or empty PEM: drop stale certs from a previous TLS deploy of this instance.
+		_ = os.Remove(certPath)
+		_ = os.Remove(keyPath)
+	}
+
+	cfgBytes, err := proxysvc.BuildXrayVLESSConfig(port, buildCfg)
+	if err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
+	}
+	// Validate JSON shape early.
+	if !json.Valid(cfgBytes) {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "xray 配置不是合法 JSON"}
+	}
 	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 xray 配置失败: " + err.Error()}
 	}
@@ -203,16 +215,20 @@ func stopPIDFile(pidPath string) {
 	removeRunSpec(pidPath)
 	b, err := os.ReadFile(pidPath)
 	if err != nil {
+		// Still drop TLS material next to a vanished pid (undeploy after crash).
+		removeTLSFilesBeside(pidPath)
 		return
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 1 {
 		_ = os.Remove(pidPath)
+		removeTLSFilesBeside(pidPath)
 		return
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		_ = os.Remove(pidPath)
+		removeTLSFilesBeside(pidPath)
 		return
 	}
 	_ = proc.Signal(syscall.SIGTERM)
@@ -225,6 +241,55 @@ func stopPIDFile(pidPath string) {
 	}
 	_ = proc.Signal(syscall.SIGKILL)
 	_ = os.Remove(pidPath)
+	removeTLSFilesBeside(pidPath)
+}
+
+// removeTLSFilesBeside deletes instance-N.crt/.key next to instance-N.pid.
+func removeTLSFilesBeside(pidPath string) {
+	base := strings.TrimSuffix(pidPath, ".pid")
+	if base == pidPath {
+		return
+	}
+	_ = os.Remove(base + ".crt")
+	_ = os.Remove(base + ".key")
+}
+
+// materializeTLSCerts writes cert_pem/key_pem to certPath/keyPath when security=tls.
+// Returns a rewritten config JSON with cert_file/key_file set (and PEM left as-is for DB).
+// ok=false means not TLS or incomplete PEM — caller should remove stale cert files.
+func materializeTLSCerts(raw json.RawMessage, certPath, keyPath string) (json.RawMessage, bool) {
+	var c proxysvc.VLESSConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return raw, false
+	}
+	if proxysvc.NormalizeSecurity(c.Security) != "tls" {
+		return raw, false
+	}
+	certPEM := strings.TrimSpace(c.CertPEM)
+	keyPEM := strings.TrimSpace(c.KeyPEM)
+	if certPEM == "" || keyPEM == "" {
+		return raw, false
+	}
+	if err := os.WriteFile(certPath, []byte(certPEM+"\n"), 0o600); err != nil {
+		return raw, false
+	}
+	if err := os.WriteFile(keyPath, []byte(keyPEM+"\n"), 0o600); err != nil {
+		_ = os.Remove(certPath)
+		return raw, false
+	}
+	// Inject absolute paths for BuildXrayVLESSConfig without relying on PEM-in-xray-json.
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		m = map[string]any{}
+	}
+	m["cert_file"] = certPath
+	m["key_file"] = keyPath
+	m["security"] = "tls"
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
 }
 
 // restartDetached stops any prior instance pid, then starts name args... in

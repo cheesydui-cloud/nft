@@ -143,15 +143,17 @@ func (s *Server) apiUpdateProxyService(w http.ResponseWriter, r *http.Request) {
 		name = svc.Name
 	}
 	cfg := body.Config
-	if len(cfg) == 0 {
-		cfg = svc.ConfigJSON
-	} else {
-		cfg, err = proxysvc.EnsureSecrets(svc.Protocol, cfg)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
+		if len(cfg) == 0 {
+			cfg = svc.ConfigJSON
+		} else {
+			// Preserve PEM/REALITY secrets when client re-submits redacted placeholders.
+			cfg = mergePreservedProxySecrets(svc.Protocol, svc.ConfigJSON, cfg)
+			cfg, err = proxysvc.EnsureSecrets(svc.Protocol, cfg)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
-	}
 	sub := svc.SubVisible
 	if body.SubVisible != nil {
 		sub = *body.SubVisible
@@ -235,14 +237,34 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 	defaultPort := proxysvc.ListenPortFromConfig(svc.ConfigJSON)
 	cfgShare := proxysvc.ShareHostFromConfig(svc.ConfigJSON)
 
-	// Ensure secrets present before deploy.
-	cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
-	svc.ConfigJSON = cfg
+// Ensure secrets present before deploy.
+		cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Fail fast on illegal security/transport or missing TLS certs before contacting agents.
+		if strings.EqualFold(svc.Protocol, "vless") {
+			var vc proxysvc.VLESSConfig
+			if err := json.Unmarshal(cfg, &vc); err == nil {
+				// Panel-side: TLS needs PEM (agent injects cert_file later).
+				if proxysvc.NormalizeSecurity(vc.Security) == "tls" {
+					if strings.TrimSpace(vc.CertPEM) == "" || strings.TrimSpace(vc.KeyPEM) == "" {
+						jsonErr(w, http.StatusBadRequest, "TLS 发布需要证书与私钥（cert_pem / key_pem）")
+						return
+					}
+					// Temporarily mark files so ValidateVLESSDeploy passes matrix+SNI checks.
+					vc.CertFile = "pending"
+					vc.KeyFile = "pending"
+				}
+				if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
+					jsonErr(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+		}
+		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
+		svc.ConfigJSON = cfg
 
 	results := make([]map[string]any, 0, len(body.NodeIDs))
 	for _, nodeID := range body.NodeIDs {
@@ -828,6 +850,73 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 		}
 		return raw
 	}
+}
+
+// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
+// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
+// unrelated fields does not wipe cert_pem / private_key / passwords.
+func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
+	if len(incoming) == 0 {
+		return stored
+	}
+	if strings.ToLower(protocol) != "vless" {
+		return incoming
+	}
+	var oldM, newM map[string]any
+	if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
+		return incoming
+	}
+	if err := json.Unmarshal(nonzeroRaw(incoming), &newM); err != nil || newM == nil {
+		return incoming
+	}
+	keepKeys := []string{
+		"private_key", "public_key", "short_id",
+		"cert_pem", "key_pem",
+		"encryption", "decryption", "uuid",
+	}
+	for _, k := range keepKeys {
+		nv, ok := newM[k]
+		if !ok {
+			// Field omitted entirely → keep stored.
+			if ov, has := oldM[k]; has {
+				newM[k] = ov
+			}
+			continue
+		}
+		s, isStr := nv.(string)
+		if !isStr {
+			continue
+		}
+		if s == "" || isRedactedSecret(s) {
+			if ov, has := oldM[k]; has {
+				newM[k] = ov
+			}
+		}
+	}
+	out, err := json.Marshal(newM)
+	if err != nil {
+		return incoming
+	}
+	return out
+}
+
+func nonzeroRaw(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return raw
+}
+
+func isRedactedSecret(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "***", "******", "__KEEP__", "[redacted]", "(已配置)", "已配置":
+		return true
+	}
+	return strings.HasPrefix(s, "***") || strings.HasPrefix(s, "__KEEP")
 }
 
 // apiProxyServiceGenKeys generates REALITY key material for the wizard UI.

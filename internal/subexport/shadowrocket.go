@@ -107,12 +107,18 @@ func vlessToSR(rest, forceName string) string {
 	parts := []string{
 		fmt.Sprintf("%s = vless, %s, %d, %s", escapeSRName(name), host, port, uuid),
 	}
-	if sec := params["security"]; sec == "reality" || sec == "tls" {
-		parts = append(parts, "tls=true")
-	}
-	if sni := params["sni"]; sni != "" {
-		parts = append(parts, "peer="+sni)
-	}
+		if sec := params["security"]; sec == "reality" || sec == "tls" {
+			parts = append(parts, "tls=true")
+		}
+		if sni := params["sni"]; sni != "" {
+			parts = append(parts, "peer="+sni)
+		}
+		if alpn := params["alpn"]; alpn != "" {
+			parts = append(parts, "alpn="+alpn)
+		}
+		if ai := params["allowInsecure"]; ai == "1" || strings.EqualFold(ai, "true") {
+			parts = append(parts, "allow-insecure=true")
+		}
 	if pbk := params["pbk"]; pbk != "" {
 		parts = append(parts, "public-key="+pbk)
 	}
@@ -140,14 +146,23 @@ func vlessToSR(rest, forceName string) string {
 			netw = "tcp"
 		}
 		if netw != "tcp" {
-			parts = append(parts, "obfs="+netw)
-			if path := params["path"]; path != "" {
-				parts = append(parts, "obfs-path="+path)
+				parts = append(parts, "obfs="+netw)
+				if path := params["path"]; path != "" {
+					parts = append(parts, "obfs-path="+path)
+				}
+				if h := params["host"]; h != "" {
+					parts = append(parts, "obfs-host="+h)
+				}
+				if netw == "grpc" {
+					svc := params["serviceName"]
+					if svc == "" {
+						svc = params["path"]
+					}
+					if svc != "" {
+						parts = append(parts, "obfs-host="+svc)
+					}
+				}
 			}
-			if h := params["host"]; h != "" {
-				parts = append(parts, "obfs-host="+h)
-			}
-		}
 		return strings.Join(parts, ", ")
 	}
 
