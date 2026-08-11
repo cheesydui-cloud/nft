@@ -17,16 +17,22 @@ const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完
 
 /** Certificate source picker: vault cert_id vs inline PEM. */
 function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, children }) {
+  const tabCls = (active) =>
+    `text-sm px-3.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+      active
+        ? 'border-[color-mix(in_srgb,var(--brand-from)_55%,var(--color-line))] bg-[color-mix(in_srgb,var(--brand-soft)_80%,var(--color-surface))] text-ink font-bold'
+        : 'border-line text-ink-soft bg-[var(--color-surface)] hover:border-[color-mix(in_srgb,var(--brand-from)_35%,var(--color-line))] hover:text-ink'
+    }`
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
-        <button type="button"
-          className={`text-sm px-3 py-1.5 rounded-lg border ${certSource === 'vault' ? 'border-terracotta bg-terracotta/10 text-ink font-semibold' : 'border-line text-ink-soft'}`}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="证书来源">
+        <button type="button" role="tab" aria-selected={certSource === 'vault'}
+          className={tabCls(certSource === 'vault')}
           onClick={() => onSource('vault')}>
           从证书库选择
         </button>
-        <button type="button"
-          className={`text-sm px-3 py-1.5 rounded-lg border ${certSource !== 'vault' ? 'border-terracotta bg-terracotta/10 text-ink font-semibold' : 'border-line text-ink-soft'}`}
+        <button type="button" role="tab" aria-selected={certSource !== 'vault'}
+          className={tabCls(certSource !== 'vault')}
           onClick={() => onSource('inline')}>
           本服务单独配置
         </button>
@@ -35,7 +41,7 @@ function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, chi
         <div>
           <label className="fl block mb-1">证书库</label>
           {vaultCerts.length === 0 ? (
-            <p className="text-[12.5px] text-ink-mut m-0">
+            <p className="text-[12.5px] text-ink-mut m-0 leading-relaxed">
               证书库为空。请到「系统设置 → 证书管理」申请 LE / 上传 PEM，或改用「本服务单独配置」。
             </p>
           ) : (
@@ -54,8 +60,10 @@ function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, chi
           )}
           {certId ? (
             <p className="text-[11.5px] text-ink-mut mt-1.5 m-0">
-              已绑定 cert_id={certId}；发布时从证书库注入 PEM。续期在系统设置统一处理。
+              已绑定证书库 #{certId}；发布时自动注入 PEM。续期在「系统设置 → 证书管理」统一处理。
             </p>
+          ) : vaultCerts.length > 0 ? (
+            <p className="text-[11.5px] text-amber-700 mt-1.5 m-0">请选择一张证书后再发布。</p>
           ) : null}
         </div>
       ) : (
@@ -288,6 +296,7 @@ export default function ProxyServiceWizard() {
 	    setProtocol(t.protocol)
 	    setCore(t.core)
 	    setConfig(configForProtocol(t.protocol))
+	    setCertSourceState('inline')
 	    setStep(1)
 	  }
 
@@ -307,19 +316,27 @@ export default function ProxyServiceWizard() {
   const [acmeBusy, setAcmeBusy] = useState(false)
   const [acmeStaging, setAcmeStaging] = useState(false)
   const [vaultCerts, setVaultCerts] = useState([])
+  // Explicit UI mode — do NOT derive solely from cert_id, or "从证书库选择"
+  // appears dead until a cert is already bound.
+  const [certSource, setCertSourceState] = useState('inline')
 
   useEffect(() => {
     api.get('/tls-certificates').then(d => setVaultCerts(d.certificates || [])).catch(() => {})
   }, [])
 
-  const certSource = config.cert_id ? 'vault' : 'inline'
+  // When editing an existing service that already has cert_id, open vault mode.
+  useEffect(() => {
+    if (config.cert_id) setCertSourceState('vault')
+  }, [config.cert_id])
+
   const pickVaultCert = (id) => {
     const n = Number(id) || 0
     if (!n) {
-      setConfig(c => ({ ...c, cert_id: 0 }))
+      setConfig(c => ({ ...c, cert_id: 0, cert_configured: false, key_configured: false }))
       return
     }
     const row = vaultCerts.find(x => x.id === n)
+    setCertSourceState('vault')
     setConfig(c => ({
       ...c,
       cert_id: n,
@@ -341,8 +358,9 @@ export default function ProxyServiceWizard() {
     }))
   }
   const setCertSource = (src) => {
+    setCertSourceState(src === 'vault' ? 'vault' : 'inline')
     if (src === 'vault') {
-      // Keep existing cert_id if any; otherwise wait for select.
+      // Switch UI to vault picker; clear inline PEM so deploy uses cert_id.
       setConfig(c => ({ ...c, cert_pem: '', key_pem: '' }))
     } else {
       setConfig(c => ({ ...c, cert_id: 0 }))
