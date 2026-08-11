@@ -199,10 +199,10 @@ export function Layout({ children }) {
                 <NavGroup label="节点管理">
                   <SideLink to="/nodes" icon={<IconNodes />}>线路节点</SideLink>
                   <SideLink to="/proxy-services" icon={<IconProxy />}>代理服务</SideLink>
+                  <SideLink to="/rules" icon={<IconForwards />}>代理转发</SideLink>
                 </NavGroup>
                 <NavGroup label="资源">
                   <SideLink to="/node-repo" icon={<IconRepo />}>落地仓库</SideLink>
-                  <SideLink to="/rules" icon={<IconForwards />}>代理转发</SideLink>
                   <SideLink to="/users" icon={<IconUserGroup />}>用户管理</SideLink>
                   {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
                 </NavGroup>
