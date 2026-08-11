@@ -577,7 +577,7 @@ export default function ProxyServiceDetail() {
                             {nodeName}
                           </Link>
                           {i.node_online ? (
-                            <span className="text-[11px] text-emerald-600 ml-1.5">在线</span>
+                            <span className="text-[11px] text-green-600 ml-1.5">在线</span>
                           ) : (
                             <span className="text-[11px] text-ink-mut ml-1.5">离线</span>
                           )}

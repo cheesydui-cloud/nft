@@ -98,7 +98,7 @@ export function UserProvider({ children }) {
               {t.type === 'error'
                 ? <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
                 : t.type === 'info'
-                ? <svg className="w-4 h-4 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                ? <svg className="w-4 h-4 text-sky-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
                 : <svg className="w-4 h-4 text-green-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
               <span className="leading-snug">{t.msg}</span>
             </div>
@@ -169,9 +169,9 @@ export function Layout({ children }) {
 
           {/* Brand */}
           <div className={`flex items-center gap-3 pt-5 pb-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
-            <div className="w-[42px] h-[42px] rounded-[14px] flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(16,185,129,0.65)] ring-1 ring-white/25"
+            <div className="w-[42px] h-[42px] rounded-[14px] flex-none grid place-items-center text-white shadow-[0_8px_18px_-10px_rgba(24,24,27,0.55)] ring-1 ring-black/10 dark:ring-white/15"
               title={collapsed && isAdmin && version ? version : undefined}
-              style={{ background: 'linear-gradient(145deg, #10b981 0%, #14b8a6 52%, #0d9488 100%)' }}>
+              style={{ background: 'linear-gradient(145deg, #18181b 0%, #3f3f46 100%)' }}>
               <BrandMark />
             </div>
             {!collapsed && <div className="min-w-0">

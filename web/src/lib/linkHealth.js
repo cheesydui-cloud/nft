@@ -33,7 +33,7 @@ export function linkHealth({ online, disabled, probeOk = null, latencyMs = null 
 
 export function healthDotClass(tone) {
   switch (tone) {
-    case 'green': return 'bg-emerald-500'
+    case 'green': return 'bg-green-500'
     case 'yellow': return 'bg-amber-400'
     case 'red': return 'bg-red-500'
     default: return 'bg-ink-mut/40'
@@ -42,7 +42,7 @@ export function healthDotClass(tone) {
 
 export function healthTextClass(tone) {
   switch (tone) {
-    case 'green': return 'text-emerald-600'
+    case 'green': return 'text-green-600'
     case 'yellow': return 'text-amber-600'
     case 'red': return 'text-red-600'
     default: return 'text-ink-mut'

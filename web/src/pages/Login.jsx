@@ -55,8 +55,8 @@ export default function Login() {
     <div className="login-shell">
       <div className="login-card">
         <div className="flex items-center gap-3.5 mb-8">
-          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_10px_28px_-8px_rgba(16,185,129,0.65)] ring-1 ring-white/25"
-            style={{ background: 'linear-gradient(145deg, #10b981 0%, #14b8a6 52%, #0d9488 100%)' }}>
+          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_8px_20px_-10px_rgba(24,24,27,0.55)] ring-1 ring-black/10 dark:ring-white/15"
+            style={{ background: 'linear-gradient(145deg, #18181b 0%, #3f3f46 100%)' }}>
             <BrandMark className="w-[28px] h-[28px]" />
           </div>
           <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
@@ -77,7 +77,7 @@ export default function Login() {
           </div>
           <button type="submit" disabled={loading}
             className="btn-primary mt-2 w-full h-11 justify-center text-[14px] disabled:opacity-60">
-            {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '登录'}
+            {loading ? <div className="w-4 h-4 border-2 border-current border-t-transparent opacity-90 rounded-full animate-spin" /> : '登录'}
           </button>
         </form>
       </div>

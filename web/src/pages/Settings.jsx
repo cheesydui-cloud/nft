@@ -650,7 +650,7 @@ export default function Settings() {
                 <div className="flex flex-wrap gap-4 text-[13px] text-ink-soft mb-3">
                   <span>Hub 在线：<b className="text-ink">{migStatus.online ?? 0}</b></span>
                   <span>离线：<b className="text-ink">{migStatus.offline ?? 0}</b></span>
-                  <span>最近推送成功：<b className="text-emerald-600">{migStatus.redirect_ok ?? 0}</b></span>
+                  <span>最近推送成功：<b className="text-green-600">{migStatus.redirect_ok ?? 0}</b></span>
                   <span>失败：<b className="text-red-600">{migStatus.redirect_fail ?? 0}</b></span>
                 </div>
                 {Array.isArray(migStatus.nodes) && migStatus.nodes.length > 0 && (
@@ -669,9 +669,9 @@ export default function Settings() {
                           <tr key={n.id}>
                             <td className="font-semibold">{n.name} <span className="text-ink-mut font-normal">#{n.id}</span></td>
                             <td className="font-mono text-xs">{n.agent_version || '—'}</td>
-                            <td>{n.online ? <span className="text-emerald-600 font-semibold">在线</span> : <span className="text-ink-mut">离线</span>}</td>
+                            <td>{n.online ? <span className="text-green-600 font-semibold">在线</span> : <span className="text-ink-mut">离线</span>}</td>
                             <td className="text-xs">
-                              {n.redirect_ok === true && <span className="text-emerald-600">已接受</span>}
+                              {n.redirect_ok === true && <span className="text-green-600">已接受</span>}
                               {n.redirect_ok === false && <span className="text-red-600">{n.redirect_error || '失败'}</span>}
                               {n.redirect_ok == null && <span className="text-ink-mut">—</span>}
                             </td>

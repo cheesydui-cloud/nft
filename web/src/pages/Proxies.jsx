@@ -279,7 +279,7 @@ export default function Proxies() {
                     </td>
                     <td>
                       {n.kind === 'relay'
-                        ? <Badge color="emerald">中转</Badge>
+                        ? <Badge color="gray">中转</Badge>
                         : <Badge color="blue">直连</Badge>}
                     </td>
                     <td className="text-right">
