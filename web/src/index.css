@@ -870,6 +870,7 @@ html, body {
 .sb-link:hover {
   background: var(--sidebar-hover-bg);
   color: var(--sidebar-hover-text);
+  border-color: color-mix(in srgb, var(--brand-from) 28%, transparent);
 }
 .sb-footer {
   border-top: 1px solid var(--sidebar-border);

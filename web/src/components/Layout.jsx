@@ -109,17 +109,19 @@ export function UserProvider({ children }) {
   )
 }
 
-/* ---------- Layout (妙妙屋 top-nav + content) ---------- */
+/* ---------- Layout (sidebar + content) ---------- */
 export function Layout({ children }) {
   const { user, panelName, version, komariUrl } = useUser()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [userOpen, setUserOpen] = useState(false)
+  const [sideOpen, setSideOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('nf-sidebar') === '1')
   const { blurred, toggleBlur } = useContext(BlurCtx)
   const { copyFmt, toggleCopyFmt } = useContext(CopyFmtCtx)
   const [theme, setThemeState] = useState(getStoredTheme())
   const isDark = resolvedDark(theme)
-  const userMenuRef = useRef(null)
 
+  // The landing-nodes entry shows when the user has an admin-assigned source or
+  // their own browser-local URIs. Local URIs change in the same tab, which the
+  // native 'storage' event misses, so re-check on our custom event too.
   const [, bumpLanding] = useState(0)
   useEffect(() => {
     const h = () => bumpLanding(t => t + 1)
@@ -128,14 +130,9 @@ export function Layout({ children }) {
     return () => { window.removeEventListener('nf-landing-changed', h); window.removeEventListener('storage', h) }
   }, [])
 
-  useEffect(() => {
-    if (!userOpen) return
-    const onDoc = (e) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [userOpen])
+  const toggleCollapse = () => {
+    setCollapsed(v => { localStorage.setItem('nf-sidebar', v ? '0' : '1'); return !v })
+  }
 
   const toggleTheme = () => {
     const next = isDark ? 'light' : 'dark'
@@ -145,6 +142,7 @@ export function Layout({ children }) {
 
   const handleLogout = async () => {
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
+    // Allow the login-popup to show again after the next successful login.
     clearLoginAnnouncementSession()
     window.location.href = '/login'
   }
@@ -160,124 +158,153 @@ export function Layout({ children }) {
 
   const isAdmin = user.role === 'admin'
 
-  const adminNav = [
-    { to: '/', end: true, label: '运营概览', icon: <IconDashboard /> },
-    komariUrl ? { href: komariUrl, label: '服务监控', icon: <IconMonitor /> } : null,
-    { to: '/nodes', label: '线路节点', icon: <IconNodes /> },
-    { to: '/proxy-services', label: '代理服务', icon: <IconProxy /> },
-    { to: '/node-repo', label: '落地仓库', icon: <IconRepo /> },
-    { to: '/rules', label: '代理转发', icon: <IconForwards /> },
-    { to: '/users', label: '用户管理', icon: <IconUserGroup /> },
-    hasLocalProxies(user.username) ? { to: '/proxies', label: '我的代理', icon: <IconProxy /> } : null,
-    { to: '/announcements', label: '公告管理', icon: <IconMegaphone /> },
-    { to: '/docs', label: '使用文档', icon: <IconBook /> },
-    { to: '/settings', label: '系统设置', icon: <IconSettings /> },
-  ].filter(Boolean)
-
-  const userNav = [
-    { to: '/my', end: true, label: '我的概览', icon: <IconDashboard /> },
-    { to: '/my/docs', label: '使用文档', icon: <IconBook /> },
-    { to: '/my/rules', label: '代理转发', icon: <IconForwards /> },
-    { to: '/my/subscription', label: '规则订阅', icon: <IconSub /> },
-    (hasLocalProxies(user.username) || user.has_landing_source) ? { to: '/my/landing', label: '落地节点', icon: <IconProxy /> } : null,
-    (hasLocalProxies(user.username) || user.has_landing_source) ? { to: '/proxies', label: '我的代理', icon: <IconProxy /> } : null,
-  ].filter(Boolean)
-
-  const navItems = isAdmin ? adminNav : userNav
-
-  const renderPill = (item) => {
-    if (item.href) {
-      return (
-        <a key={item.href} href={item.href} target="_blank" rel="noopener noreferrer" className="mmw-nav-pill">
-          {item.icon}<span>{item.label}</span>
-        </a>
-      )
-    }
-    return (
-      <NavLink
-        key={item.to}
-        to={item.to}
-        end={item.end}
-        onClick={() => setMenuOpen(false)}
-        className={({ isActive }) => `mmw-nav-pill${isActive ? ' is-active' : ''}`}
-      >
-        {item.icon}<span>{item.label}</span>
-      </NavLink>
-    )
-  }
-
   return (
-    <div className="mmw-shell">
-      <header className="mmw-topnav">
-        <div className="mmw-topnav-inner">
-          <NavLink to={isAdmin ? '/' : '/my'} className="mmw-brand" onClick={() => setMenuOpen(false)}>
-            <div className="mmw-brand-mark"><BrandMark className="w-[20px] h-[20px]" /></div>
-            <span className="mmw-brand-name">{panelName || 'nft'}</span>
-          </NavLink>
+    <div className="flex h-screen overflow-hidden bg-app">
+        {/* Mobile overlay */}
+        {sideOpen && <div className="fixed inset-0 bg-black/30 z-30 lg:hidden" onClick={() => setSideOpen(false)} />}
 
-          <nav className="mmw-nav-scroll" aria-label="主导航">
-            {navItems.map(renderPill)}
-          </nav>
+        {/* Sidebar */}
+        <aside className={`sb-aside fixed inset-y-0 left-0 z-40 flex flex-col transition-all lg:translate-x-0 lg:static lg:z-auto ${sideOpen ? 'translate-x-0 w-[248px]' : '-translate-x-full w-[248px]'} ${collapsed ? 'lg:w-[68px]' : 'lg:w-[248px]'}`}>
 
-          <div className="mmw-top-actions">
-            <button type="button" className="mmw-icon-btn lg:hidden" onClick={() => setMenuOpen(v => !v)} title="菜单" aria-label="菜单">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-            </button>
-            <button type="button" className="mmw-icon-btn" onClick={toggleTheme} title={isDark ? '切换到浅色' : '切换到深色'}>
-              {isDark ? (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-              )}
-            </button>
-            <button type="button" className={`mmw-icon-btn ${copyFmt === 'yaml' ? 'is-active' : ''}`} onClick={toggleCopyFmt} title="复制格式 URI/YAML">
-              <span className="text-[11px] font-bold">{copyFmt === 'yaml' ? 'YML' : 'URI'}</span>
-            </button>
-            <button type="button" className={`mmw-icon-btn ${blurred ? 'is-active' : ''}`} onClick={toggleBlur} title="模糊敏感信息">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-
-            <div className="relative" ref={userMenuRef}>
-              <button type="button" className="mmw-user-chip" onClick={() => setUserOpen(v => !v)}>
-                <span className="mmw-user-avatar">{user.username?.charAt(0).toUpperCase()}</span>
-                <span className="hidden sm:inline max-w-[100px] truncate">{user.username}</span>
-                {isAdmin && <span className="hidden md:inline text-[10px] font-bold uppercase tracking-wide opacity-60">ADMIN</span>}
-              </button>
-              {userOpen && (
-                <div className="absolute right-0 mt-2 w-[220px] rounded-[12px] border border-line bg-surface shadow-[var(--shadow-float)] py-2 z-50">
-                  <div className="px-3.5 py-2.5 border-b border-line-soft">
-                    <div className="text-[13px] font-semibold text-ink truncate">{user.username}</div>
-                    {isAdmin && version && <div className="text-[11px] text-ink-mut font-mono mt-0.5">{version}</div>}
-                  </div>
-                  <NavLink to="/change-password" onClick={() => setUserOpen(false)}
-                    className="block px-3.5 py-2.5 text-[13px] font-medium text-ink-soft hover:bg-[var(--brand-soft)] hover:text-[var(--brand-to)] transition-colors">
-                    账户设置
-                  </NavLink>
-                  <button type="button" onClick={handleLogout}
-                    className="w-full text-left px-3.5 py-2.5 text-[13px] font-medium text-ink-soft hover:bg-[var(--brand-soft)] hover:text-[var(--brand-to)] transition-colors bg-transparent border-0 cursor-pointer">
-                    退出登录
-                  </button>
+          {/* Brand */}
+          <div className={`flex items-center gap-3 pt-5 pb-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
+            <div className="w-[42px] h-[42px] rounded-[14px] flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(196,120,90,0.55)] ring-1 ring-white/30"
+              title={collapsed && isAdmin && version ? version : undefined}
+              style={{ background: 'linear-gradient(145deg, #d4896a 0%, #c4785a 55%, #b8664a 100%)' }}>
+              <BrandMark />
+            </div>
+            {!collapsed && <div className="min-w-0">
+              <div className="text-[15.5px] font-bold tracking-tight sb-text truncate">{panelName || 'nft'}</div>
+              {/* Admin keeps role + version; users only see the panel name. */}
+              {isAdmin && (
+                <div className="text-[11.5px] sb-text-mut mt-0.5">
+                  管理面板
+                  {version && <span className="font-mono"> · {version}</span>}
                 </div>
               )}
+            </div>}
+          </div>
+
+          {/* Nav */}
+          <SidebarCtx.Provider value={collapsed}>
+          <nav className={`flex-1 overflow-y-auto py-2 ${collapsed ? 'px-2' : 'px-4'}`}>
+            {isAdmin ? (
+              <>
+                <NavGroup label="监控">
+                  <SideLink to="/" icon={<IconDashboard />} end>运营概览</SideLink>
+                  {komariUrl ? (
+                    <SideExtLink href={komariUrl} icon={<IconMonitor />}>服务监控</SideExtLink>
+                  ) : null}
+                </NavGroup>
+                <NavGroup label="节点管理">
+                  <SideLink to="/nodes" icon={<IconNodes />}>线路节点</SideLink>
+                  <SideLink to="/proxy-services" icon={<IconProxy />}>代理服务</SideLink>
+                </NavGroup>
+                <NavGroup label="资源">
+                  <SideLink to="/node-repo" icon={<IconRepo />}>落地仓库</SideLink>
+                  <SideLink to="/rules" icon={<IconForwards />}>代理转发</SideLink>
+                  <SideLink to="/users" icon={<IconUserGroup />}>用户管理</SideLink>
+                  {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
+                </NavGroup>
+                <NavGroup label="系统">
+                  <SideLink to="/announcements" icon={<IconMegaphone />}>公告管理</SideLink>
+                  <SideLink to="/docs" icon={<IconBook />}>使用文档</SideLink>
+                  <SideLink to="/settings" icon={<IconSettings />}>系统设置</SideLink>
+                </NavGroup>
+              </>
+            ) : (
+              <>
+                <NavGroup label="概况">
+                  <SideLink to="/my" icon={<IconDashboard />} end>我的概览</SideLink>
+                  <SideLink to="/my/docs" icon={<IconBook />}>使用文档</SideLink>
+                </NavGroup>
+                <NavGroup label="转发">
+                  <SideLink to="/my/rules" icon={<IconForwards />}>代理转发</SideLink>
+                  <SideLink to="/my/subscription" icon={<IconSub />}>规则订阅</SideLink>
+                  {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>}
+                  {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
+                </NavGroup>
+              </>
+            )}
+          </nav>
+          </SidebarCtx.Provider>
+
+          {/* Footer */}
+          <div className={`sb-footer pt-3.5 ${collapsed ? 'p-2' : 'p-4'}`}>
+            {collapsed ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-[34px] h-[34px] rounded-[9px] sb-avatar grid place-items-center font-bold text-[14px]" title={user.username}>
+                  {user.username?.charAt(0).toUpperCase()}
+                </div>
+                <button onClick={handleLogout} title="退出登录" className="w-[34px] h-[34px] rounded-lg sb-btn transition-colors grid place-items-center">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+              </div>
+            ) : (<>
+              <div className="flex items-center gap-[11px] px-2 py-1.5 mb-3.5">
+                <div className="w-[34px] h-[34px] rounded-[9px] sb-avatar grid place-items-center font-bold text-[14px] flex-none">
+                  {user.username?.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13.5px] sb-text font-semibold leading-tight truncate">{user.username}</div>
+                  {/* Role label is admin-only; users only see their username. */}
+                  {isAdmin && <div className="text-[12px] sb-text-mut mt-px">{user.role}</div>}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <NavLink to="/change-password" className="flex-1 text-center text-[12.5px] sb-btn py-2 rounded-lg transition-colors">账户设置</NavLink>
+                <button onClick={handleLogout} className="flex-1 text-center text-[12.5px] sb-btn py-2 rounded-lg transition-colors">退出登录</button>
+              </div>
+            </>)}
+            {/* Collapse toggle — desktop only */}
+            <button onClick={toggleCollapse} title={collapsed ? '展开侧栏' : '收起侧栏'}
+              className={`hidden lg:flex items-center justify-center w-full mt-2.5 py-1.5 rounded-lg sb-collapse transition-colors`}>
+              <svg className={`w-4 h-4 transition-transform ${collapsed ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+            </button>
+          </div>
+        </aside>
+
+        {/* Content */}
+        <main className="flex-1 min-w-0 flex flex-col">
+          {/* Topbar */}
+          <div className="app-topbar sticky top-0 z-20 h-[56px] flex-shrink-0 px-4 sm:px-7 flex items-center gap-2">
+            <button onClick={() => setSideOpen(true)} className="lg:hidden p-1.5 rounded-lg text-ink-soft hover:text-ink hover:bg-raised transition-colors">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </button>
+            <div className="flex-1" />
+            <div className="topbar-toggles" role="group" aria-label="显示选项">
+              <button type="button" onClick={toggleTheme} title={isDark ? '切换到浅色' : '切换到深色'}
+                className="topbar-toggle">
+                {isDark ? (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+                ) : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+                )}
+                <span className="hidden sm:inline">{isDark ? '浅色' : '深色'}</span>
+              </button>
+              <button type="button" onClick={toggleCopyFmt} title="切换复制代理连接的格式（URI / YAML）"
+                className={`topbar-toggle ${copyFmt === 'yaml' ? 'is-active' : ''}`}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/></svg>
+                {copyFmt === 'yaml' ? 'YAML' : 'URI'}
+              </button>
+              <button type="button" onClick={toggleBlur} title="模糊敏感信息"
+                className={`topbar-toggle ${blurred ? 'is-active' : ''}`}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span className="hidden sm:inline">脱敏</span>
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Mobile nav drawer */}
-        {menuOpen && (
-          <div className="mmw-mobile-nav border-t border-line px-3 py-3 flex flex-wrap gap-2 bg-surface">
-            {navItems.map(renderPill)}
+          {/* Page content */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-7 py-7 pb-12">
+            <div className="max-w-[1680px] mx-auto h-full">
+              {children}
+            </div>
           </div>
-        )}
-      </header>
+        </main>
 
-      <main className="mmw-main">
-        <div className="mmw-main-inner">
-          {children}
-        </div>
-      </main>
-
-      {!isAdmin && <LoginAnnouncementModal />}
+        {/* User-end login announcement (admin-designated). Manual close or 30s. */}
+        {!isAdmin && <LoginAnnouncementModal />}
     </div>
   )
 }
