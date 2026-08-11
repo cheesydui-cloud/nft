@@ -146,28 +146,43 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if decryption == "" {
 		decryption = "none"
 	}
-	if err := validateVLESSDecryption(decryption); err != nil {
+		if err := validateVLESSDecryption(decryption); err != nil {
 		return nil, err
+	}
+
+	// TCP Fast Open: optional sockopt on stream (server listen path).
+	if c.TcpFastOpen {
+		stream["sockopt"] = map[string]any{"tcpFastOpen": true}
+	}
+
+	// Sniffing defaults on (historical behavior). Explicit false disables.
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+
+	inbound := map[string]any{
+		"tag":      "vless-in",
+		"listen":   "0.0.0.0",
+		"port":     listenPort,
+		"protocol": "vless",
+		"settings": map[string]any{
+			"clients":    []any{client},
+			"decryption": decryption,
+		},
+		"streamSettings": stream,
+	}
+	if sniffOn {
+		inbound["sniffing"] = map[string]any{
+			"enabled":      true,
+			"destOverride": []string{"http", "tls", "quic"},
+		}
 	}
 
 	cfg := map[string]any{
 		"log": map[string]any{"loglevel": "warning"},
 		"inbounds": []any{
-			map[string]any{
-				"tag":      "vless-in",
-				"listen":   "0.0.0.0",
-				"port":     listenPort,
-				"protocol": "vless",
-				"settings": map[string]any{
-					"clients":    []any{client},
-					"decryption": decryption,
-				},
-				"streamSettings": stream,
-				"sniffing": map[string]any{
-					"enabled":      true,
-					"destOverride": []string{"http", "tls", "quic"},
-				},
-			},
+			inbound,
 		},
 		"outbounds": []any{
 			map[string]any{"protocol": "freedom", "tag": "direct"},

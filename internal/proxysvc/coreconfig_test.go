@@ -338,3 +338,46 @@ func TestNeedsVLESSEnc(t *testing.T) {
 		t.Fatal("client-only encryption should still force modern core")
 	}
 }
+
+func TestBuildXrayVLESSConfigSniffingAndTFO(t *testing.T) {
+	priv, pub := GenerateRealityKeyPair()
+	off := false
+	raw, err := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.cloudflare.com",
+		ServerPort: 443, PrivateKey: priv, PublicKey: pub, ShortID: "abcd1234",
+		Flow: "xtls-rprx-vision", Security: "reality", Network: "tcp",
+		Sniffing: &off, TcpFastOpen: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildXrayVLESSConfig(8443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	if strings.Contains(s, `"sniffing"`) {
+		t.Fatalf("sniffing should be omitted when false:\n%s", s)
+	}
+	if !strings.Contains(s, `"tcpFastOpen": true`) {
+		t.Fatalf("want tcpFastOpen true:\n%s", s)
+	}
+
+	// Default (nil sniffing) keeps sniffing on, no TFO.
+	raw2, _ := json.Marshal(VLESSConfig{
+		UUID: "11111111-2222-3333-4444-555555555555", ServerName: "www.cloudflare.com",
+		ServerPort: 443, PrivateKey: priv, PublicKey: pub, ShortID: "abcd1234",
+		Flow: "xtls-rprx-vision", Security: "reality", Network: "tcp",
+	})
+	cfg2, err := BuildXrayVLESSConfig(8443, raw2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := string(cfg2)
+	if !strings.Contains(s2, `"sniffing"`) || !strings.Contains(s2, `"enabled": true`) {
+		t.Fatalf("default sniffing on:\n%s", s2)
+	}
+	if strings.Contains(s2, `tcpFastOpen`) {
+		t.Fatalf("default no TFO:\n%s", s2)
+	}
+}

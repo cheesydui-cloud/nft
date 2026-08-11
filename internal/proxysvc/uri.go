@@ -34,16 +34,22 @@ type VLESSConfig struct {
 	// AllowEmptyShortID when true appends "" to shortIds so clients without sid still connect.
 	// Default false = only configured short_id (stricter).
 	AllowEmptyShortID bool   `json:"allow_empty_short_id"`
-	Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
-	Decryption        string `json:"decryption"` // server settings.decryption (optional)
-	UUID              string `json:"uuid"`
-	SubVisible        bool   `json:"sub_visible"`
-	// Transport extras (ws / httpupgrade / xhttp)
-	Path      string `json:"path"`
-	Host      string `json:"host"` // Host header / authority
-	SpiderX   string `json:"spider_x"`
-	XHTTPMode string `json:"xhttp_mode"` // auto | packet-up | stream-up | stream-one
-}
+		Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
+		Decryption        string `json:"decryption"` // server settings.decryption (optional)
+		UUID              string `json:"uuid"`
+		SubVisible        bool   `json:"sub_visible"`
+		// Sniffing enables inbound traffic sniffing (http/tls/quic destOverride).
+		// nil = default on (matches historical hard-coded behavior); false disables.
+		Sniffing *bool `json:"sniffing,omitempty"`
+		// TcpFastOpen writes streamSettings.sockopt.tcpFastOpen. Off by default —
+		// needs kernel support; leave false unless you know the node enables TFO.
+		TcpFastOpen bool `json:"tcp_fast_open,omitempty"`
+		// Transport extras (ws / httpupgrade / xhttp)
+		Path      string `json:"path"`
+		Host      string `json:"host"` // Host header / authority
+		SpiderX   string `json:"spider_x"`
+		XHTTPMode string `json:"xhttp_mode"` // auto | packet-up | stream-up | stream-one
+	}
 
 // SSConfig is Shadowsocks 2022 (sing-box) config.
 type SSConfig struct {
