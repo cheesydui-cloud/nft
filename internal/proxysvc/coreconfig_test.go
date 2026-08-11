@@ -89,11 +89,20 @@ func TestBuildXrayVLESSConfigRequiresSNI(t *testing.T) {
 			`AAAAAAAAAAAAAAAAAAAAAA==`,
 			`"ntp"`,
 			`time.apple.com`,
-			`"sniff": true`,
+			`"action": "sniff"`,
 			`"tag": "direct-out"`,
 		} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("config missing %q\n%s", want, s)
+			}
+		}
+		// Must NOT emit legacy inbound sniff fields (sing-box ≥1.13 fatal).
+		for _, bad := range []string{
+			`"sniff": true`,
+			`sniff_override_destination`,
+		} {
+			if strings.Contains(s, bad) {
+				t.Fatalf("legacy field %q must not appear:\n%s", bad, s)
 			}
 		}
 	}
@@ -130,7 +139,7 @@ func TestBuildXrayVLESSConfigRequiresSNI(t *testing.T) {
 		if strings.Contains(s, `"ntp"`) {
 			t.Fatalf("ntp should be off:\n%s", s)
 		}
-		if strings.Contains(s, `"sniff": true`) {
+		if strings.Contains(s, `"action": "sniff"`) || strings.Contains(s, `"sniff"`) {
 			t.Fatalf("sniff should be off:\n%s", s)
 		}
 	}

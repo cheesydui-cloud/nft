@@ -423,15 +423,9 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		"method":      method,
 		"password":    c.Password,
 	}
-	// Sniff: default on (helps routing/DNS in multi-inbound setups; harmless for plain SS).
-	sniffOn := true
-	if c.Sniffing != nil {
-		sniffOn = *c.Sniffing
-	}
-	if sniffOn {
-		inbound["sniff"] = true
-		inbound["sniff_override_destination"] = true
-	}
+	// tcp_fast_open remains a valid listen option; do NOT put sniff* on inbound —
+	// sing-box ≥1.11 deprecated them and ≥1.13 fails check with:
+	// "legacy inbound fields are deprecated".
 	if c.TCPFastOpen {
 		inbound["tcp_fast_open"] = true
 	}
@@ -452,6 +446,23 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		"outbounds": []any{
 			map[string]any{"type": "direct", "tag": "direct-out"},
 		},
+	}
+	// Sniff via route action (sing-box 1.11+). Default on when Sniffing nil.
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+	if sniffOn {
+		cfg["route"] = map[string]any{
+			"rules": []any{
+				map[string]any{
+					"inbound": []string{"ss-in"},
+					"action":  "sniff",
+				},
+			},
+			// Single outbound: final direct is enough; no need for default_domain_resolver.
+			"final": "direct-out",
+		}
 	}
 	// NTP: default enabled (yyds uses time.apple.com).
 	ntpOn := true
