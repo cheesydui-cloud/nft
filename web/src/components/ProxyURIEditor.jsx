@@ -129,7 +129,7 @@ export function ProxyURIEditor({ username, blurred }) {
           手动填写的 URI 保存在本浏览器，本地与服务器相同地址的节点以本地为准。
           节点用途可在下方配置，覆盖管理员默认值，仅在本浏览器生效：
           <span className="font-semibold text-emerald-600">落地</span>可作为规则出口；
-          <span className="font-semibold text-blue-600">直连</span>出现在「我的代理」；
+          <span className="font-semibold text-[#c4785a]">直连</span>出现在「我的代理」；
           <span className="font-semibold text-ink-mut">未配置</span>不参与任何功能。
         </p>
 

@@ -200,7 +200,7 @@ export function ErrorState({ title = '加载失败', desc, onRetry }) {
 export function Loading() {
   return (
     <div className="flex items-center justify-center py-20">
-      <div className="w-6 h-6 border-2 border-blue-600 dark:border-blue-400 border-t-transparent rounded-full animate-spin" />
+      <div className="w-6 h-6 border-2 border-[#c4785a] dark:border-[#d4896a] border-t-transparent rounded-full animate-spin" />
     </div>
   )
 }
@@ -294,7 +294,7 @@ export function ProbeButton({ target, nodeId, disabled = false, disabledTitle = 
     <span className="inline-flex items-center gap-2">
       <button type="button" onClick={probe} disabled={disabled || busy}
         title={disabled ? (disabledTitle || '请先选择入口与出口') : undefined}
-        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-blue-400 hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-line disabled:hover:text-ink-soft">
+        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-[#d4b8a8] hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-line disabled:hover:text-ink-soft">
         {busy ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {state === 'ok' && <span className="text-[11px] text-green-700 font-semibold">{result}</span>}
@@ -350,7 +350,7 @@ export function ProbeChainButton({ chainId, ruleId, probeAllTrigger, limit }) {
   return (
     <span className="inline-flex items-center gap-2">
       <button type="button" onClick={probe} disabled={busy}
-        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-blue-400 hover:text-ink disabled:opacity-50">
+        className="text-[11px] px-2 py-0.5 rounded border border-line bg-surface text-ink-soft hover:border-[#d4b8a8] hover:text-ink disabled:opacity-50">
         {busy ? <Spinner className="w-3 h-3" /> : '测试'}
       </button>
       {busy && <span className="text-[11px] text-ink-mut">测试中...</span>}
@@ -493,7 +493,7 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
         onClick={() => choose(o)}
         className={`w-full text-left px-3 py-1.5 text-[13.5px] transition-colors hover:bg-raised flex items-center gap-2 ${sel ? 'text-ink font-semibold' : 'text-ink'}`}>
         {multiple && (
-          <span className={`w-3.5 h-3.5 flex-none rounded border flex items-center justify-center ${sel ? 'bg-blue-600 border-blue-600 dark:bg-blue-500 dark:border-blue-400' : 'border-line'}`}>
+          <span className={`w-3.5 h-3.5 flex-none rounded border flex items-center justify-center ${sel ? 'bg-[#c4785a] border-[#c4785a] dark:bg-[#d4896a] dark:border-[#d4896a]' : 'border-line'}`}>
             {sel && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
           </span>
         )}
@@ -526,7 +526,7 @@ export function Select({ value, onChange, options = [], groups, placeholder = '�
         <div className="flex border-b border-line-soft flex-none">
           {sections.map((s, i) => (
             <button key={i} type="button" onClick={() => setActiveTab(i)}
-              className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-ink border-b-2 border-blue-600 dark:border-blue-400 -mb-px' : 'text-ink-soft hover:text-ink'}`}>
+              className={`flex-1 px-3 py-[13px] text-[14px] font-semibold transition-colors ${i === activeTab ? 'text-ink border-b-2 border-[#c4785a] dark:border-[#d4896a] -mb-px' : 'text-ink-soft hover:text-ink'}`}>
               {s.label} <span className="text-ink-mut font-normal">{s.options.length}</span>
             </button>
           ))}
@@ -845,8 +845,8 @@ export function DateInput({
               onClick={() => pick(date)}
               className={`h-8 rounded-lg text-[12.5px] font-semibold tabular-nums transition-colors
                 ${outside ? 'text-ink-mut/45' : 'text-ink'}
-                ${isSel ? 'bg-blue-600 text-white hover:bg-blue-600 dark:bg-blue-500 dark:text-blue-600' : 'hover:bg-raised'}
-                ${!isSel && isToday ? 'ring-1 ring-blue-400 text-ink' : ''}
+                ${isSel ? 'bg-[#c4785a] text-white hover:bg-[#c4785a] dark:bg-[#d4896a] dark:text-[#c4785a]' : 'hover:bg-raised'}
+                ${!isSel && isToday ? 'ring-1 ring-[#d4896a] text-ink' : ''}
               `}
             >
               {date.getDate()}
