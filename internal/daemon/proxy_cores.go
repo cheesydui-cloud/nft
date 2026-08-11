@@ -25,20 +25,21 @@ func detectProxyCores() []wsproto.CoreInfo {
 		{
 			name: "xray",
 			bins: []string{"xray"},
+			// Panel-managed binary first so hello/version matches deploy selection.
 			paths: []string{
+				"/var/lib/nft/cores/xray/xray",
 				"/usr/local/bin/xray",
 				"/usr/bin/xray",
 				"/opt/xray/xray",
-				"/var/lib/nft/cores/xray/xray",
 			},
 		},
 		{
 			name: "sing-box",
 			bins: []string{"sing-box", "singbox"},
 			paths: []string{
+				"/var/lib/nft/cores/sing-box/sing-box",
 				"/usr/local/bin/sing-box",
 				"/usr/bin/sing-box",
-				"/var/lib/nft/cores/sing-box/sing-box",
 			},
 		},
 		{
@@ -119,6 +120,32 @@ func probeCoreVersion(path string) string {
 		return line
 	}
 	return ""
+}
+
+// xraySupportsVlessEnc reports whether the binary understands `xray vlessenc`
+// (VLESS Encryption). Older packages accept decryption=none but fail handshakes
+// when decryption is mlkem768x25519plus… — clients see connect timeout.
+func xraySupportsVlessEnc(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if st, err := os.Stat(path); err != nil || st.IsDir() {
+		return false
+	}
+	out, err := runCmdTimeout(8*time.Second, path, "vlessenc")
+	if err != nil {
+		// Some builds print help to stdout and exit non-zero; still require material.
+		if !strings.Contains(strings.ToLower(out), "encryption") &&
+			!strings.Contains(strings.ToLower(out), "decryption") &&
+			!strings.Contains(strings.ToLower(out), "mlkem") {
+			return false
+		}
+	}
+	low := strings.ToLower(out)
+	return strings.Contains(low, "encryption") ||
+		strings.Contains(low, "decryption") ||
+		strings.Contains(low, "mlkem768")
 }
 
 // handleProxyServiceApply deploys one proxy-service instance on this host.

@@ -463,7 +463,7 @@ export default function ProxyServiceWizard() {
                       </div>
                       <p className="text-[11px] text-ink-mut mt-1">
                         可选 VLESS Encryption（vlessenc）：生成后服务端与客户端必须成对。默认 X25519 短密钥（0rtt / 600s，各约 70–80 字符）。改后须「重新发布」并重新导入节点。
-                        小火箭请用「复制 URI」或更新后的规则订阅；若客户端不支持 vlessenc，请点清空（none）——REALITY 本身已够用。
+                        启用 vlessenc 时面板会强制推送最新 xray（旧系统包会 none 通、带 encryption 超时）。小火箭请用「复制 URI」或规则订阅；仅 REALITY 时点清空（none）即可。
                       </p>
                     </div>
                   </div>

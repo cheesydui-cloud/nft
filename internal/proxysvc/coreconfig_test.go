@@ -321,3 +321,20 @@ func TestEnsureSecretsFlowNonePreserved(t *testing.T) {
 		t.Fatalf("flow none should clear, got %q", c.Flow)
 	}
 }
+
+func TestNeedsVLESSEnc(t *testing.T) {
+	if NeedsVLESSEnc(json.RawMessage(`{"decryption":"none"}`)) {
+		t.Fatal("none should be false")
+	}
+	if NeedsVLESSEnc(json.RawMessage(`{}`)) {
+		t.Fatal("empty should be false")
+	}
+	enc, dec := GenerateVlessEncX25519()
+	raw, _ := json.Marshal(VLESSConfig{Encryption: enc, Decryption: dec})
+	if !NeedsVLESSEnc(raw) {
+		t.Fatal("paired vlessenc should be true")
+	}
+	if !NeedsVLESSEnc(json.RawMessage(`{"encryption":"` + enc + `"}`)) {
+		t.Fatal("client-only encryption should still force modern core")
+	}
+}

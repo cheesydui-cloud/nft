@@ -347,6 +347,23 @@ func ShareHostFromConfig(raw json.RawMessage) string {
 	return ""
 }
 
+// NeedsVLESSEnc reports whether the VLESS config enables VLESS Encryption
+// (server settings.decryption is not empty/none). Used by deploy to force a
+// modern xray core — old system xray accepts the JSON but times out clients.
+func NeedsVLESSEnc(raw json.RawMessage) bool {
+	var c VLESSConfig
+	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+		return false
+	}
+	dec := normalizeVLESSEncToken(c.Decryption)
+	if dec == "" || strings.EqualFold(dec, "none") {
+		// Also treat client-only encryption as needing the feature (mis-paste).
+		enc := normalizeVLESSEncToken(c.Encryption)
+		return enc != "" && !strings.EqualFold(enc, "none")
+	}
+	return true
+}
+
 func randomHex(nBytes int) string {
 	b := make([]byte, nBytes)
 	_, _ = rand.Read(b)

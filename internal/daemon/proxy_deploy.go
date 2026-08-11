@@ -27,13 +27,18 @@ func coreStateDir() string {
 
 // deployXrayVLESS writes a per-instance xray config and (re)starts that instance process.
 func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+	// Prefer panel-managed core first. System packages under /usr often ship
+	// older Xray that accepts config JSON but cannot complete vlessenc handshakes
+	// (client timeout while encryption=none still works).
+	panelXray := filepath.Join(coreStateDir(), "xray", "xray")
 	xrayPath := findCoreBinary(
 		[]string{"xray"},
 		[]string{
+			panelXray,
+			"/var/lib/nft/cores/xray/xray",
 			"/usr/local/bin/xray",
 			"/usr/bin/xray",
 			"/opt/xray/xray",
-			"/var/lib/nft/cores/xray/xray",
 		},
 	)
 	if xrayPath == "" {
@@ -41,6 +46,23 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 			OK:     false,
 			DryRun: true,
 			Error:  "节点未安装 xray。请在面板「系统设置 → 代理核心缓存」下载 xray 后重新发布，或在节点本机安装 xray",
+		}
+	}
+	// VLESS Encryption needs a recent Xray-core (vlessenc). If the selected binary
+	// is too old, try the panel-managed path explicitly, then fail with a clear message.
+	if proxysvc.NeedsVLESSEnc(req.Config) {
+		if !xraySupportsVlessEnc(xrayPath) {
+			if xrayPath != panelXray && xraySupportsVlessEnc(panelXray) {
+				xrayPath = panelXray
+			} else {
+				return wsproto.ProxyServiceApplyAck{
+					OK: false,
+					Error: fmt.Sprintf(
+						"节点 xray 不支持 vlessenc（当前 %s · %s）。请在面板「系统设置 → 代理核心缓存」拉取最新 xray，发布时勾选「强制推送核心」后重新发布",
+						xrayPath, probeCoreVersion(xrayPath),
+					),
+				}
+			}
 		}
 	}
 	port := req.ListenPort

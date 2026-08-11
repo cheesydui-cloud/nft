@@ -276,14 +276,21 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Ensure proxy core is on the node (push from panel cache if needed).
-		if err := s.ensureCoreOnNodeForce(node, svc.Protocol, body.ForceCore); err != nil {
-			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
-			results = append(results, map[string]any{
-				"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
-			})
-			continue
-		}
+			// Ensure proxy core is on the node (push from panel cache if needed).
+			// VLESS Encryption requires a modern xray; force push so panel-managed
+			// core wins over stale /usr/local/bin packages that accept none but
+			// time out with mlkem768x25519plus decryption.
+			forceCore := body.ForceCore
+			if !forceCore && strings.EqualFold(svc.Protocol, "vless") && proxysvc.NeedsVLESSEnc(cfg) {
+				forceCore = true
+			}
+			if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
+				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
+				results = append(results, map[string]any{
+					"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
+				})
+				continue
+			}
 
 		// Try live apply on agent.
 		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)

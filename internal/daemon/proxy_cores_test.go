@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -129,6 +130,48 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+func TestFindCoreBinaryPrefersEarlierPath(t *testing.T) {
+	dir := t.TempDir()
+	panel := filepath.Join(dir, "panel-xray")
+	sys := filepath.Join(dir, "sys-xray")
+	if err := os.WriteFile(panel, []byte("panel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sys, []byte("sys"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := findCoreBinary([]string{"xray-not-on-path-xyz"}, []string{panel, sys})
+	if got != panel {
+		t.Fatalf("want panel-managed first, got %q", got)
+	}
+}
+
+func TestXraySupportsVlessEnc(t *testing.T) {
+	// Fake binary that only knows "version".
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old-xray")
+	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'Xray 1.8.0'; exit 0; fi\necho unknown; exit 1\n"
+	if err := os.WriteFile(old, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if xraySupportsVlessEnc(old) {
+		t.Fatal("old stub must not report vlessenc support")
+	}
+	// Real xray if present.
+	if real, err := exec.LookPath("xray"); err == nil {
+		if !xraySupportsVlessEnc(real) && !xraySupportsVlessEnc("/tmp/xray") {
+			// Accept either; some CI hosts have ancient PATH xray.
+			t.Logf("PATH xray %s does not support vlessenc (expected on old packages)", real)
+		}
+	}
+	if st, err := os.Stat("/tmp/xray"); err == nil && !st.IsDir() {
+		if !xraySupportsVlessEnc("/tmp/xray") {
+			t.Fatal("/tmp/xray should support vlessenc")
+		}
+	}
+}
+
 
 func TestDeployXrayAndSingBoxIfPresent(t *testing.T) {
 	xray := findCoreBinary([]string{"xray"}, []string{"/tmp/nft-core-verify/xray", "/usr/local/bin/xray"})
