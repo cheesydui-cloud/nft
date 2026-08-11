@@ -391,6 +391,7 @@ func truncateForErr(s string, n int) string {
 }
 
 // BuildSingBoxSSConfig builds a standalone sing-box JSON config for one Shadowsocks inbound.
+// Layout matches common production scripts (yyds): dual-stack listen, NTP, direct outbound.
 func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	var c SSConfig
 	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -402,28 +403,68 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if listenPort <= 0 || listenPort > 65535 {
 		return nil, fmt.Errorf("invalid listen port %d", listenPort)
 	}
-	method := strings.TrimSpace(c.Method)
-	if method == "" {
-		method = "2022-blake3-aes-128-gcm"
-	}
+	method := NormalizeSSMethod(c.Method)
 	if c.Password == "" {
 		return nil, fmt.Errorf("ss password missing")
 	}
+	if err := ValidateSSDeploy(&c); err != nil {
+		return nil, err
+	}
+	listen := strings.TrimSpace(c.Listen)
+	if listen == "" {
+		listen = "::" // dual-stack (IPv4-mapped + IPv6), same as yyds install script
+	}
+
+	inbound := map[string]any{
+		"type":        "shadowsocks",
+		"tag":         "ss-in",
+		"listen":      listen,
+		"listen_port": listenPort,
+		"method":      method,
+		"password":    c.Password,
+	}
+	// Sniff: default on (helps routing/DNS in multi-inbound setups; harmless for plain SS).
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+	if sniffOn {
+		inbound["sniff"] = true
+		inbound["sniff_override_destination"] = true
+	}
+	if c.TCPFastOpen {
+		inbound["tcp_fast_open"] = true
+	}
+	if c.Multiplex {
+		inbound["multiplex"] = map[string]any{
+			"enabled": true,
+			// smux is widely supported; clients that don't enable mux still work.
+			"protocol": "smux",
+			"padding":  false,
+		}
+	}
+
 	cfg := map[string]any{
-		"log": map[string]any{"level": "warn", "timestamp": true},
+		"log": map[string]any{"level": "info", "timestamp": true},
 		"inbounds": []any{
-			map[string]any{
-				"type":        "shadowsocks",
-				"tag":         "ss-in",
-				"listen":      "0.0.0.0",
-				"listen_port": listenPort,
-				"method":      method,
-				"password":    c.Password,
-			},
+			inbound,
 		},
 		"outbounds": []any{
-			map[string]any{"type": "direct", "tag": "direct"},
+			map[string]any{"type": "direct", "tag": "direct-out"},
 		},
+	}
+	// NTP: default enabled (yyds uses time.apple.com).
+	ntpOn := true
+	if c.NTP != nil {
+		ntpOn = *c.NTP
+	}
+	if ntpOn {
+		cfg["ntp"] = map[string]any{
+			"enabled":     true,
+			"server":      "time.apple.com",
+			"server_port": 123,
+			"interval":    "30m",
+		}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }

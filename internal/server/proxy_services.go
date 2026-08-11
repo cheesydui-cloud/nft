@@ -259,15 +259,24 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 			// Fail fast on illegal security/transport or missing/invalid TLS certs before agents.
-			if strings.EqualFold(svc.Protocol, "vless") {
-				var vc proxysvc.VLESSConfig
-				if err := json.Unmarshal(cfg, &vc); err == nil {
-					if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
-						jsonErr(w, http.StatusBadRequest, err.Error())
-						return
+				if strings.EqualFold(svc.Protocol, "vless") {
+					var vc proxysvc.VLESSConfig
+					if err := json.Unmarshal(cfg, &vc); err == nil {
+						if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
+							jsonErr(w, http.StatusBadRequest, err.Error())
+							return
+						}
 					}
 				}
-			}
+				if strings.EqualFold(svc.Protocol, "shadowsocks") || strings.EqualFold(svc.Protocol, "ss") {
+					var sc proxysvc.SSConfig
+					if err := json.Unmarshal(cfg, &sc); err == nil {
+						if err := proxysvc.ValidateSSDeploy(&sc); err != nil {
+							jsonErr(w, http.StatusBadRequest, err.Error())
+							return
+						}
+					}
+				}
 		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
 		svc.ConfigJSON = cfg
 
@@ -882,52 +891,60 @@ func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
 }
 
 // mergePreservedProxySecrets restores sensitive fields that the UI may re-send
-// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
-// unrelated fields does not wipe cert_pem / private_key / passwords.
-func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
-	if len(incoming) == 0 {
-		return stored
-	}
-	if strings.ToLower(protocol) != "vless" {
-		return incoming
-	}
-	var oldM, newM map[string]any
-	if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
-		return incoming
-	}
-	if err := json.Unmarshal(nonzeroRaw(incoming), &newM); err != nil || newM == nil {
-		return incoming
-	}
-	keepKeys := []string{
-		"private_key", "public_key", "short_id",
-		"cert_pem", "key_pem",
-		"encryption", "decryption", "uuid",
-	}
-	for _, k := range keepKeys {
-		nv, ok := newM[k]
-		if !ok {
-			// Field omitted entirely → keep stored.
-			if ov, has := oldM[k]; has {
-				newM[k] = ov
+	// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
+	// unrelated fields does not wipe cert_pem / private_key / passwords.
+	func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
+		if len(incoming) == 0 {
+			return stored
+		}
+		proto := strings.ToLower(strings.TrimSpace(protocol))
+		var keepKeys []string
+		switch proto {
+		case "vless":
+			keepKeys = []string{
+				"private_key", "public_key", "short_id",
+				"cert_pem", "key_pem",
+				"encryption", "decryption", "uuid",
 			}
-			continue
+		case "shadowsocks", "ss":
+			keepKeys = []string{"password"}
+		case "mieru":
+			keepKeys = []string{"password", "username"}
+		default:
+			return incoming
 		}
-		s, isStr := nv.(string)
-		if !isStr {
-			continue
+		var oldM, newM map[string]any
+		if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
+			return incoming
 		}
-		if s == "" || isRedactedSecret(s) {
-			if ov, has := oldM[k]; has {
-				newM[k] = ov
+		if err := json.Unmarshal(nonzeroRaw(incoming), &newM); err != nil || newM == nil {
+			return incoming
+		}
+		for _, k := range keepKeys {
+			nv, ok := newM[k]
+			if !ok {
+				// Field omitted entirely → keep stored.
+				if ov, has := oldM[k]; has {
+					newM[k] = ov
+				}
+				continue
+			}
+			s, isStr := nv.(string)
+			if !isStr {
+				continue
+			}
+			if s == "" || isRedactedSecret(s) {
+				if ov, has := oldM[k]; has {
+					newM[k] = ov
+				}
 			}
 		}
+		out, err := json.Marshal(newM)
+		if err != nil {
+			return incoming
+		}
+		return out
 	}
-	out, err := json.Marshal(newM)
-	if err != nil {
-		return incoming
-	}
-	return out
-}
 
 func nonzeroRaw(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
@@ -948,13 +965,21 @@ func isRedactedSecret(s string) bool {
 	return strings.HasPrefix(s, "***") || strings.HasPrefix(s, "__KEEP")
 }
 
-// apiProxyServiceGenKeys generates REALITY / TLS key material for the wizard UI.
-// kind=reality (default) | short_id | vlessenc | selfsigned | tls
+// apiProxyServiceGenKeys generates REALITY / TLS / SS key material for the wizard UI.
+// kind=reality (default) | short_id | vlessenc | selfsigned | tls | ss | shadowsocks
 func (s *Server) apiProxyServiceGenKeys(w http.ResponseWriter, r *http.Request) {
 	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
 	switch kind {
 	case "short_id":
 		jsonOK(w, map[string]any{"short_id": proxysvc.GenerateShortID()})
+	case "ss", "shadowsocks", "ss-password":
+		method := proxysvc.NormalizeSSMethod(r.URL.Query().Get("method"))
+		jsonOK(w, map[string]any{
+			"password": proxysvc.GenerateSSPassword(method),
+			"method":   method,
+			"kind":     "ss",
+			"bytes":    proxysvc.SSPasswordBytes(method),
+		})
 	case "vlessenc", "mlkem", "encryption":
 		// auth=x25519 (default, short, Weir-compatible) | mlkem (PQ, long keys)
 		auth := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("auth")))

@@ -1,6 +1,7 @@
 package proxysvc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -66,30 +67,109 @@ func TestBuildXrayVLESSConfigRequiresSNI(t *testing.T) {
 	}
 }
 
-func TestBuildSingBoxSSConfig(t *testing.T) {
-	raw, err := json.Marshal(SSConfig{
-		Method:   "2022-blake3-aes-128-gcm",
-		Password: "AAAAAAAAAAAAAAAAAAAAAA==",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := BuildSingBoxSSConfig(8388, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(cfg)
-	for _, want := range []string{
-		`"type": "shadowsocks"`,
-		`"listen_port": 8388`,
-		`2022-blake3-aes-128-gcm`,
-		`AAAAAAAAAAAAAAAAAAAAAA==`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("config missing %q\n%s", want, s)
+	func TestBuildSingBoxSSConfig(t *testing.T) {
+		// 16 zero bytes → valid SS2022-128 key
+		raw, err := json.Marshal(SSConfig{
+			Method:   "2022-blake3-aes-128-gcm",
+			Password: "AAAAAAAAAAAAAAAAAAAAAA==",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := BuildSingBoxSSConfig(8388, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(cfg)
+		for _, want := range []string{
+			`"type": "shadowsocks"`,
+			`"listen_port": 8388`,
+			`"listen": "::"`,
+			`2022-blake3-aes-128-gcm`,
+			`AAAAAAAAAAAAAAAAAAAAAA==`,
+			`"ntp"`,
+			`time.apple.com`,
+			`"sniff": true`,
+			`"tag": "direct-out"`,
+		} {
+			if !strings.Contains(s, want) {
+				t.Fatalf("config missing %q\n%s", want, s)
+			}
 		}
 	}
-}
+
+	func TestBuildSingBoxSSConfigMultiplexAndIPv4(t *testing.T) {
+		f := false
+		raw, err := json.Marshal(SSConfig{
+			Method:      "2022-blake3-aes-128-gcm",
+			Password:    "AAAAAAAAAAAAAAAAAAAAAA==",
+			Listen:      "0.0.0.0",
+			Multiplex:   true,
+			TCPFastOpen: true,
+			NTP:         &f,
+			Sniffing:    &f,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := BuildSingBoxSSConfig(9000, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(cfg)
+		for _, want := range []string{
+			`"listen": "0.0.0.0"`,
+			`"tcp_fast_open": true`,
+			`"multiplex"`,
+			`"smux"`,
+		} {
+			if !strings.Contains(s, want) {
+				t.Fatalf("missing %q\n%s", want, s)
+			}
+		}
+		if strings.Contains(s, `"ntp"`) {
+			t.Fatalf("ntp should be off:\n%s", s)
+		}
+		if strings.Contains(s, `"sniff": true`) {
+			t.Fatalf("sniff should be off:\n%s", s)
+		}
+	}
+
+	func TestValidateSSDeploy(t *testing.T) {
+		if err := ValidateSSDeploy(&SSConfig{Method: "2022-blake3-aes-128-gcm", Password: "short"}); err == nil {
+			t.Fatal("expected base64 error")
+		}
+		// wrong length for 128
+		bad := base64.StdEncoding.EncodeToString(make([]byte, 32))
+		if err := ValidateSSDeploy(&SSConfig{Method: "2022-blake3-aes-128-gcm", Password: bad}); err == nil {
+			t.Fatal("expected length error")
+		}
+		ok := "AAAAAAAAAAAAAAAAAAAAAA=="
+		if err := ValidateSSDeploy(&SSConfig{Method: "2022-blake3-aes-128-gcm", Password: ok}); err != nil {
+			t.Fatal(err)
+		}
+		// legacy AEAD: any non-empty password
+		if err := ValidateSSDeploy(&SSConfig{Method: "aes-128-gcm", Password: "hello"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	func TestEnsureSecretsSSDefaults(t *testing.T) {
+		raw, err := EnsureSecrets("shadowsocks", json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c SSConfig
+		if err := json.Unmarshal(raw, &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.Method != "2022-blake3-aes-128-gcm" || c.Password == "" || c.Listen != "::" {
+			t.Fatalf("got %+v", c)
+		}
+		if err := ValidateSSDeploy(&c); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 func TestEnsureSecretsRealityRealKeys(t *testing.T) {
 	raw, err := EnsureSecrets("vless", json.RawMessage(`{"server_name":"a.com"}`))

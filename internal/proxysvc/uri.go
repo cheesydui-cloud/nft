@@ -167,14 +167,98 @@ func ValidateVLESSDeploy(c *VLESSConfig) error {
 	return nil
 }
 
-// SSConfig is Shadowsocks 2022 (sing-box) config.
-type SSConfig struct {
-	ListenPort int    `json:"listen_port"`
-	ShareHost  string `json:"share_host"`
-	Method     string `json:"method"`
-	Password   string `json:"password"`
-	SubVisible bool   `json:"sub_visible"`
-}
+// SSConfig is Shadowsocks / SS2022 (sing-box) config.
+	// Aligned with common production sing-box SS deploys (e.g. yyds install script):
+	// dual-stack listen, optional NTP, multiplex / TFO / sniff.
+	type SSConfig struct {
+		ListenPort int    `json:"listen_port"`
+		ShareHost  string `json:"share_host"`
+		Method     string `json:"method"`
+		Password   string `json:"password"`
+		// Listen address for sing-box inbound. Empty → "::" (dual-stack, yyds-style).
+		// Use "0.0.0.0" for IPv4-only when the host has no IPv6.
+		Listen string `json:"listen,omitempty"`
+		// NTP keeps server clock accurate (LE/SS2022 less sensitive but good practice).
+		// nil / omitted → enabled by default in BuildSingBoxSSConfig.
+		NTP *bool `json:"ntp,omitempty"`
+		// Multiplex enables sing-box inbound multiplex (smux).
+		Multiplex bool `json:"multiplex,omitempty"`
+		// TCPFastOpen sets sockopt tcp_fast_open when supported.
+		TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
+		// Sniffing enables inbound sniff (default true when nil).
+		Sniffing *bool `json:"sniffing,omitempty"`
+		SubVisible bool `json:"sub_visible"`
+	}
+
+	// SSMethods lists supported ciphers for Wizard / validation.
+	// Prefer SS2022 (blake3); legacy AEAD kept for older clients.
+	var SSMethods = []string{
+		"2022-blake3-aes-128-gcm",
+		"2022-blake3-aes-256-gcm",
+		"2022-blake3-chacha20-poly1305",
+		"aes-128-gcm",
+		"aes-256-gcm",
+		"chacha20-ietf-poly1305",
+	}
+
+	// NormalizeSSMethod returns a known method or the default SS2022-128.
+	func NormalizeSSMethod(m string) string {
+		m = strings.TrimSpace(strings.ToLower(m))
+		if m == "" {
+			return "2022-blake3-aes-128-gcm"
+		}
+		for _, known := range SSMethods {
+			if m == known {
+				return known
+			}
+		}
+		// Accept any non-empty method sing-box may support; wizard only offers SSMethods.
+		return m
+	}
+
+	// SSPasswordBytes returns the recommended random key length in bytes for method.
+	// SS2022-128 → 16; SS2022-256 / chacha20 → 32; legacy AEAD → 16.
+	func SSPasswordBytes(method string) int {
+		m := strings.ToLower(strings.TrimSpace(method))
+		switch {
+		case strings.Contains(m, "256"), strings.Contains(m, "chacha20"):
+			return 32
+		default:
+			return 16
+		}
+	}
+
+	// GenerateSSPassword returns a std base64 random key sized for method.
+	func GenerateSSPassword(method string) string {
+		return randomB64Std(SSPasswordBytes(method))
+	}
+
+	// ValidateSSDeploy checks method/password before publish.
+	func ValidateSSDeploy(c *SSConfig) error {
+		if c == nil {
+			return fmt.Errorf("ss config nil")
+		}
+		method := NormalizeSSMethod(c.Method)
+		if c.Password == "" {
+			return fmt.Errorf("Shadowsocks 密码未配置")
+		}
+		// Soft check: SS2022 keys should be valid base64 of expected length.
+		if strings.HasPrefix(method, "2022-") {
+			raw, err := base64.StdEncoding.DecodeString(c.Password)
+			if err != nil {
+				// try raw URL encoding without padding
+				raw, err = base64.RawStdEncoding.DecodeString(c.Password)
+			}
+			if err != nil {
+				return fmt.Errorf("SS2022 密码须为 base64 密钥材料: %w", err)
+			}
+			want := SSPasswordBytes(method)
+			if len(raw) != want {
+				return fmt.Errorf("SS2022 method %s 需要 %d 字节密钥（当前 %d 字节 base64 解码后）", method, want, len(raw))
+			}
+		}
+		return nil
+	}
 
 // MieruConfig matches the Weir mieru form.
 type MieruConfig struct {
@@ -260,25 +344,23 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 				c.ServiceName = "GunService"
 			}
 			return json.Marshal(c)
-	case "shadowsocks", "ss":
-		var c SSConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return nil, err
-		}
-		if c.ListenPort <= 0 {
-			c.ListenPort = 443
-		}
-		if c.Method == "" {
-			c.Method = "2022-blake3-aes-128-gcm"
-		}
-		if c.Password == "" {
-			n := 16
-			if strings.Contains(c.Method, "256") {
-				n = 32
+		case "shadowsocks", "ss":
+			var c SSConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return nil, err
 			}
-			c.Password = randomB64Std(n)
-		}
-		return json.Marshal(c)
+			if c.ListenPort <= 0 {
+				c.ListenPort = 443
+			}
+			c.Method = NormalizeSSMethod(c.Method)
+			if c.Password == "" {
+				c.Password = GenerateSSPassword(c.Method)
+			}
+			// Default dual-stack listen (yyds / production sing-box SS).
+			if strings.TrimSpace(c.Listen) == "" {
+				c.Listen = "::"
+			}
+			return json.Marshal(c)
 	case "mieru":
 		var c MieruConfig
 		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {

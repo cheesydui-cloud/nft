@@ -17,13 +17,18 @@ const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完
 
 const TEMPLATES = [
   { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
-  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: '轻量、客户端生态最广' },
+  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
   { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，TCP/UDP 双传输' },
 ]
 
+// Aligned with yyds / production sing-box SS: SS2022 first, legacy AEAD for old clients.
 const SS_METHODS = [
-  '2022-blake3-aes-128-gcm',
-  '2022-blake3-aes-256-gcm',
+  { value: '2022-blake3-aes-128-gcm', label: '2022-blake3-aes-128-gcm（推荐）' },
+  { value: '2022-blake3-aes-256-gcm', label: '2022-blake3-aes-256-gcm' },
+  { value: '2022-blake3-chacha20-poly1305', label: '2022-blake3-chacha20-poly1305' },
+  { value: 'aes-128-gcm', label: 'aes-128-gcm（旧客户端）' },
+  { value: 'aes-256-gcm', label: 'aes-256-gcm（旧客户端）' },
+  { value: 'chacha20-ietf-poly1305', label: 'chacha20-ietf-poly1305（旧客户端）' },
 ]
 
 const emptyVless = () => ({
@@ -61,6 +66,11 @@ const emptySS = () => ({
   share_host: '',
   method: '2022-blake3-aes-128-gcm',
   password: '',
+  listen: '::',
+  ntp: true,
+  multiplex: false,
+  tcp_fast_open: false,
+  sniffing: true,
 })
 
 const emptyMieru = () => ({
@@ -908,12 +918,103 @@ export default function ProxyServiceWizard() {
 
               {protocol === 'shadowsocks' && (
                 <div className="border-t border-line pt-4 space-y-3">
+                  <p className="text-[12px] text-ink-mut m-0">
+                    对齐生产 sing-box SS 部署：双栈监听 <span className="font-mono">::</span>、NTP 校时、SS2022 推荐密码自动生成；
+                    发布后 agent 在节点启动 <span className="font-mono">sing-box</span>（优先面板核心缓存）。
+                  </p>
                   <div>
-                    <label className="fl block mb-1">method</label>
-                    <Select value={config.method || SS_METHODS[0]} onChange={v => setCfg('method', v)}
-                      options={SS_METHODS.map(m => ({ value: m, label: m }))} />
+                    <label className="fl block mb-1">加密 method</label>
+                    <Select
+                      value={config.method || SS_METHODS[0].value}
+                      onChange={v => setCfg('method', v)}
+                      options={SS_METHODS}
+                    />
                   </div>
-                  <p className="text-[12px] text-ink-mut">密码发布时自动生成（SS2022 密钥材料）。</p>
+                  <div>
+                    <label className="fl block mb-1">分享主机 share_host（可选）</label>
+                    <input
+                      className="input-field font-mono"
+                      value={config.share_host || ''}
+                      onChange={e => setCfg('share_host', e.target.value)}
+                      placeholder="留空则用节点 IP / 中转地址"
+                    />
+                    <p className="text-[11px] text-ink-mut mt-1">写入订阅链接的主机名；域名或 DDNS 时填写。</p>
+                  </div>
+                  <div>
+                    <label className="fl block mb-1">密码（SS2022 为 base64 密钥）</label>
+                    <div className="flex gap-2">
+                      <input
+                        className="input-field font-mono text-xs flex-1"
+                        value={config.password || ''}
+                        onChange={e => setCfg('password', e.target.value)}
+                        placeholder={config.password_configured ? '已配置 · 留空保存保留原密码；点生成可轮换' : '留空则发布时自动生成'}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm shrink-0"
+                        onClick={async () => {
+                          try {
+                            const m = config.method || '2022-blake3-aes-128-gcm'
+                            const d = await api.get(`/proxy-services/gen-keys?kind=ss&method=${encodeURIComponent(m)}`)
+                            setCfg('password', d.password || '')
+                            toast('已生成新密码（发布后生效）')
+                          } catch (err) {
+                            toast(err.message || '生成失败', 'error')
+                          }
+                        }}
+                      >
+                        生成密码
+                      </button>
+                    </div>
+                  </div>
+                  <div className="border border-dashed border-line rounded-xl p-3 space-y-2">
+                    <div className="text-sm font-bold text-ink-soft">监听与高级（sing-box）</div>
+                    <div>
+                      <label className="fl block mb-1">listen</label>
+                      <Select
+                        value={config.listen || '::'}
+                        onChange={v => setCfg('listen', v)}
+                        options={[
+                          { value: '::', label: '::（双栈，推荐）' },
+                          { value: '0.0.0.0', label: '0.0.0.0（仅 IPv4）' },
+                        ]}
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={config.ntp !== false}
+                        onChange={e => setCfg('ntp', e.target.checked)}
+                      />
+                      <span>NTP 校时（time.apple.com，默认开）</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={config.sniffing !== false}
+                        onChange={e => setCfg('sniffing', e.target.checked)}
+                      />
+                      <span className="font-mono">sniff</span>
+                      <span className="text-ink-mut text-[12px]">入站嗅探</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={!!config.tcp_fast_open}
+                        onChange={e => setCfg('tcp_fast_open', e.target.checked)}
+                      />
+                      <span className="font-mono">tcp_fast_open</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={!!config.multiplex}
+                        onChange={e => setCfg('multiplex', e.target.checked)}
+                      />
+                      <span>multiplex（smux）</span>
+                      <span className="text-ink-mut text-[12px]">客户端需同步开 mux</span>
+                    </label>
+                  </div>
                 </div>
               )}
 

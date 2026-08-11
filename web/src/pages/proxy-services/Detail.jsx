@@ -100,8 +100,19 @@ const CONFIG_GROUPS = {
       keys: [
         ['method', 'method'],
         ['password', 'password'],
+        ['password_configured', '密码'],
         ['listen_port', 'listen_port'],
         ['share_host', 'share_host'],
+        ['listen', 'listen'],
+      ],
+    },
+    {
+      title: '高级（sing-box）',
+      keys: [
+        ['ntp', 'NTP'],
+        ['sniffing', 'sniff'],
+        ['tcp_fast_open', 'tcp_fast_open'],
+        ['multiplex', 'multiplex'],
       ],
     },
   ],

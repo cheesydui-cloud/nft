@@ -139,22 +139,26 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 }
 
 // deploySingBoxSS writes a per-instance sing-box config and (re)starts that instance.
-func deploySingBoxSS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
-	boxPath := findCoreBinary(
-		[]string{"sing-box", "singbox"},
-		[]string{
-			"/usr/local/bin/sing-box",
-			"/usr/bin/sing-box",
-			"/var/lib/nft/cores/sing-box/sing-box",
-		},
-	)
-	if boxPath == "" {
-		return wsproto.ProxyServiceApplyAck{
-			OK:     false,
-			DryRun: true,
-			Error:  "节点未安装 sing-box。请在面板「系统设置 → 代理核心缓存」下载 sing-box 后重新发布，或在节点本机安装 sing-box",
+	func deploySingBoxSS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+		// Prefer panel-managed core first (same as xray). System packages under
+		// /usr/local often lag behind SS2022 / multiplex features.
+		panelBox := filepath.Join(coreStateDir(), "sing-box", "sing-box")
+		boxPath := findCoreBinary(
+			[]string{"sing-box", "singbox"},
+			[]string{
+				panelBox,
+				"/var/lib/nft/cores/sing-box/sing-box",
+				"/usr/local/bin/sing-box",
+				"/usr/bin/sing-box",
+			},
+		)
+		if boxPath == "" {
+			return wsproto.ProxyServiceApplyAck{
+				OK:     false,
+				DryRun: true,
+				Error:  "节点未安装 sing-box。请在面板「系统设置 → 代理核心缓存」下载 sing-box 后重新发布，或在节点本机安装 sing-box",
+			}
 		}
-	}
 	port := req.ListenPort
 	if port <= 0 {
 		port = proxysvc.ListenPortFromConfig(req.Config)
