@@ -25,7 +25,9 @@ import (
 
 const (
 	dialerPingInterval     = 10 * time.Second
-	dialerCountersInterval = 5 * time.Second
+		// 1s matches panel /api/ws/speed push and keeps live rates close to
+		// router WAN monitors (was 5s → sticky / under-reported peaks).
+		dialerCountersInterval = 1 * time.Second
 	dialerReadTimeout      = 30 * time.Second
 	dialerWriteTimeout     = 20 * time.Second
 	dialerBackoffInitial   = 1 * time.Second
@@ -740,29 +742,33 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				log.Printf("dialer: write %s: %v", wsproto.TypePing, err)
 				continue
 			}
-		case <-countersT.C:
-			if d.cfg.CountersFn == nil {
-				continue
-			}
-			samples := d.cfg.CountersFn()
-			if len(samples) == 0 {
-				continue
-			}
-			cp, err := json.Marshal(wsproto.Counters{Samples: samples})
-			if err != nil {
-				log.Printf("dialer: marshal %s: %v", wsproto.TypeCounters, err)
-				continue
-			}
-			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeCounters, Payload: cp}); err != nil {
-				log.Printf("dialer: write %s: %v", wsproto.TypeCounters, err)
-				if d.cfg.CountersReadd != nil {
-					d.cfg.CountersReadd(samples)
+			case <-countersT.C:
+				if d.cfg.CountersFn == nil {
+					continue
 				}
-				// Counters are best-effort periodic telemetry; a single failed
-				// write on a flaky link should not tear the whole control
-				// channel down. The reader will still detect a truly dead conn.
-				continue
-			}
+				// Always push a counters frame — including empty samples — so the
+				// panel can zero idle hops immediately. Skipping empty batches left
+				// the last non-zero rate sticky for hopIdleTTL while the router
+				// already showed near-zero.
+				samples := d.cfg.CountersFn()
+				if samples == nil {
+					samples = []wsproto.CounterSample{}
+				}
+				cp, err := json.Marshal(wsproto.Counters{Samples: samples})
+				if err != nil {
+					log.Printf("dialer: marshal %s: %v", wsproto.TypeCounters, err)
+					continue
+				}
+				if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeCounters, Payload: cp}); err != nil {
+					log.Printf("dialer: write %s: %v", wsproto.TypeCounters, err)
+					if d.cfg.CountersReadd != nil && len(samples) > 0 {
+						d.cfg.CountersReadd(samples)
+					}
+					// Counters are best-effort periodic telemetry; a single failed
+					// write on a flaky link should not tear the whole control
+					// channel down. The reader will still detect a truly dead conn.
+					continue
+				}
 		case res := <-d.upgradeCh:
 			ap, _ := json.Marshal(res.ack)
 			if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeUpgradeAck, ID: res.id, Payload: ap}); err != nil {

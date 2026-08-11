@@ -133,3 +133,60 @@ func TestSpeedCacheIdleHopZeroed(t *testing.T) {
 		t.Fatalf("node total must exclude idle hop: got up=%d down=%d, want 300000", got.Up, got.Down)
 	}
 }
+
+// Agent ElapsedMs must drive bps so rates match the sample window (router-like),
+// not a stretched panel wall-clock gap.
+func TestSpeedCacheUsesAgentElapsed(t *testing.T) {
+	sc := newSpeedCache()
+	// 1s window, 100_000 bytes up → 100_000 B/s
+	sc.update(1, []counterDelta{{
+		proto: "tcp", listenPortStr: "1000",
+		bytesUp: 100_000, bytesDown: 200_000, elapsedSec: 1.0,
+		ownerID: 1, ruleID: 10, hopPos: 0,
+	}})
+	got := entryByNode(sc.snapshot())[1]
+	if got.Up != 100_000 || got.Down != 200_000 {
+		t.Fatalf("agent elapsed rate: up=%d down=%d want 100000/200000", got.Up, got.Down)
+	}
+}
+
+// Empty counter batch (agent heartbeat with no traffic) must zero sticky rates.
+func TestSpeedCacheEmptyBatchZeros(t *testing.T) {
+	sc := newSpeedCache()
+	sc.update(1, []counterDelta{{
+		proto: "tcp", listenPortStr: "1000",
+		bytesUp: 500_000, bytesDown: 500_000, elapsedSec: 1.0,
+		ownerID: 1, ruleID: 10, hopPos: 0,
+	}})
+	if got := entryByNode(sc.snapshot())[1]; got.Up == 0 {
+		t.Fatal("expected non-zero before empty batch")
+	}
+	sc.update(1, nil) // empty heartbeat
+	nodes := entryByNode(sc.snapshot())
+	if got, ok := nodes[1]; ok && (got.Up != 0 || got.Down != 0) {
+		t.Fatalf("empty batch must zero rates, got up=%d down=%d", got.Up, got.Down)
+	}
+	if _, ok := entryByRule(sc.snapshotRules())[10]; ok {
+		t.Fatal("zeroed rule must not appear in rule snapshot")
+	}
+}
+
+// A busy port in the batch must not leave other ports on the same node sticky.
+func TestSpeedCacheMissingPortZeroed(t *testing.T) {
+	sc := newSpeedCache()
+	sc.update(1, []counterDelta{
+		{proto: "tcp", listenPortStr: "1000", bytesUp: 100_000, bytesDown: 100_000, elapsedSec: 1, ownerID: 1, ruleID: 10, hopPos: 0},
+		{proto: "tcp", listenPortStr: "1001", bytesUp: 50_000, bytesDown: 50_000, elapsedSec: 1, ownerID: 1, ruleID: 11, hopPos: 0},
+	})
+	// Only port 1000 still has traffic.
+	sc.update(1, []counterDelta{
+		{proto: "tcp", listenPortStr: "1000", bytesUp: 80_000, bytesDown: 80_000, elapsedSec: 1, ownerID: 1, ruleID: 10, hopPos: 0},
+	})
+	rules := entryByRule(sc.snapshotRules())
+	if _, ok := rules[11]; ok {
+		t.Fatalf("port 1001 not in batch must zero rule 11, got %+v", rules[11])
+	}
+	if got := rules[10]; got.Up != 80_000 {
+		t.Fatalf("rule 10: up=%d want 80000", got.Up)
+	}
+}

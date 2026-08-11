@@ -678,10 +678,15 @@ func TestCounterSamples_DeltasAndReset(t *testing.T) {
 	if len(s1) != 1 || s1[0].BytesUp != 60 || s1[0].BytesDown != 40 {
 		t.Fatalf("first sample want up=60 down=40, got %+v", s1)
 	}
+	// First sample has no prior tick → elapsed_ms may be 0.
+	time.Sleep(20 * time.Millisecond)
 	d.dp.(*fakeDataplane).counters = []forward.Counter{{Proto: "tcp", ListenPort: 80, BytesUp: 160, BytesDown: 90}}
 	s2 := d.counterSamples()
 	if len(s2) != 1 || s2[0].BytesUp != 100 || s2[0].BytesDown != 50 {
 		t.Fatalf("second sample want up=100 down=50, got %+v", s2)
+	}
+	if s2[0].ElapsedMs <= 0 {
+		t.Fatalf("second sample should carry agent elapsed_ms, got %d", s2[0].ElapsedMs)
 	}
 	d.dp.(*fakeDataplane).counters = []forward.Counter{{Proto: "tcp", ListenPort: 80, BytesUp: 20, BytesDown: 10}} // reset
 	s3 := d.counterSamples()

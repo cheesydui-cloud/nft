@@ -1226,6 +1226,13 @@ func writeError(ctx context.Context, ws *websocket.Conn, code, msg string) {
 // the segment's logical node grant. Quota suppression keys on the same logical
 // node end to end.
 func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
+	// Empty heartbeat: agent is alive with zero deltas this tick. Only refresh
+	// the speed cache (zero sticky rates); skip hop/traffic DB work.
+	if len(samples) == 0 {
+		h.speedCache.update(nodeID, nil)
+		return
+	}
+
 	hopMap, err := db.RuleHopMapByNode(h.DB, nodeID)
 	if err != nil {
 		log.Printf("hub: node %d load rule hop map for counters: %v", nodeID, err)
@@ -1550,16 +1557,22 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			ruleID = rh.RuleID
 			hopPos = rh.Position
 		}
+		elapsedSec := 0.0
+		if s.ElapsedMs > 0 {
+			elapsedSec = float64(s.ElapsedMs) / 1000.0
+		}
 		deltas = append(deltas, counterDelta{
 			proto:         s.Proto,
 			listenPortStr: strconv.Itoa(s.ListenPort),
 			bytesUp:       s.BytesUp,
 			bytesDown:     s.BytesDown,
+			elapsedSec:    elapsedSec,
 			ownerID:       ownerID,
 			ruleID:        ruleID,
 			hopPos:        hopPos,
 		})
 	}
+	// Always update speed cache — empty samples are heartbeats that zero idle hops.
 	h.speedCache.update(nodeID, deltas)
 
 	// Quota enforcement (the OnTrafficUpdate callback) can call back into the hub

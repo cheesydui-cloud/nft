@@ -189,15 +189,19 @@ type ApplyAck struct {
 // frame. The server adds BytesUp/BytesDown to the directional totals;
 // the rule is located by (node_id, listen_port, proto) — there is no
 // explicit rule_id on the wire because agent restarts re-key the same rule.
-type CounterSample struct {
-	ListenPort int    `json:"listen_port"`
-	Proto      string `json:"proto"`
-	BytesUp    int64  `json:"up"`
-	BytesDown  int64  `json:"down"`
-	// BytesDelta is the legacy field sent by pre-v0.33 agents that do not
-	// distinguish direction. The server falls back to it when up+down is zero.
-	BytesDelta int64 `json:"bytes_delta,omitempty"`
-}
+	type CounterSample struct {
+		ListenPort int    `json:"listen_port"`
+		Proto      string `json:"proto"`
+		BytesUp    int64  `json:"up"`
+		BytesDown  int64  `json:"down"`
+		// BytesDelta is the legacy field sent by pre-v0.33 agents that do not
+		// distinguish direction. The server falls back to it when up+down is zero.
+		BytesDelta int64 `json:"bytes_delta,omitempty"`
+		// ElapsedMs is the agent-side window used to produce this delta (ms since
+		// the previous counters sample on that agent). Panel speed = bytes / (ms/1000).
+		// Empty when omitted by older agents — panel falls back to wall-clock gaps.
+		ElapsedMs int64 `json:"elapsed_ms,omitempty"`
+	}
 
 type Counters struct {
 	Samples []CounterSample `json:"samples"`

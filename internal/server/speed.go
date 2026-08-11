@@ -26,11 +26,10 @@ type RuleSpeedEntry struct {
 }
 
 // hopIdleTTL is how long a per-port hop may keep its last measured bps after
-// the agent stops reporting deltas for that port. Agents only push non-zero
-// deltas, so an idle listen port never reappears in a batch — without this
-// cutoff the last rate (e.g. ~300KB/s) would stick until the whole node went
-// silent for nodeStaleTTL, making every rule on a busy relay look active.
-const hopIdleTTL = 15 * time.Second
+// the agent stops reporting that port (or reports a zero-window for it).
+// Agents now push counters every ~1s including empty batches; keep this short
+// so idle rates collapse quickly instead of sticking near the last peak.
+const hopIdleTTL = 3 * time.Second
 
 // nodeStaleTTL drops a node from snapshots when no counter batch arrived.
 const nodeStaleTTL = 30 * time.Second
@@ -78,14 +77,20 @@ type counterDelta struct {
 	listenPortStr string
 	bytesUp       int64
 	bytesDown     int64
-	ownerID       int64
-	ruleID        int64
-	hopPos        int
+	// elapsedSec is the agent-measured sample window when provided; 0 means
+	// fall back to panel wall-clock gap between updates for this hop.
+	elapsedSec float64
+	ownerID    int64
+	ruleID     int64
+	hopPos     int
 }
 
-// update folds a counter batch into the cache. The bytes/sec rate is
-// derived from the elapsed time since the previous batch for this hop;
-// the first batch is skipped (no rate without a prior reference point).
+// update folds a counter batch into the cache. The bytes/sec rate prefers the
+// agent-supplied sample window (ElapsedMs); otherwise it uses wall-clock time
+// since the previous batch for this hop. An empty samples slice is a heartbeat:
+// all hops on this node are zeroed so idle rates do not stick.
+// The first non-empty batch for a new hop is skipped (no rate without a prior
+// reference when only wall-clock is available and elapsedSec is 0).
 func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -96,8 +101,22 @@ func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 	}
 	now := time.Now()
 	ns.lastSeen = now
+
+	// Empty batch = agent is alive but no port had a non-zero delta this tick.
+	// Zero every hop immediately so UI matches "idle" instead of hopIdleTTL stickiness.
+	if len(samples) == 0 {
+		for _, hs := range ns.hops {
+			hs.upBps = 0
+			hs.downBps = 0
+			hs.lastTime = now
+		}
+		return
+	}
+
+	seen := make(map[string]bool, len(samples))
 	for _, s := range samples {
 		key := s.proto + "/" + s.listenPortStr
+		seen[key] = true
 		hs, ok := ns.hops[key]
 		if !ok {
 			hs = &hopState{lastTime: now, hopPos: -1}
@@ -109,12 +128,34 @@ func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 		hs.ownerID = s.ownerID
 		hs.ruleID = s.ruleID
 		hs.hopPos = s.hopPos
-		elapsed := now.Sub(hs.lastTime).Seconds()
-		if elapsed > 0.5 {
+
+		elapsed := s.elapsedSec
+		if elapsed <= 0 {
+			elapsed = now.Sub(hs.lastTime).Seconds()
+		}
+		// Need a real window. Skip the first wall-clock sample for a brand-new hop
+		// (elapsed from lastTime==now is ~0) unless agent sent ElapsedMs.
+		if elapsed > 0.05 {
+			// Cap pathological gaps (reconnect backlog) so one late frame cannot
+			// report a multi-second average that looks "stuck low" vs router.
+			if elapsed > 10 {
+				elapsed = 10
+			}
 			hs.upBps = float64(s.bytesUp) / elapsed
 			hs.downBps = float64(s.bytesDown) / elapsed
+		} else if s.bytesUp == 0 && s.bytesDown == 0 {
+			hs.upBps = 0
+			hs.downBps = 0
 		}
 		hs.lastTime = now
+	}
+	// Ports not in this non-empty batch had zero delta this tick — zero them.
+	for key, hs := range ns.hops {
+		if !seen[key] {
+			hs.upBps = 0
+			hs.downBps = 0
+			hs.lastTime = now
+		}
 	}
 }
 

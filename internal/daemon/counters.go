@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"nft/internal/forward"
 	"nft/internal/wsproto"
@@ -46,11 +47,25 @@ func (d *Daemon) counterSamples() []wsproto.CounterSample {
 		log.Printf("counters: %v", err)
 		return nil
 	}
+	now := time.Now()
 	d.countersMu.Lock()
 	defer d.countersMu.Unlock()
 	if d.lastCounters == nil {
 		d.lastCounters = map[string][2]int64{}
 	}
+	// Elapsed window for rate = agent sample interval (not panel wall clock).
+	elapsedMs := int64(0)
+	if !d.lastCounterAt.IsZero() {
+		elapsedMs = now.Sub(d.lastCounterAt).Milliseconds()
+	}
+	d.lastCounterAt = now
+	// Clamp to a sane range so a long sleep / GC pause doesn't create a spike.
+	if elapsedMs < 0 {
+		elapsedMs = 0
+	} else if elapsedMs > 30_000 {
+		elapsedMs = 30_000
+	}
+
 	seen := make(map[string]bool, len(cur))
 	var out []wsproto.CounterSample
 	for _, c := range cur {
@@ -67,7 +82,13 @@ func (d *Daemon) counterSamples() []wsproto.CounterSample {
 		}
 		d.lastCounters[key] = [2]int64{c.BytesUp, c.BytesDown}
 		if deltaUp > 0 || deltaDown > 0 {
-			out = append(out, wsproto.CounterSample{ListenPort: c.ListenPort, Proto: c.Proto, BytesUp: deltaUp, BytesDown: deltaDown})
+			out = append(out, wsproto.CounterSample{
+				ListenPort: c.ListenPort,
+				Proto:      c.Proto,
+				BytesUp:    deltaUp,
+				BytesDown:  deltaDown,
+				ElapsedMs:  elapsedMs,
+			})
 		}
 	}
 	for key := range d.lastCounters {
