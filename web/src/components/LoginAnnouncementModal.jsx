@@ -19,7 +19,7 @@ const accentBar = {
   amber: 'bg-amber-500',
   blue: 'bg-sky-500',
   green: 'bg-green-500',
-  default: 'bg-[#c4785a]',
+  default: 'bg-[var(--brand-soft)] border border-line',
 }
 
 // LoginAnnouncementModal shows the admin-designated notice once per user

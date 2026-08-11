@@ -136,22 +136,27 @@ html, body {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-from) 16%, transparent);
 }
 
-/* Button: primary — 妙妙屋 terracotta, hover darkens */
+/* Button: primary — outline like others; hover soft brand (no solid fill block) */
 .btn-primary {
-  @apply inline-flex items-center gap-1.5 h-[38px] px-4 rounded-[10px] text-[13px] font-semibold text-white disabled:opacity-60 transition-all duration-150 cursor-pointer border-0;
-  background: var(--brand-from);
-  color: #ffffff;
-  box-shadow: 0 1px 2px rgba(61, 44, 36, 0.08), 3px 4px 0 rgba(61, 44, 36, 0.06);
+  @apply inline-flex items-center gap-1.5 h-[38px] px-4 rounded-[10px] text-[13px] font-semibold disabled:opacity-60 transition-all duration-150 cursor-pointer;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+  box-shadow: 0 1px 1px rgba(61, 44, 36, 0.03);
 }
 .btn-primary:hover {
-  background: var(--brand-hover);
-  box-shadow: 0 2px 4px rgba(61, 44, 36, 0.10), 4px 6px 0 rgba(61, 44, 36, 0.08);
+  border-color: color-mix(in srgb, var(--brand-from) 50%, var(--color-line));
+  color: var(--brand-to);
+  background: var(--brand-soft);
+  box-shadow: 3px 4px 0 rgba(61, 44, 36, 0.05);
   transform: translateY(-1px);
 }
 .btn-primary:active {
-  background: var(--brand-to);
   transform: translateY(0);
-  box-shadow: 0 1px 1px rgba(61, 44, 36, 0.08);
+  background: var(--brand-soft-strong);
+  border-color: color-mix(in srgb, var(--brand-from) 55%, var(--color-line));
+  color: var(--brand-to);
+  box-shadow: none;
 }
 
 /* Button: secondary/ghost */
@@ -253,20 +258,18 @@ html, body {
   background: transparent;
 }
 .topbar-toggle:hover {
-  color: var(--color-ink);
-  background: color-mix(in srgb, var(--color-raised) 80%, transparent);
+  color: var(--brand-to);
+  background: var(--brand-soft);
 }
 .topbar-toggle.is-active {
-  color: var(--color-ink);
-  background: var(--color-raised);
-  border-color: var(--color-line);
-  font-weight: 600;
-  box-shadow: none;
+  background: var(--brand-soft);
+  color: var(--brand-to);
+  border-color: color-mix(in srgb, var(--brand-from) 35%, var(--color-line));
 }
 .dark .topbar-toggle.is-active {
-  color: #fafafa;
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.12);
+  color: #f5d0c0;
+  background: rgba(196, 120, 90, 0.18);
+  border-color: rgba(212, 137, 106, 0.35);
 }
 
 /* Toast variants */
@@ -343,7 +346,7 @@ html, body {
   font-weight: 700;
   letter-spacing: 0;
   color: #fafafa;
-  background: #c4785a;
+  background: var(--brand-soft);
   border: 1px solid #27272a;
   box-shadow: none;
 }
@@ -493,7 +496,7 @@ html, body {
   position: absolute;
   inset: 0 auto 0 0;
   width: 3px;
-  background: #c4785a;
+  background: var(--brand-soft);
   opacity: 0.9;
 }
 .stat-tile-label {
@@ -615,7 +618,7 @@ html, body {
 }
 .attention-dot.danger { background: #f43f5e; box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15); }
 .attention-dot.warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
-.attention-dot.info { background: #c4785a; box-shadow: 0 0 0 3px rgba(196, 120, 90, 0.18); }
+.attention-dot.info { background: var(--brand-from); box-shadow: 0 0 0 3px rgba(196, 120, 90, 0.18); }
 
 /* Table */
 .tbl { @apply w-full border-collapse text-sm; }
@@ -1159,12 +1162,12 @@ html, body {
   color: var(--brand-to);
 }
 .mmw-seg button.is-active {
-  background: var(--brand-from);
-  color: #fff;
+  background: var(--brand-soft);
+  color: var(--brand-to);
 }
 .mmw-seg button.is-active:hover {
-  background: var(--brand-hover);
-  color: #fff;
+  background: var(--brand-soft-strong);
+  color: var(--brand-to);
 }
 
 /* Toggle switch terracotta when on */
@@ -1210,6 +1213,34 @@ html, body {
 
 /* Soft hover for icon-btn already uses brand */
 
+
+/* Filter / tab chips — outline default, soft brand when active */
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: none;
+}
+.chip-btn:hover {
+  border-color: color-mix(in srgb, var(--brand-from) 45%, var(--color-line));
+  color: var(--brand-to);
+  background: var(--brand-soft);
+}
+.chip-btn.is-active {
+  border-color: color-mix(in srgb, var(--brand-from) 50%, var(--color-line));
+  color: var(--brand-to);
+  background: var(--brand-soft);
+}
 /* ---------- 妙妙屋 Flat: leftover emerald brand utilities → terracotta ----------
    Pages still use emerald-* as "brand accent". Remap to terracotta #c4785a.
    True online/success uses green-* (HealthDot / Badge.green / 在线 labels). */
@@ -1235,16 +1266,16 @@ html, body {
   border-color: color-mix(in srgb, #c4785a 35%, var(--color-line)) !important;
 }
 
-/* Selected / filled brand chips → terracotta */
+/* Selected / filled brand chips → soft outline (no solid color block) */
 .bg-emerald-500, .bg-emerald-600, .hover\:bg-emerald-700:hover {
-  background-color: #c4785a !important;
-  color: #ffffff !important;
-  border-color: #c4785a !important;
+  background-color: var(--brand-soft) !important;
+  color: var(--brand-to) !important;
+  border-color: color-mix(in srgb, var(--brand-from) 45%, var(--color-line)) !important;
 }
 .dark .bg-emerald-500, .dark .bg-emerald-600, .dark .hover\:bg-emerald-700:hover {
-  background-color: #d4896a !important;
-  color: #ffffff !important;
-  border-color: #d4896a !important;
+  background-color: rgba(196, 120, 90, 0.18) !important;
+  color: #f5d0c0 !important;
+  border-color: color-mix(in srgb, #d4896a 50%, var(--color-line)) !important;
 }
 .bg-emerald-50, .bg-emerald-100, .hover\:bg-emerald-50:hover, .hover\:bg-emerald-100:hover,
 .bg-emerald-500\/10, .bg-emerald-500\/12, .bg-emerald-500\/\[\.06\], .bg-emerald-500\/\[\.14\],

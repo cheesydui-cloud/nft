@@ -191,17 +191,13 @@ export default function NodeList() {
         <div className="flex items-center flex-wrap gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => switchTab(key)}
-              className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
-                tab === key ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
-              }`}>{label} {n}</button>
+              className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
           <span className="ml-3 text-xs text-ink-mut select-none">角色</span>
           {[[1, '入口'], [2, '中间层']].map(([bit, label]) => (
             <button key={bit} onClick={() => setRoleMask(m => m ^ bit)}
               title="按节点角色筛选，可叠加（同时选中表示需兼具两种角色）；不选则显示全部"
-              className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
-                (roleMask & bit) !== 0 ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
-              }`}>{label}</button>
+              className={`chip-btn ${(roleMask & bit) !== 0 ? 'is-active' : ''}`}>{label}</button>
           ))}
         </div>
         <TableScroll>
@@ -295,7 +291,7 @@ export default function NodeList() {
             <div className="fixed z-50 pointer-events-none flex flex-col items-end gap-1"
               style={{ left: pinMode.cx - 16, top: pinMode.cy - 18, transform: 'translateX(-100%)' }}>
               <div className={`rounded-md px-3.5 py-1.5 text-[12px] font-bold shadow transition-colors ${
-                pinMode.zone === 'top' ? 'bg-emerald-500 text-white' : 'bg-white/90 text-emerald-400 border border-emerald-200'}`}>↑ 置顶</div>
+                pinMode.zone === 'top' ? 'bg-[var(--brand-soft)] text-[var(--brand-to)] border border-line' : 'bg-white/90 text-ink-soft border border-line'}`}>↑ 置顶</div>
               <div className={`rounded-md px-3.5 py-1.5 text-[12px] font-bold shadow transition-colors ${
                 pinMode.zone === 'bottom' ? 'bg-amber-500 text-white' : 'bg-white/90 text-amber-400 border border-amber-200'}`}>置底 ↓</div>
             </div>

@@ -386,7 +386,7 @@ export default function NodeDetail() {
             )}
             <button onClick={remove} className="hidden md:inline-flex items-center px-3.5 py-[9px] rounded-[10px] text-[13px] font-semibold bg-surface text-[#b42318] border border-[#f1c7c2] hover:bg-[#fef3f2] transition-colors cursor-pointer">删除节点</button>
             {!isComposite && agentOutdated && (
-              <button onClick={upgrade} title={`推送升级到 ${latest_agent_version}`} className="hidden md:inline-flex items-center gap-1.5 px-4 py-[9px] rounded-[10px] text-[13px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 border-0 cursor-pointer transition-colors max-w-[280px] truncate">⤴ 推送升级到 {latest_agent_version}</button>
+              <button onClick={upgrade} title={`推送升级到 ${latest_agent_version}`} className="btn-primary hidden md:inline-flex max-w-[280px] truncate">⤴ 推送升级到 {latest_agent_version}</button>
             )}
           </div>
         </header>

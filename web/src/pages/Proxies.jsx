@@ -220,9 +220,7 @@ export default function Proxies() {
         <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['all', '全部', allProxies.length], ['direct', '直连', directProxies.length], ['relay', '中转', relayProxies.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`px-3.5 py-1 rounded-full text-xs border transition-colors ${
-                tab === key ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
-              }`}>{label} {n}</button>
+              className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
           {filtered.length > 0 && (
             <button

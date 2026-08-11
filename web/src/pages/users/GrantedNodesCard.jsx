@@ -289,11 +289,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => { setTab(key); setSelected(new Set()) }}
-              className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${
-                tab === key
-                  ? 'bg-emerald-600 text-white border-emerald-600'
-                  : 'bg-surface text-ink-soft border-line hover:border-ink-mut'
-              }`}>{label} {n}</button>
+              className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
           {selected.size > 0 && (
             <button onClick={batchRevoke} disabled={revoking} className="btn-danger-sm text-xs ml-auto">

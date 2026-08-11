@@ -509,14 +509,10 @@ function RepoPicker({ userId, existingExits = [], onClose, onDone }) {
         key={key || 'all'}
         type="button"
         onClick={() => setFolderFilter(key)}
-        className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors whitespace-nowrap ${
-          active
-            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-            : 'bg-surface text-ink-soft border-line hover:bg-raised hover:text-ink'
-        }`}
+        className={`chip-btn ${active ? 'is-active' : ''}`}
       >
         <span>{label}</span>
-        <span className={`font-mono tabular-nums ${active ? 'text-white/80' : 'text-ink-mut'}`}>{count}</span>
+        <span className={`font-mono tabular-nums ${active ? 'text-[var(--brand-to)]' : 'text-ink-mut'}`}>{count}</span>
       </button>
     )
   }
