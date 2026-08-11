@@ -16,6 +16,11 @@ const PROTO_LABEL = {
   vless: 'VLESS',
   shadowsocks: 'Shadowsocks',
   mieru: 'mieru',
+  socks5: 'SOCKS5',
+  socks: 'SOCKS5',
+  anytls: 'AnyTLS',
+  naive: 'Naive',
+  naiveproxy: 'Naive',
 }
 
 export default function ProxyServiceList() {
@@ -102,7 +107,7 @@ export default function ProxyServiceList() {
           </PanelToolbar>
           <TableScroll>
             {services.length === 0 ? (
-              <Empty title="暂无代理服务" desc="点击「发布服务」，在节点上发布 VLESS / Shadowsocks / mieru，并可同步到落地仓库。" />
+              <Empty title="暂无代理服务" desc="点击「发布服务」，在节点上发布 VLESS / SS / mieru / SOCKS5 / AnyTLS / Naive，并可同步到落地仓库。" />
             ) : filtered.length === 0 ? (
               <Empty title="无匹配服务" desc="试试别的关键词。" />
             ) : (

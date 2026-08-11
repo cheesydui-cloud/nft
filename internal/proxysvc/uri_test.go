@@ -102,3 +102,82 @@ func TestEnsureSecretsStripsVlessEncQuotes(t *testing.T) {
 		t.Fatalf("want clean encryption in uri: %s", uri)
 	}
 }
+
+func TestEnsureSecretsAndBuildSocks5(t *testing.T) {
+	raw, err := EnsureSecrets("socks5", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Socks5Config
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.ListenPort != 1080 || c.Username == "" || c.Password == "" {
+		t.Fatalf("unexpected %+v", c)
+	}
+	uri, err := BuildShareURI("socks5", "sk5", "1.2.3.4", 1080, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(uri, "socks5://") || !strings.Contains(uri, "1.2.3.4:1080") {
+		t.Fatalf("bad uri: %s", uri)
+	}
+	// no-auth
+	none, err := EnsureSecrets("socks5", json.RawMessage(`{"auth_mode":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri2, err := BuildShareURI("socks5", "open", "9.9.9.9", 1080, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(uri2, "@") {
+		t.Fatalf("no-auth should not have userinfo: %s", uri2)
+	}
+}
+
+func TestEnsureSecretsAndBuildAnyTLS(t *testing.T) {
+	raw, err := EnsureSecrets("anytls", json.RawMessage(`{"server_name":"vpn.example.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c AnyTLSConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Password == "" || c.Fingerprint != "chrome" {
+		t.Fatalf("unexpected %+v", c)
+	}
+	uri, err := BuildShareURI("anytls", "a1", "vpn.example.com", 443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(uri, "anytls://") || !strings.Contains(uri, "sni=vpn.example.com") {
+		t.Fatalf("bad uri: %s", uri)
+	}
+}
+
+func TestEnsureSecretsAndBuildNaive(t *testing.T) {
+	raw, err := EnsureSecrets("naive", json.RawMessage(`{"server_name":"n.example.com","network":"udp"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri, err := BuildShareURI("naive", "n1", "n.example.com", 443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(uri, "naive+quic://") {
+		t.Fatalf("want quic scheme: %s", uri)
+	}
+	raw2, err := EnsureSecrets("naive", json.RawMessage(`{"server_name":"n.example.com","network":"tcp"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri2, err := BuildShareURI("naive", "n2", "n.example.com", 443, raw2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(uri2, "naive+https://") {
+		t.Fatalf("want https scheme: %s", uri2)
+	}
+}

@@ -1,5 +1,5 @@
 // Package proxysvc builds share URIs and validates protocol configs for
-// panel-published proxy services (VLESS / Shadowsocks / mieru).
+// panel-published proxy services (VLESS / Shadowsocks / mieru / AnyTLS / Naive).
 package proxysvc
 
 import (
@@ -272,6 +272,152 @@ type MieruConfig struct {
 	SubVisible          bool     `json:"sub_visible"`
 }
 
+// Socks5Config is sing-box socks inbound (standard SOCKS5 server).
+// Share: socks5://user:pass@host:port#name  or socks5://host:port when auth_mode=none.
+type Socks5Config struct {
+	ListenPort int    `json:"listen_port"`
+	ShareHost  string `json:"share_host"`
+	Listen     string `json:"listen,omitempty"` // empty → "::"
+	// AuthMode: "password" (default) | "none"
+	AuthMode string `json:"auth_mode,omitempty"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// UDP enables UDP ASSOCIATE. Default true when nil.
+	UDP         *bool `json:"udp,omitempty"`
+	NTP         *bool `json:"ntp,omitempty"`
+	Sniffing    *bool `json:"sniffing,omitempty"`
+	TCPFastOpen bool  `json:"tcp_fast_open,omitempty"`
+	SubVisible  bool  `json:"sub_visible"`
+}
+
+// AnyTLSConfig is sing-box anytls inbound (TLS required; matches anytls-go + sing-box).
+// Share: anytls://password@host:port?sni=...&fp=chrome#name
+type AnyTLSConfig struct {
+	ListenPort    int    `json:"listen_port"`
+	ShareHost     string `json:"share_host"`
+	Listen        string `json:"listen,omitempty"` // empty → "::"
+	Username      string `json:"username"`         // user name field; default "default"
+	Password      string `json:"password"`
+	ServerName    string `json:"server_name"` // TLS SNI / cert domain
+	Fingerprint   string `json:"fingerprint"` // client uTLS hint for share URI
+	ALPN          string `json:"alpn,omitempty"`
+	AllowInsecure bool   `json:"allow_insecure,omitempty"`
+	CertPEM       string `json:"cert_pem,omitempty"`
+	KeyPEM        string `json:"key_pem,omitempty"`
+	CertFile      string `json:"cert_file,omitempty"`
+	KeyFile       string `json:"key_file,omitempty"`
+	// PaddingScheme optional; empty → sing-box default.
+	PaddingScheme []string `json:"padding_scheme,omitempty"`
+	NTP           *bool    `json:"ntp,omitempty"`
+	Sniffing      *bool    `json:"sniffing,omitempty"`
+	TCPFastOpen   bool     `json:"tcp_fast_open,omitempty"`
+	SubVisible    bool     `json:"sub_visible"`
+}
+
+// NaiveConfig is sing-box naive inbound (protocol-compatible; not Caddy original stack).
+// Share: naive+https://user:pass@host:port  or naive+quic when network=udp only.
+type NaiveConfig struct {
+	ListenPort int    `json:"listen_port"`
+	ShareHost  string `json:"share_host"`
+	Listen     string `json:"listen,omitempty"`
+	// Network: "tcp", "udp", or "" for both (sing-box default).
+	Network       string `json:"network,omitempty"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	ServerName    string `json:"server_name"`
+	ALPN          string `json:"alpn,omitempty"`
+	AllowInsecure bool   `json:"allow_insecure,omitempty"`
+	CertPEM       string `json:"cert_pem,omitempty"`
+	KeyPEM        string `json:"key_pem,omitempty"`
+	CertFile      string `json:"cert_file,omitempty"`
+	KeyFile       string `json:"key_file,omitempty"`
+	// QuicCongestionControl since sing-box 1.13; empty → default bbr.
+	QuicCongestionControl string `json:"quic_congestion_control,omitempty"`
+	NTP                   *bool  `json:"ntp,omitempty"`
+	Sniffing              *bool  `json:"sniffing,omitempty"`
+	TCPFastOpen           bool   `json:"tcp_fast_open,omitempty"`
+	SubVisible            bool   `json:"sub_visible"`
+}
+
+// ValidateSocks5Deploy checks fields required to publish SOCKS5.
+func ValidateSocks5Deploy(c *Socks5Config) error {
+	if c == nil {
+		return fmt.Errorf("socks5 config nil")
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
+	if mode == "" {
+		mode = "password"
+	}
+	if mode != "password" && mode != "none" {
+		return fmt.Errorf("auth_mode 须为 password 或 none")
+	}
+	if mode == "password" {
+		if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+			return fmt.Errorf("SOCKS5 用户名/密码未配置")
+		}
+	}
+	return nil
+}
+
+// ValidateAnyTLSDeploy checks fields required to publish AnyTLS.
+func ValidateAnyTLSDeploy(c *AnyTLSConfig) error {
+	if c == nil {
+		return fmt.Errorf("anytls config nil")
+	}
+	if strings.TrimSpace(c.Password) == "" {
+		return fmt.Errorf("AnyTLS 密码未配置")
+	}
+	if strings.TrimSpace(c.ServerName) == "" {
+		return fmt.Errorf("server_name（TLS 域名 / SNI）必填")
+	}
+	cert := strings.TrimSpace(c.CertPEM)
+	key := strings.TrimSpace(c.KeyPEM)
+	// Allow agent-side cert_file path for deploy without PEM in JSON (re-publish).
+	if cert == "" && strings.TrimSpace(c.CertFile) == "" {
+		return fmt.Errorf("TLS 证书未配置（请申请 ACME 或粘贴 PEM）")
+	}
+	if key == "" && strings.TrimSpace(c.KeyFile) == "" {
+		return fmt.Errorf("TLS 私钥未配置")
+	}
+	if cert != "" && key != "" {
+		if err := ValidateTLSCertPair(cert, key, c.ServerName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateNaiveDeploy checks fields required to publish Naive.
+func ValidateNaiveDeploy(c *NaiveConfig) error {
+	if c == nil {
+		return fmt.Errorf("naive config nil")
+	}
+	if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+		return fmt.Errorf("Naive 用户名/密码未配置")
+	}
+	if strings.TrimSpace(c.ServerName) == "" {
+		return fmt.Errorf("server_name（TLS 域名 / SNI）必填")
+	}
+	cert := strings.TrimSpace(c.CertPEM)
+	key := strings.TrimSpace(c.KeyPEM)
+	if cert == "" && strings.TrimSpace(c.CertFile) == "" {
+		return fmt.Errorf("TLS 证书未配置（请申请 ACME 或粘贴 PEM）")
+	}
+	if key == "" && strings.TrimSpace(c.KeyFile) == "" {
+		return fmt.Errorf("TLS 私钥未配置")
+	}
+	if cert != "" && key != "" {
+		if err := ValidateTLSCertPair(cert, key, c.ServerName); err != nil {
+			return err
+		}
+	}
+	n := strings.ToLower(strings.TrimSpace(c.Network))
+	if n != "" && n != "tcp" && n != "udp" {
+		return fmt.Errorf("network 须为 tcp / udp 或留空（双栈）")
+	}
+	return nil
+}
+
 // EnsureSecrets fills auto-generated credentials when missing.
 func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error) {
 	switch strings.ToLower(protocol) {
@@ -377,6 +523,74 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 		}
 		if c.Password == "" {
 			c.Password = randomHex(12)
+		}
+		return json.Marshal(c)
+	case "socks5", "socks":
+		var c Socks5Config
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return nil, err
+		}
+		if c.ListenPort <= 0 {
+			c.ListenPort = 1080
+		}
+		if strings.TrimSpace(c.Listen) == "" {
+			c.Listen = "::"
+		}
+		mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
+		if mode == "" {
+			mode = "password"
+		}
+		c.AuthMode = mode
+		if mode == "password" {
+			if strings.TrimSpace(c.Username) == "" {
+				c.Username = "u" + randomHex(4)
+			}
+			if strings.TrimSpace(c.Password) == "" {
+				c.Password = randomHex(12)
+			}
+		}
+		return json.Marshal(c)
+	case "anytls":
+		var c AnyTLSConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return nil, err
+		}
+		if c.ListenPort <= 0 {
+			c.ListenPort = 443
+		}
+		if strings.TrimSpace(c.Listen) == "" {
+			c.Listen = "::"
+		}
+		if strings.TrimSpace(c.Username) == "" {
+			c.Username = "default"
+		}
+		if strings.TrimSpace(c.Password) == "" {
+			c.Password = randomB64Std(16)
+		}
+		if strings.TrimSpace(c.Fingerprint) == "" {
+			c.Fingerprint = "chrome"
+		}
+		return json.Marshal(c)
+	case "naive", "naiveproxy":
+		var c NaiveConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return nil, err
+		}
+		if c.ListenPort <= 0 {
+			c.ListenPort = 443
+		}
+		if strings.TrimSpace(c.Listen) == "" {
+			c.Listen = "::"
+		}
+		if strings.TrimSpace(c.Username) == "" {
+			c.Username = "u" + randomHex(4)
+		}
+		if strings.TrimSpace(c.Password) == "" {
+			c.Password = randomHex(12)
+		}
+		n := strings.ToLower(strings.TrimSpace(c.Network))
+		if n != "" && n != "tcp" && n != "udp" {
+			c.Network = "tcp"
 		}
 		return json.Marshal(c)
 	default:
@@ -537,10 +751,92 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			RawQuery: q.Encode(),
 		}
 		return u.String(), nil
-	default:
-		return "", fmt.Errorf("unknown protocol %s", protocol)
+	case "socks5", "socks":
+			var c Socks5Config
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return "", err
+			}
+			mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
+			if mode == "" {
+				mode = "password"
+			}
+			u := url.URL{
+				Scheme:   "socks5",
+				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
+				Fragment: name,
+			}
+			if mode == "password" {
+				if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+					return "", fmt.Errorf("socks5 username/password missing")
+				}
+				u.User = url.UserPassword(c.Username, c.Password)
+			}
+			return u.String(), nil
+		case "anytls":
+			var c AnyTLSConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(c.Password) == "" {
+				return "", fmt.Errorf("anytls password missing")
+			}
+			q := url.Values{}
+			if sn := strings.TrimSpace(c.ServerName); sn != "" {
+				q.Set("sni", sn)
+			}
+			fp := strings.TrimSpace(c.Fingerprint)
+			if fp == "" {
+				fp = "chrome"
+			}
+			q.Set("fp", fp)
+			if c.AllowInsecure {
+				q.Set("insecure", "1")
+			}
+			if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
+				q.Set("alpn", alpn)
+			}
+			u := url.URL{
+				Scheme:   "anytls",
+				User:     url.User(c.Password),
+				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
+				RawQuery: q.Encode(),
+				Fragment: name,
+			}
+			return u.String(), nil
+		case "naive", "naiveproxy":
+			var c NaiveConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+				return "", fmt.Errorf("naive username/password missing")
+			}
+			// udp-only → quic; otherwise https (tcp or both).
+			scheme := "naive+https"
+			if strings.EqualFold(strings.TrimSpace(c.Network), "udp") {
+				scheme = "naive+quic"
+			}
+			u := url.URL{
+				Scheme:   scheme,
+				User:     url.UserPassword(c.Username, c.Password),
+				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
+				Fragment: name,
+			}
+			q := url.Values{}
+			if sn := strings.TrimSpace(c.ServerName); sn != "" {
+				q.Set("sni", sn)
+			}
+			if c.AllowInsecure {
+				q.Set("insecure", "1")
+			}
+			if s := q.Encode(); s != "" {
+				u.RawQuery = s
+			}
+			return u.String(), nil
+		default:
+			return "", fmt.Errorf("unknown protocol %s", protocol)
+		}
 	}
-}
 
 // ListenPortFromConfig extracts default listen port from config JSON.
 func ListenPortFromConfig(raw json.RawMessage) int {

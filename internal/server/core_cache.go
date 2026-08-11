@@ -778,6 +778,8 @@ func coreNeededForProtocol(protocol string) string {
 		return "sing-box"
 	case "mieru":
 		return "mita"
+	case "socks5", "socks", "anytls", "naive", "naiveproxy":
+		return "sing-box"
 	default:
 		return ""
 	}

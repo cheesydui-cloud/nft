@@ -609,3 +609,97 @@ func TestBuildXrayVLESSConfigSniffingAndTFO(t *testing.T) {
 		t.Fatalf("default no TFO:\n%s", s2)
 	}
 }
+
+func TestBuildSingBoxSocksConfig(t *testing.T) {
+	raw, err := json.Marshal(Socks5Config{
+		AuthMode: "password",
+		Username: "u1",
+		Password: "p1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildSingBoxSocksConfig(1080, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	for _, want := range []string{
+		`"type": "socks"`,
+		`"listen_port": 1080`,
+		`"username": "u1"`,
+		`"password": "p1"`,
+		`"action": "sniff"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q\n%s", want, s)
+		}
+	}
+}
+
+func TestBuildSingBoxAnyTLSConfig(t *testing.T) {
+	// self-signed for test
+	cert, key, _, err := GenerateSelfSignedTLS("vpn.example.com", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(AnyTLSConfig{
+		Password:   "secret",
+		Username:   "default",
+		ServerName: "vpn.example.com",
+		CertPEM:    cert,
+		KeyPEM:     key,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildSingBoxAnyTLSConfig(8443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	for _, want := range []string{
+		`"type": "anytls"`,
+		`"listen_port": 8443`,
+		`"password": "secret"`,
+		`"server_name": "vpn.example.com"`,
+		`"enabled": true`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q\n%s", want, s)
+		}
+	}
+}
+
+func TestBuildSingBoxNaiveConfig(t *testing.T) {
+	cert, key, _, err := GenerateSelfSignedTLS("n.example.com", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(NaiveConfig{
+		Username:   "alice",
+		Password:   "bob",
+		ServerName: "n.example.com",
+		Network:    "tcp",
+		CertPEM:    cert,
+		KeyPEM:     key,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildSingBoxNaiveConfig(443, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	for _, want := range []string{
+		`"type": "naive"`,
+		`"username": "alice"`,
+		`"network": "tcp"`,
+		`"server_name": "n.example.com"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q\n%s", want, s)
+		}
+	}
+}

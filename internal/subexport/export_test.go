@@ -140,3 +140,14 @@ func TestURIToClashVLESS(t *testing.T) {
 		t.Fatal(y)
 	}
 }
+
+func TestSocks5AndAnyTLSToClash(t *testing.T) {
+	s := URIToClashProxy("socks5://user:pass@1.2.3.4:1080#sk5", "")
+	if !strings.Contains(s, "type: socks5") || !strings.Contains(s, "username") {
+		t.Fatalf("socks5 clash: %s", s)
+	}
+	a := URIToClashProxy("anytls://letmein@vpn.example.com:443?sni=vpn.example.com&fp=chrome#a1", "")
+	if !strings.Contains(a, "type: anytls") || !strings.Contains(a, "password") {
+		t.Fatalf("anytls clash: %s", a)
+	}
+}

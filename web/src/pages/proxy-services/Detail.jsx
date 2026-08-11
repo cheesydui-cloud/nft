@@ -17,6 +17,11 @@ const PROTO_LABEL = {
   shadowsocks: 'Shadowsocks',
   ss: 'Shadowsocks',
   mieru: 'mieru',
+  socks5: 'SOCKS5',
+  socks: 'SOCKS5',
+  anytls: 'AnyTLS',
+  naive: 'Naive',
+  naiveproxy: 'Naive',
 }
 
 const DEPLOY_LABEL = {
@@ -130,6 +135,94 @@ const CONFIG_GROUPS = {
       ],
     },
   ],
+  socks5: [
+    {
+      title: '协议参数',
+      keys: [
+        ['auth_mode', 'auth_mode'],
+        ['username', 'username'],
+        ['password', 'password'],
+        ['password_configured', '密码'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+        ['listen', 'listen'],
+        ['udp', 'UDP'],
+      ],
+    },
+    {
+      title: '高级',
+      keys: [
+        ['ntp', 'NTP'],
+        ['sniffing', 'sniff'],
+        ['tcp_fast_open', 'tcp_fast_open'],
+      ],
+    },
+  ],
+  anytls: [
+    {
+      title: '协议参数',
+      keys: [
+        ['username', 'username'],
+        ['password', 'password'],
+        ['password_configured', '密码'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+        ['listen', 'listen'],
+      ],
+    },
+    {
+      title: 'TLS',
+      keys: [
+        ['server_name', 'server_name'],
+        ['fingerprint', 'fingerprint'],
+        ['alpn', 'alpn'],
+        ['allow_insecure', 'allow_insecure'],
+        ['cert_configured', '证书'],
+        ['key_configured', '私钥'],
+      ],
+    },
+    {
+      title: '高级',
+      keys: [
+        ['ntp', 'NTP'],
+        ['sniffing', 'sniff'],
+        ['tcp_fast_open', 'tcp_fast_open'],
+      ],
+    },
+  ],
+  naive: [
+    {
+      title: '协议参数',
+      keys: [
+        ['username', 'username'],
+        ['password', 'password'],
+        ['password_configured', '密码'],
+        ['network', 'network'],
+        ['listen_port', 'listen_port'],
+        ['share_host', 'share_host'],
+        ['listen', 'listen'],
+      ],
+    },
+    {
+      title: 'TLS',
+      keys: [
+        ['server_name', 'server_name'],
+        ['alpn', 'alpn'],
+        ['allow_insecure', 'allow_insecure'],
+        ['cert_configured', '证书'],
+        ['key_configured', '私钥'],
+        ['quic_congestion_control', 'quic_cc'],
+      ],
+    },
+    {
+      title: '高级',
+      keys: [
+        ['ntp', 'NTP'],
+        ['sniffing', 'sniff'],
+        ['tcp_fast_open', 'tcp_fast_open'],
+      ],
+    },
+  ],
 }
 
 function parseConfig(raw) {
@@ -220,7 +313,11 @@ export default function ProxyServiceDetail() {
 
   const cfg = useMemo(() => parseConfig(svc?.config_json), [svc])
   const proto = String(svc?.protocol || '').toLowerCase()
-  const protoKey = proto === 'ss' ? 'shadowsocks' : proto
+  const protoKey = ({
+    ss: 'shadowsocks',
+    socks: 'socks5',
+    naiveproxy: 'naive',
+  })[proto] || proto
   const groups = CONFIG_GROUPS[protoKey] || CONFIG_GROUPS.vless
 
   const groupedRows = useMemo(() => {

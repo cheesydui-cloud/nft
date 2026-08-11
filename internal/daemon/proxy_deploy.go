@@ -140,8 +140,35 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 
 // deploySingBoxSS writes a per-instance sing-box config and (re)starts that instance.
 	func deploySingBoxSS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
-		// Prefer panel-managed core first (same as xray). System packages under
-		// /usr/local often lag behind SS2022 / multiplex features.
+		return deploySingBoxInbound(req, "ss", func(port int, cfg json.RawMessage) ([]byte, error) {
+			return proxysvc.BuildSingBoxSSConfig(port, cfg)
+		}, false)
+	}
+
+	// deploySingBoxSocks deploys a standard SOCKS5 inbound via sing-box.
+	func deploySingBoxSocks(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+		return deploySingBoxInbound(req, "socks5", func(port int, cfg json.RawMessage) ([]byte, error) {
+			return proxysvc.BuildSingBoxSocksConfig(port, cfg)
+		}, false)
+	}
+
+	// deploySingBoxAnyTLS deploys anytls inbound (TLS cert required).
+	func deploySingBoxAnyTLS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+		return deploySingBoxInbound(req, "anytls", func(port int, cfg json.RawMessage) ([]byte, error) {
+			return proxysvc.BuildSingBoxAnyTLSConfig(port, cfg)
+		}, true)
+	}
+
+	// deploySingBoxNaive deploys naive inbound via sing-box (not Caddy original).
+	func deploySingBoxNaive(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+		return deploySingBoxInbound(req, "naive", func(port int, cfg json.RawMessage) ([]byte, error) {
+			return proxysvc.BuildSingBoxNaiveConfig(port, cfg)
+		}, true)
+	}
+
+	// deploySingBoxInbound is the shared path for all sing-box-based proxy services.
+	// needTLS: write cert_pem/key_pem to disk and inject certificate_path/key_path.
+	func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build func(port int, cfg json.RawMessage) ([]byte, error), needTLS bool) wsproto.ProxyServiceApplyAck {
 		panelBox := filepath.Join(coreStateDir(), "sing-box", "sing-box")
 		boxPath := findCoreBinary(
 			[]string{"sing-box", "singbox"},
@@ -159,47 +186,63 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 				Error:  "节点未安装 sing-box。请在面板「系统设置 → 代理核心缓存」下载 sing-box 后重新发布，或在节点本机安装 sing-box",
 			}
 		}
-	port := req.ListenPort
-	if port <= 0 {
-		port = proxysvc.ListenPortFromConfig(req.Config)
-	}
-	cfgBytes, err := proxysvc.BuildSingBoxSSConfig(port, req.Config)
-	if err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 sing-box 配置失败: " + err.Error()}
-	}
-	dir := filepath.Join(coreStateDir(), "sing-box")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "创建配置目录失败: " + err.Error()}
-	}
-	cfgPath := filepath.Join(dir, fmt.Sprintf("instance-%d.json", req.InstanceID))
-	pidPath := filepath.Join(dir, fmt.Sprintf("instance-%d.pid", req.InstanceID))
-	logPath := filepath.Join(dir, fmt.Sprintf("instance-%d.log", req.InstanceID))
-	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 sing-box 配置失败: " + err.Error()}
-	}
-	if out, err := runCmdTimeout(15*time.Second, boxPath, "check", "-c", cfgPath); err != nil {
+		port := req.ListenPort
+		if port <= 0 {
+			port = proxysvc.ListenPortFromConfig(req.Config)
+		}
+		dir := filepath.Join(coreStateDir(), "sing-box")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "创建配置目录失败: " + err.Error()}
+		}
+		cfgPath := filepath.Join(dir, fmt.Sprintf("instance-%d.json", req.InstanceID))
+		pidPath := filepath.Join(dir, fmt.Sprintf("instance-%d.pid", req.InstanceID))
+		logPath := filepath.Join(dir, fmt.Sprintf("instance-%d.log", req.InstanceID))
+		certPath := filepath.Join(dir, fmt.Sprintf("instance-%d.crt", req.InstanceID))
+		keyPath := filepath.Join(dir, fmt.Sprintf("instance-%d.key", req.InstanceID))
+
+		buildCfg := req.Config
+		if needTLS {
+			if tlsCfg, ok := materializeTLSCertsAny(req.Config, certPath, keyPath); ok {
+				buildCfg = tlsCfg
+			} else {
+				_ = os.Remove(certPath)
+				_ = os.Remove(keyPath)
+			}
+		} else {
+			_ = os.Remove(certPath)
+			_ = os.Remove(keyPath)
+		}
+
+		cfgBytes, err := build(port, buildCfg)
+		if err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
+		}
+		if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 sing-box 配置失败: " + err.Error()}
+		}
+		if out, err := runCmdTimeout(15*time.Second, boxPath, "check", "-c", cfgPath); err != nil {
+			return wsproto.ProxyServiceApplyAck{
+				OK:    false,
+				Error: fmt.Sprintf("sing-box 配置校验失败: %v (%s)", err, truncateOut(out)),
+			}
+		}
+		if err := restartDetached(pidPath, logPath, boxPath, "run", "-c", cfgPath); err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "启动 sing-box 失败: " + err.Error()}
+		}
+		if err := waitListenHint(port, 8*time.Second); err != nil {
+			tail, _ := os.ReadFile(logPath)
+			stopPIDFile(pidPath)
+			return wsproto.ProxyServiceApplyAck{
+				OK:    false,
+				Error: fmt.Sprintf("sing-box 已启动但端口 %d 未监听: %v；日志: %s", port, err, truncateOut(string(tail))),
+			}
+		}
 		return wsproto.ProxyServiceApplyAck{
-			OK:    false,
-			Error: fmt.Sprintf("sing-box 配置校验失败: %v (%s)", err, truncateOut(out)),
+			OK:          true,
+			DryRun:      false,
+			CoreVersion: probeCoreVersion(boxPath),
 		}
 	}
-	if err := restartDetached(pidPath, logPath, boxPath, "run", "-c", cfgPath); err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "启动 sing-box 失败: " + err.Error()}
-	}
-	if err := waitListenHint(port, 8*time.Second); err != nil {
-		tail, _ := os.ReadFile(logPath)
-		stopPIDFile(pidPath)
-		return wsproto.ProxyServiceApplyAck{
-			OK:    false,
-			Error: fmt.Sprintf("sing-box 已启动但端口 %d 未监听: %v；日志: %s", port, err, truncateOut(string(tail))),
-		}
-	}
-	return wsproto.ProxyServiceApplyAck{
-		OK:          true,
-		DryRun:      false,
-		CoreVersion: probeCoreVersion(boxPath),
-	}
-}
 
 func looksLikeConfigError(out string) bool {
 	s := strings.ToLower(out)
@@ -269,8 +312,20 @@ func materializeTLSCerts(raw json.RawMessage, certPath, keyPath string) (json.Ra
 	if proxysvc.NormalizeSecurity(c.Security) != "tls" {
 		return raw, false
 	}
-	certPEM := strings.TrimSpace(c.CertPEM)
-	keyPEM := strings.TrimSpace(c.KeyPEM)
+	return materializeTLSCertsAny(raw, certPath, keyPath)
+}
+
+// materializeTLSCertsAny writes cert_pem/key_pem when present (anytls/naive/vless-tls).
+// Injects cert_file/key_file paths for builders.
+func materializeTLSCertsAny(raw json.RawMessage, certPath, keyPath string) (json.RawMessage, bool) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw, false
+	}
+	certPEM, _ := m["cert_pem"].(string)
+	keyPEM, _ := m["key_pem"].(string)
+	certPEM = strings.TrimSpace(certPEM)
+	keyPEM = strings.TrimSpace(keyPEM)
 	if certPEM == "" || keyPEM == "" {
 		return raw, false
 	}
@@ -281,14 +336,8 @@ func materializeTLSCerts(raw json.RawMessage, certPath, keyPath string) (json.Ra
 		_ = os.Remove(certPath)
 		return raw, false
 	}
-	// Inject absolute paths for BuildXrayVLESSConfig without relying on PEM-in-xray-json.
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		m = map[string]any{}
-	}
 	m["cert_file"] = certPath
 	m["key_file"] = keyPath
-	m["security"] = "tls"
 	out, err := json.Marshal(m)
 	if err != nil {
 		return raw, false

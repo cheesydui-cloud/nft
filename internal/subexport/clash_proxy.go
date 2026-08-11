@@ -21,16 +21,109 @@ func URIToClashProxy(uri, forceName string) string {
 		return ""
 	}
 	switch strings.ToLower(scheme) {
-	case "ss", "shadowsocks":
-		return ssToClash(rest, forceName)
-	case "vless":
-		return vlessToClash(rest, forceName)
-	case "mieru", "mierus":
-		return mieruToClash(rest, forceName)
-	default:
-		return ""
+		case "ss", "shadowsocks":
+			return ssToClash(rest, forceName)
+		case "vless":
+			return vlessToClash(rest, forceName)
+		case "mieru", "mierus":
+			return mieruToClash(rest, forceName)
+		case "socks5", "socks":
+			return socks5ToClash(rest, forceName)
+		case "anytls":
+			return anytlsToClash(rest, forceName)
+		// naive+https / naive+quic — Mihomo may not support; skip rather than emit broken YAML.
+		default:
+			return ""
+		}
 	}
-}
+
+	// socks5ToClash maps socks5://user:pass@host:port#name
+	func socks5ToClash(rest, forceName string) string {
+		name := forceName
+		if i := strings.Index(rest, "#"); i >= 0 {
+			if name == "" {
+				name, _ = url.QueryUnescape(rest[i+1:])
+			}
+			rest = rest[:i]
+		}
+		if i := strings.Index(rest, "?"); i >= 0 {
+			rest = rest[:i]
+		}
+		var username, password string
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			userinfo := rest[:at]
+			if colon := strings.Index(userinfo, ":"); colon >= 0 {
+				username, _ = url.QueryUnescape(userinfo[:colon])
+				password, _ = url.QueryUnescape(userinfo[colon+1:])
+			} else {
+				username, _ = url.QueryUnescape(userinfo)
+			}
+			rest = rest[at+1:]
+		}
+		host, port, err := splitHostPort(rest)
+		if err != nil || host == "" || port <= 0 {
+			return ""
+		}
+		if name == "" {
+			name = host
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "- name: %s\n", strconv.Quote(name))
+		b.WriteString("  type: socks5\n")
+		fmt.Fprintf(&b, "  server: %s\n", host)
+		fmt.Fprintf(&b, "  port: %d\n", port)
+		if username != "" {
+			fmt.Fprintf(&b, "  username: %s\n", strconv.Quote(username))
+			fmt.Fprintf(&b, "  password: %s\n", strconv.Quote(password))
+		}
+		b.WriteString("  udp: true")
+		return b.String()
+	}
+
+	// anytlsToClash maps anytls://password@host:port?sni=&fp=#name → Mihomo type: anytls
+	func anytlsToClash(rest, forceName string) string {
+		name := forceName
+		if i := strings.Index(rest, "#"); i >= 0 {
+			if name == "" {
+				name, _ = url.QueryUnescape(rest[i+1:])
+			}
+			rest = rest[:i]
+		}
+		params := url.Values{}
+		if i := strings.Index(rest, "?"); i >= 0 {
+			params, _ = url.ParseQuery(rest[i+1:])
+			rest = rest[:i]
+		}
+		var password string
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			password, _ = url.QueryUnescape(rest[:at])
+			rest = rest[at+1:]
+		}
+		host, port, err := splitHostPort(rest)
+		if err != nil || host == "" || port <= 0 || password == "" {
+			return ""
+		}
+		if name == "" {
+			name = host
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "- name: %s\n", strconv.Quote(name))
+		b.WriteString("  type: anytls\n")
+		fmt.Fprintf(&b, "  server: %s\n", host)
+		fmt.Fprintf(&b, "  port: %d\n", port)
+		fmt.Fprintf(&b, "  password: %s\n", strconv.Quote(password))
+		if sni := params.Get("sni"); sni != "" {
+			fmt.Fprintf(&b, "  sni: %s\n", strconv.Quote(sni))
+		}
+		if fp := params.Get("fp"); fp != "" {
+			fmt.Fprintf(&b, "  client-fingerprint: %s\n", strconv.Quote(fp))
+		}
+		if params.Get("insecure") == "1" {
+			b.WriteString("  skip-cert-verify: true\n")
+		}
+		b.WriteString("  udp: true")
+		return b.String()
+	}
 
 // mieruToClash maps mierus://user:pass@host?port=P&protocol=TCP to Mihomo type: mieru.
 func mieruToClash(rest, forceName string) string {

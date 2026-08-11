@@ -149,23 +149,29 @@ func xraySupportsVlessEnc(path string) bool {
 }
 
 // handleProxyServiceApply deploys one proxy-service instance on this host.
-// mieru → mita; vless → xray; shadowsocks → sing-box. Missing core → error (not silent ready).
-func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
-	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
-	switch proto {
-	case "mieru":
-		return deployMieru(req)
-	case "vless":
-		return deployXrayVLESS(req)
-	case "shadowsocks", "ss":
-		return deploySingBoxSS(req)
-	default:
-		return wsproto.ProxyServiceApplyAck{
-			OK:    false,
-			Error: "不支持的协议: " + req.Protocol,
+	// mieru → mita; vless → xray; ss/socks5/anytls/naive → sing-box.
+	func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+		proto := strings.ToLower(strings.TrimSpace(req.Protocol))
+		switch proto {
+		case "mieru":
+			return deployMieru(req)
+		case "vless":
+			return deployXrayVLESS(req)
+		case "shadowsocks", "ss":
+			return deploySingBoxSS(req)
+		case "socks5", "socks":
+			return deploySingBoxSocks(req)
+		case "anytls":
+			return deploySingBoxAnyTLS(req)
+		case "naive", "naiveproxy":
+			return deploySingBoxNaive(req)
+		default:
+			return wsproto.ProxyServiceApplyAck{
+				OK:    false,
+				Error: "不支持的协议: " + req.Protocol,
+			}
 		}
 	}
-}
 
 // deployMieru writes a mita server config fragment and applies it via the mita CLI.
 // Requires the mita server binary (not the mieru client) plus a running `mita run`

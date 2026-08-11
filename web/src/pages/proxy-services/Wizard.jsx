@@ -16,10 +16,13 @@ import {
 const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完成']
 
 const TEMPLATES = [
-  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
-  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
-  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，TCP/UDP 双传输' },
-]
+	  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
+	  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
+	  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，TCP/UDP 双传输' },
+	  { protocol: 'socks5', core: 'sing-box', title: 'SOCKS5', desc: '标准 SOCKS5 服务端 · sing-box · 可给规则/客户端当上游' },
+	  { protocol: 'anytls', core: 'sing-box', title: 'AnyTLS', desc: 'TLS 隧道 · sing-box ≥1.12（协议原版推荐实现）' },
+	  { protocol: 'naive', core: 'sing-box', title: 'NaiveProxy', desc: 'HTTP/2·3 代理 · sing-box 协议兼容（非 Caddy 原版前端）' },
+	]
 
 // Aligned with yyds / production sing-box SS: SS2022 first, legacy AEAD for old clients.
 const SS_METHODS = [
@@ -74,14 +77,74 @@ const emptySS = () => ({
 })
 
 const emptyMieru = () => ({
-  listen_port: 443,
-  share_host: '',
-  transports: ['TCP', 'UDP'],
-  traffic_pattern: '',
-  user_hint_is_mandatory: false,
-  username: '',
-  password: '',
-})
+	  listen_port: 443,
+	  share_host: '',
+	  transports: ['TCP', 'UDP'],
+	  traffic_pattern: '',
+	  user_hint_is_mandatory: false,
+	  username: '',
+	  password: '',
+	})
+
+	const emptySocks5 = () => ({
+	  listen_port: 1080,
+	  share_host: '',
+	  listen: '::',
+	  auth_mode: 'password',
+	  username: '',
+	  password: '',
+	  udp: true,
+	  ntp: true,
+	  sniffing: true,
+	  tcp_fast_open: false,
+	})
+
+	const emptyAnyTLS = () => ({
+	  listen_port: 443,
+	  share_host: '',
+	  listen: '::',
+	  username: 'default',
+	  password: '',
+	  server_name: '',
+	  fingerprint: 'chrome',
+	  alpn: '',
+	  allow_insecure: false,
+	  cert_pem: '',
+	  key_pem: '',
+	  ntp: true,
+	  sniffing: true,
+	  tcp_fast_open: false,
+	})
+
+	const emptyNaive = () => ({
+	  listen_port: 443,
+	  share_host: '',
+	  listen: '::',
+	  network: 'tcp',
+	  username: '',
+	  password: '',
+	  server_name: '',
+	  alpn: '',
+	  allow_insecure: false,
+	  cert_pem: '',
+	  key_pem: '',
+	  quic_congestion_control: '',
+	  ntp: true,
+	  sniffing: true,
+	  tcp_fast_open: false,
+	})
+
+	function configForProtocol(p) {
+	  switch (p) {
+	    case 'vless': return emptyVless()
+	    case 'shadowsocks': return emptySS()
+	    case 'mieru': return emptyMieru()
+	    case 'socks5': return emptySocks5()
+	    case 'anytls': return emptyAnyTLS()
+	    case 'naive': return emptyNaive()
+	    default: return emptyVless()
+	  }
+	}
 
 
 /** Lightweight form section for wizard protocol config */
@@ -172,13 +235,18 @@ export default function ProxyServiceWizard() {
   }, [editId])
 
   const pickTemplate = (t) => {
-    setProtocol(t.protocol)
-    setCore(t.core)
-    if (t.protocol === 'vless') setConfig(emptyVless())
-    else if (t.protocol === 'shadowsocks') setConfig(emptySS())
-    else setConfig(emptyMieru())
-    setStep(1)
-  }
+	    setProtocol(t.protocol)
+	    setCore(t.core)
+	    setConfig(configForProtocol(t.protocol))
+	    setStep(1)
+	  }
+
+	  const readPemFile = (file, key) => {
+	    if (!file) return
+	    const reader = new FileReader()
+	    reader.onload = () => setCfg(key, String(reader.result || ''))
+	    reader.readAsText(file)
+	  }
 
   const setCfg = (key, val) => setConfig(c => ({ ...c, [key]: val }))
 
@@ -549,9 +617,7 @@ export default function ProxyServiceWizard() {
                   <Select value={protocol} onChange={v => {
                     setProtocol(v)
                     setCore(TEMPLATES.find(t => t.protocol === v)?.core || core)
-                    if (v === 'vless') setConfig(emptyVless())
-                    else if (v === 'shadowsocks') setConfig(emptySS())
-                    else setConfig(emptyMieru())
+                    setConfig(configForProtocol(v))
                   }} options={TEMPLATES.map(t => ({ value: t.protocol, label: t.title }))} />
                 </div>
                 <div>
@@ -1076,6 +1142,278 @@ export default function ProxyServiceWizard() {
                 </div>
               )}
 
+              {protocol === 'socks5' && (
+                <div className="border-t border-line pt-4 space-y-3">
+                  <FormSection title="认证" hint="默认用户名密码；无认证仅建议内网使用。">
+                    <div>
+                      <label className="fl block mb-1">认证方式</label>
+                      <Select
+                        value={config.auth_mode || 'password'}
+                        onChange={v => setCfg('auth_mode', v)}
+                        options={[
+                          { value: 'password', label: '用户名密码（推荐）' },
+                          { value: 'none', label: '无认证（仅内网）' },
+                        ]}
+                      />
+                      {(config.auth_mode || 'password') === 'none' && (
+                        <p className="text-[12px] text-amber-700 dark:text-amber-300 mt-1.5 m-0">
+                          无认证 SOCKS5 勿暴露公网；任何能连上的人都能代理出站。
+                        </p>
+                      )}
+                    </div>
+                    {(config.auth_mode || 'password') === 'password' && (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="fl block mb-1">用户名</label>
+                          <input className="input-field font-mono" value={config.username || ''}
+                            onChange={e => setCfg('username', e.target.value)}
+                            placeholder="留空则发布时自动生成" />
+                        </div>
+                        <div>
+                          <label className="fl block mb-1">密码</label>
+                          <div className="flex gap-2">
+                            <input className="input-field font-mono text-xs flex-1" value={config.password || ''}
+                              onChange={e => setCfg('password', e.target.value)}
+                              placeholder={config.password_configured ? '已配置 · 留空保留' : '留空则自动生成'} />
+                            <button type="button" className="btn-secondary text-sm shrink-0"
+                              onClick={() => {
+                                const u = config.username || (`u${Math.random().toString(16).slice(2, 6)}`)
+                                const p = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+                                  .map(b => b.toString(16).padStart(2, '0')).join('')
+                                setConfig(c => ({ ...c, username: u, password: p }))
+                                toast('已生成账密')
+                              }}>生成</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="fl block mb-1">分享主机 share_host（可选）</label>
+                      <input className="input-field font-mono" value={config.share_host || ''}
+                        onChange={e => setCfg('share_host', e.target.value)}
+                        placeholder="留空则用节点 IP / 中转地址" />
+                    </div>
+                  </FormSection>
+                  <FormSection title="监听" hint="双栈 :: 推荐。">
+                    <Select value={config.listen || '::'} onChange={v => setCfg('listen', v)}
+                      options={[
+                        { value: '::', label: '::（双栈，推荐）' },
+                        { value: '0.0.0.0', label: '0.0.0.0（仅 IPv4）' },
+                      ]} />
+                  </FormSection>
+                  <FormSection title="高级" collapsible
+                    defaultOpen={config.udp === false || config.sniffing === false || !!config.tcp_fast_open || config.ntp === false}>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.udp !== false} onChange={e => setCfg('udp', e.target.checked)} />
+                      <span>UDP ASSOCIATE</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.ntp !== false} onChange={e => setCfg('ntp', e.target.checked)} />
+                      <span>NTP 校时</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.sniffing !== false} onChange={e => setCfg('sniffing', e.target.checked)} />
+                      <span className="font-mono">sniff</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.tcp_fast_open} onChange={e => setCfg('tcp_fast_open', e.target.checked)} />
+                      <span className="font-mono">tcp_fast_open</span>
+                    </label>
+                  </FormSection>
+                </div>
+              )}
+
+              {protocol === 'anytls' && (
+                <div className="border-t border-line pt-4 space-y-3">
+                  <FormSection title="访问与密钥" hint="AnyTLS 密码认证；用户名仅写入 sing-box users.name。">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="fl block mb-1">用户名（可选）</label>
+                        <input className="input-field font-mono" value={config.username || 'default'}
+                          onChange={e => setCfg('username', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">密码</label>
+                        <div className="flex gap-2">
+                          <input className="input-field font-mono text-xs flex-1" value={config.password || ''}
+                            onChange={e => setCfg('password', e.target.value)}
+                            placeholder={config.password_configured ? '已配置 · 留空保留' : '留空则自动生成'} />
+                          <button type="button" className="btn-secondary text-sm shrink-0"
+                            onClick={() => {
+                              const bytes = crypto.getRandomValues(new Uint8Array(16))
+                              const p = btoa(String.fromCharCode(...bytes))
+                              setCfg('password', p)
+                              toast('已生成密码')
+                            }}>生成</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">分享主机 share_host（可选）</label>
+                      <input className="input-field font-mono" value={config.share_host || ''}
+                        onChange={e => setCfg('share_host', e.target.value)}
+                        placeholder="域名或 IP；建议填证书域名" />
+                    </div>
+                  </FormSection>
+                  <FormSection title="域名与证书" hint="TLS 必填；证书 CN/SAN 须覆盖 server_name。">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="fl block mb-1">域名（SNI）*</label>
+                        <input className="input-field font-mono" value={config.server_name || ''}
+                          onChange={e => setCfg('server_name', e.target.value)} placeholder="vpn.example.com" />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">客户端指纹</label>
+                        <Select value={config.fingerprint || 'chrome'} onChange={v => setCfg('fingerprint', v)}
+                          options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
+                      </div>
+                    </div>
+                    {(config.cert_configured || config.key_configured) && !(config.cert_pem || '').trim() && (
+                      <p className="text-[12px] text-ink-mut m-0">证书已配置（脱敏，留空保存保留原值）</p>
+                    )}
+                    <div>
+                      <label className="fl block mb-1">证书 PEM</label>
+                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
+                        onChange={e => setCfg('cert_pem', e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+                      <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
+                        onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">私钥 PEM</label>
+                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
+                        onChange={e => setCfg('key_pem', e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" />
+                      <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
+                        onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">ALPN（可选）</label>
+                      <input className="input-field font-mono" value={config.alpn || ''}
+                        onChange={e => setCfg('alpn', e.target.value)} placeholder="h2,http/1.1" />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.allow_insecure}
+                        onChange={e => setCfg('allow_insecure', e.target.checked)} />
+                      <span>客户端 allow insecure（分享 URI insecure=1）</span>
+                    </label>
+                  </FormSection>
+                  <FormSection title="监听与高级" collapsible
+                    defaultOpen={config.sniffing === false || !!config.tcp_fast_open || config.ntp === false}>
+                    <Select value={config.listen || '::'} onChange={v => setCfg('listen', v)}
+                      options={[
+                        { value: '::', label: '::（双栈）' },
+                        { value: '0.0.0.0', label: '0.0.0.0（仅 IPv4）' },
+                      ]} />
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.ntp !== false} onChange={e => setCfg('ntp', e.target.checked)} />
+                      <span>NTP</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.sniffing !== false} onChange={e => setCfg('sniffing', e.target.checked)} />
+                      <span className="font-mono">sniff</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.tcp_fast_open} onChange={e => setCfg('tcp_fast_open', e.target.checked)} />
+                      <span className="font-mono">tcp_fast_open</span>
+                    </label>
+                  </FormSection>
+                </div>
+              )}
+
+              {protocol === 'naive' && (
+                <div className="border-t border-line pt-4 space-y-3">
+                  <div className="rounded-[12px] border border-amber-200 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 text-[12.5px] text-amber-900 dark:text-amber-100 leading-relaxed">
+                    本面板使用 <strong>sing-box naive inbound</strong>（协议兼容）。原版服务端为 Caddy + forwardproxy / HAProxy 前端，一期不部署 Caddy 栈。
+                  </div>
+                  <FormSection title="访问与密钥" hint="Basic Auth 用户名密码。">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="fl block mb-1">用户名</label>
+                        <input className="input-field font-mono" value={config.username || ''}
+                          onChange={e => setCfg('username', e.target.value)}
+                          placeholder="留空则自动生成" />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">密码</label>
+                        <div className="flex gap-2">
+                          <input className="input-field font-mono text-xs flex-1" value={config.password || ''}
+                            onChange={e => setCfg('password', e.target.value)}
+                            placeholder={config.password_configured ? '已配置 · 留空保留' : '留空则自动生成'} />
+                          <button type="button" className="btn-secondary text-sm shrink-0"
+                            onClick={() => {
+                              const u = config.username || (`u${Math.random().toString(16).slice(2, 6)}`)
+                              const p = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+                                .map(b => b.toString(16).padStart(2, '0')).join('')
+                              setConfig(c => ({ ...c, username: u, password: p }))
+                              toast('已生成账密')
+                            }}>生成</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">分享主机 share_host（可选）</label>
+                      <input className="input-field font-mono" value={config.share_host || ''}
+                        onChange={e => setCfg('share_host', e.target.value)} />
+                    </div>
+                  </FormSection>
+                  <FormSection title="域名与证书" hint="TLS 必填。">
+                    <div>
+                      <label className="fl block mb-1">域名（SNI）*</label>
+                      <input className="input-field font-mono" value={config.server_name || ''}
+                        onChange={e => setCfg('server_name', e.target.value)} placeholder="vpn.example.com" />
+                    </div>
+                    {(config.cert_configured || config.key_configured) && !(config.cert_pem || '').trim() && (
+                      <p className="text-[12px] text-ink-mut m-0">证书已配置（脱敏，留空保存保留原值）</p>
+                    )}
+                    <div>
+                      <label className="fl block mb-1">证书 PEM</label>
+                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
+                        onChange={e => setCfg('cert_pem', e.target.value)} />
+                      <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
+                        onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">私钥 PEM</label>
+                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
+                        onChange={e => setCfg('key_pem', e.target.value)} />
+                      <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
+                        onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                    </div>
+                  </FormSection>
+                  <FormSection title="传输" hint="tcp ≈ https 客户端；udp ≈ quic；留空双栈。">
+                    <Select
+                      value={config.network || 'tcp'}
+                      onChange={v => setCfg('network', v)}
+                      options={[
+                        { value: 'tcp', label: 'tcp（HTTPS / HTTP2）' },
+                        { value: 'udp', label: 'udp（QUIC / HTTP3）' },
+                        { value: '', label: '双栈（tcp+udp）' },
+                      ]}
+                    />
+                  </FormSection>
+                  <FormSection title="高级" collapsible defaultOpen={false}>
+                    <div>
+                      <label className="fl block mb-1">quic_congestion_control（可选）</label>
+                      <input className="input-field font-mono" value={config.quic_congestion_control || ''}
+                        onChange={e => setCfg('quic_congestion_control', e.target.value)}
+                        placeholder="bbr（默认）" />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!config.allow_insecure}
+                        onChange={e => setCfg('allow_insecure', e.target.checked)} />
+                      <span>客户端 insecure</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.ntp !== false} onChange={e => setCfg('ntp', e.target.checked)} />
+                      <span>NTP</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={config.sniffing !== false} onChange={e => setCfg('sniffing', e.target.checked)} />
+                      <span className="font-mono">sniff</span>
+                    </label>
+                  </FormSection>
+                </div>
+              )}
+
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={subVisible} onChange={e => setSubVisible(e.target.checked)} />
                 订阅可见性
@@ -1135,7 +1473,7 @@ export default function ProxyServiceWizard() {
                 <li>节点数：{selected.size}</li>
               </ul>
               <p className="text-[12.5px] text-ink-mut mb-4">
-                发布后 agent 会在节点启动核心：VLESS 需 xray、Shadowsocks 需 sing-box、mieru 需 mita（服务端）。请放行监听端口；VLESS 务必填写 server-name（REALITY 回源）。
+                发布后 agent 会在节点启动核心：VLESS→xray；SS / SOCKS5 / AnyTLS / Naive→sing-box；mieru→mita。请放行监听端口。AnyTLS/Naive 需证书与域名；Naive 为 sing-box 协议兼容（非 Caddy 原版）。
               </p>
             </div>
           )}

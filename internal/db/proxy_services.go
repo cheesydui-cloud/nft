@@ -13,6 +13,9 @@ const (
 	ProxyProtoVLESS       = "vless"
 	ProxyProtoShadowsocks = "shadowsocks"
 	ProxyProtoMieru       = "mieru"
+	ProxyProtoSocks5      = "socks5"
+	ProxyProtoAnyTLS      = "anytls"
+	ProxyProtoNaive       = "naive"
 	ProxyCoreXray         = "xray"
 	ProxyCoreSingBox      = "sing-box"
 	ProxyCoreMieru        = "mieru"
@@ -108,6 +111,12 @@ func DefaultCoreForProtocol(protocol string) string {
 		return ProxyCoreSingBox
 	case ProxyProtoMieru:
 		return ProxyCoreMieru
+	case ProxyProtoSocks5, "socks":
+		return ProxyCoreSingBox
+	case ProxyProtoAnyTLS:
+		return ProxyCoreSingBox
+	case ProxyProtoNaive, "naiveproxy":
+		return ProxyCoreSingBox
 	default:
 		return ""
 	}
@@ -122,12 +131,18 @@ func NormalizeProxyProtocol(p string) string {
 		return ProxyProtoVLESS
 	case "mieru":
 		return ProxyProtoMieru
+	case "socks", "socks5":
+		return ProxyProtoSocks5
+	case "anytls":
+		return ProxyProtoAnyTLS
+	case "naive", "naiveproxy":
+		return ProxyProtoNaive
 	default:
 		return strings.ToLower(strings.TrimSpace(p))
 	}
 }
 
-// ValidateProxyProtocolCore checks the allowed protocol×core matrix for phase 1.
+// ValidateProxyProtocolCore checks the allowed protocol×core matrix.
 func ValidateProxyProtocolCore(protocol, core string) error {
 	p := NormalizeProxyProtocol(protocol)
 	c := strings.ToLower(strings.TrimSpace(core))
@@ -146,6 +161,18 @@ func ValidateProxyProtocolCore(protocol, core string) error {
 			if c != ProxyCoreMieru {
 				return fmt.Errorf("mieru 仅支持核心 mbox/mieru")
 			}
+		}
+	case ProxyProtoSocks5:
+		if c != ProxyCoreSingBox {
+			return fmt.Errorf("SOCKS5 仅支持核心 sing-box")
+		}
+	case ProxyProtoAnyTLS:
+		if c != ProxyCoreSingBox {
+			return fmt.Errorf("AnyTLS 仅支持核心 sing-box（≥1.12）")
+		}
+	case ProxyProtoNaive:
+		if c != ProxyCoreSingBox {
+			return fmt.Errorf("Naive 仅支持核心 sing-box（协议兼容实现，非 Caddy 原版）")
 		}
 	default:
 		return fmt.Errorf("不支持的协议: %s", protocol)

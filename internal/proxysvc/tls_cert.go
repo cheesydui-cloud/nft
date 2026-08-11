@@ -336,9 +336,83 @@ func RedactProxyConfigJSON(protocol string, raw json.RawMessage) json.RawMessage
 		return redactSSPassword(raw)
 	case "mieru":
 		return redactMieruPassword(raw)
+	case "socks5", "socks":
+		return redactUserPass(raw)
+	case "anytls":
+		return redactAnyTLS(raw)
+	case "naive", "naiveproxy":
+		return redactNaive(raw)
 	default:
 		return raw
 	}
+}
+
+func redactUserPass(raw json.RawMessage) json.RawMessage {
+	var m map[string]any
+	if err := json.Unmarshal(nonzeroJSON(raw), &m); err != nil {
+		return raw
+	}
+	if p, ok := m["password"].(string); ok && p != "" {
+		m["password_configured"] = true
+		m["password"] = ""
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func redactTLSPEMs(m map[string]any) {
+	hasCert, hasKey := false, false
+	if s, ok := m["cert_pem"].(string); ok && strings.TrimSpace(s) != "" {
+		hasCert = true
+		m["cert_pem"] = ""
+	}
+	if s, ok := m["key_pem"].(string); ok && strings.TrimSpace(s) != "" {
+		hasKey = true
+		m["key_pem"] = ""
+	}
+	if hasCert {
+		m["cert_configured"] = true
+	}
+	if hasKey {
+		m["key_configured"] = true
+	}
+}
+
+func redactAnyTLS(raw json.RawMessage) json.RawMessage {
+	var m map[string]any
+	if err := json.Unmarshal(nonzeroJSON(raw), &m); err != nil {
+		return raw
+	}
+	if p, ok := m["password"].(string); ok && p != "" {
+		m["password_configured"] = true
+		m["password"] = ""
+	}
+	redactTLSPEMs(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func redactNaive(raw json.RawMessage) json.RawMessage {
+	var m map[string]any
+	if err := json.Unmarshal(nonzeroJSON(raw), &m); err != nil {
+		return raw
+	}
+	if p, ok := m["password"].(string); ok && p != "" {
+		m["password_configured"] = true
+		m["password"] = ""
+	}
+	redactTLSPEMs(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func redactSSPassword(raw json.RawMessage) json.RawMessage {

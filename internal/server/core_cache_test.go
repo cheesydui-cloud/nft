@@ -20,13 +20,22 @@ func TestSanitizeCoreTypeAndArch(t *testing.T) {
 	if sanitizeArch("aarch64") != "arm64" {
 		t.Fatal(sanitizeArch("aarch64"))
 	}
-	if coreNeededForProtocol("vless") != "xray" {
-		t.Fatal("vless")
+		if coreNeededForProtocol("vless") != "xray" {
+			t.Fatal("vless")
+		}
+		if coreNeededForProtocol("mieru") != "mita" {
+			t.Fatal("mieru")
+		}
+		if coreNeededForProtocol("socks5") != "sing-box" {
+			t.Fatal("socks5")
+		}
+		if coreNeededForProtocol("anytls") != "sing-box" {
+			t.Fatal("anytls")
+		}
+		if coreNeededForProtocol("naive") != "sing-box" {
+			t.Fatal("naive")
+		}
 	}
-	if coreNeededForProtocol("mieru") != "mita" {
-		t.Fatal("mieru")
-	}
-}
 
 func TestExtractFromZip(t *testing.T) {
 	buf := &bytes.Buffer{}

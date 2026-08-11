@@ -258,25 +258,11 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-			// Fail fast on illegal security/transport or missing/invalid TLS certs before agents.
-				if strings.EqualFold(svc.Protocol, "vless") {
-					var vc proxysvc.VLESSConfig
-					if err := json.Unmarshal(cfg, &vc); err == nil {
-						if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
-							jsonErr(w, http.StatusBadRequest, err.Error())
-							return
-						}
+				// Fail fast on illegal config / missing TLS certs before agents.
+					if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
+						jsonErr(w, http.StatusBadRequest, err.Error())
+						return
 					}
-				}
-				if strings.EqualFold(svc.Protocol, "shadowsocks") || strings.EqualFold(svc.Protocol, "ss") {
-					var sc proxysvc.SSConfig
-					if err := json.Unmarshal(cfg, &sc); err == nil {
-						if err := proxysvc.ValidateSSDeploy(&sc); err != nil {
-							jsonErr(w, http.StatusBadRequest, err.Error())
-							return
-						}
-					}
-				}
 		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
 		svc.ConfigJSON = cfg
 
@@ -866,53 +852,112 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 	}
 }
 
-// validateProxyConfigForSave runs deploy-level checks when enough material is present.
-// TLS with empty PEM is allowed on draft save only if not tls — for tls we require valid PEM when provided.
-func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
-	if !strings.EqualFold(protocol, "vless") {
-		return nil
-	}
-	var vc proxysvc.VLESSConfig
-	if err := json.Unmarshal(cfg, &vc); err != nil {
-		return nil
-	}
-	sec := proxysvc.NormalizeSecurity(vc.Security)
-	// Soft: only hard-validate TLS when PEM is present (or always for tls so bad paste fails early).
-	if sec == "tls" {
-		if strings.TrimSpace(vc.CertPEM) != "" || strings.TrimSpace(vc.KeyPEM) != "" {
-			return proxysvc.ValidateTLSCertPair(vc.CertPEM, vc.KeyPEM, vc.ServerName)
-		}
-	}
-	// Always check network matrix when security known.
-	if !proxysvc.NetworkAllowed(sec, vc.Network) {
-		return fmt.Errorf("安全层 %s 不支持传输 %q", sec, proxysvc.NormalizeNetwork(vc.Network))
-	}
-	return nil
-}
-
-// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
-	// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
-	// unrelated fields does not wipe cert_pem / private_key / passwords.
-	func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
-		if len(incoming) == 0 {
-			return stored
-		}
-		proto := strings.ToLower(strings.TrimSpace(protocol))
-		var keepKeys []string
-		switch proto {
+// validateProxyConfigForSave runs soft checks on draft/patch save.
+	func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
+		p := strings.ToLower(strings.TrimSpace(protocol))
+		switch p {
 		case "vless":
-			keepKeys = []string{
-				"private_key", "public_key", "short_id",
-				"cert_pem", "key_pem",
-				"encryption", "decryption", "uuid",
+			var vc proxysvc.VLESSConfig
+			if err := json.Unmarshal(cfg, &vc); err != nil {
+				return nil
 			}
-		case "shadowsocks", "ss":
-			keepKeys = []string{"password"}
-		case "mieru":
-			keepKeys = []string{"password", "username"}
-		default:
-			return incoming
+			sec := proxysvc.NormalizeSecurity(vc.Security)
+			if sec == "tls" {
+				if strings.TrimSpace(vc.CertPEM) != "" || strings.TrimSpace(vc.KeyPEM) != "" {
+					return proxysvc.ValidateTLSCertPair(vc.CertPEM, vc.KeyPEM, vc.ServerName)
+				}
+			}
+			if !proxysvc.NetworkAllowed(sec, vc.Network) {
+				return fmt.Errorf("安全层 %s 不支持传输 %q", sec, proxysvc.NormalizeNetwork(vc.Network))
+			}
+		case "anytls":
+			var c proxysvc.AnyTLSConfig
+			if err := json.Unmarshal(cfg, &c); err != nil {
+				return nil
+			}
+			if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
+				return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
+			}
+		case "naive", "naiveproxy":
+			var c proxysvc.NaiveConfig
+			if err := json.Unmarshal(cfg, &c); err != nil {
+				return nil
+			}
+			if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
+				return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
+			}
 		}
+		return nil
+	}
+
+	// validateProxyConfigForPublish hard-validates before agent apply.
+	func validateProxyConfigForPublish(protocol string, cfg json.RawMessage) error {
+		p := strings.ToLower(strings.TrimSpace(protocol))
+		switch p {
+		case "vless":
+			var vc proxysvc.VLESSConfig
+			if err := json.Unmarshal(cfg, &vc); err != nil {
+				return err
+			}
+			return proxysvc.ValidateVLESSDeploy(&vc)
+		case "shadowsocks", "ss":
+			var sc proxysvc.SSConfig
+			if err := json.Unmarshal(cfg, &sc); err != nil {
+				return err
+			}
+			return proxysvc.ValidateSSDeploy(&sc)
+		case "socks5", "socks":
+			var c proxysvc.Socks5Config
+			if err := json.Unmarshal(cfg, &c); err != nil {
+				return err
+			}
+			return proxysvc.ValidateSocks5Deploy(&c)
+		case "anytls":
+			var c proxysvc.AnyTLSConfig
+			if err := json.Unmarshal(cfg, &c); err != nil {
+				return err
+			}
+			return proxysvc.ValidateAnyTLSDeploy(&c)
+		case "naive", "naiveproxy":
+			var c proxysvc.NaiveConfig
+			if err := json.Unmarshal(cfg, &c); err != nil {
+				return err
+			}
+			return proxysvc.ValidateNaiveDeploy(&c)
+		default:
+			return nil
+		}
+	}
+
+	// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
+		// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
+		// unrelated fields does not wipe cert_pem / private_key / passwords.
+		func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
+			if len(incoming) == 0 {
+				return stored
+			}
+			proto := strings.ToLower(strings.TrimSpace(protocol))
+			var keepKeys []string
+			switch proto {
+			case "vless":
+				keepKeys = []string{
+					"private_key", "public_key", "short_id",
+					"cert_pem", "key_pem",
+					"encryption", "decryption", "uuid",
+				}
+			case "shadowsocks", "ss":
+				keepKeys = []string{"password"}
+			case "mieru":
+				keepKeys = []string{"password", "username"}
+			case "socks5", "socks":
+				keepKeys = []string{"password", "username"}
+			case "anytls":
+				keepKeys = []string{"password", "username", "cert_pem", "key_pem"}
+			case "naive", "naiveproxy":
+				keepKeys = []string{"password", "username", "cert_pem", "key_pem"}
+			default:
+				return incoming
+			}
 		var oldM, newM map[string]any
 		if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
 			return incoming
