@@ -16,6 +16,7 @@ export default function Settings() {
     cf_zone_name: '',
     cf_ttl: 1,
     komari_url: '',
+    acme_email: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -60,6 +61,7 @@ export default function Settings() {
         cf_zone_name: data.cf_zone_name || '',
         cf_ttl: data.cf_ttl ?? 1,
         komari_url: data.komari_url || '',
+        acme_email: data.acme_email || '',
       }))
       if (data.panel_url) setMigURL(data.panel_url)
     }).catch(e => setError(e.message)).finally(() => setLoading(false))
@@ -100,6 +102,7 @@ export default function Settings() {
         cf_ttl: ttl,
         cf_clear_token: !!form.cf_clear_token,
         komari_url: form.komari_url,
+        acme_email: form.acme_email,
       }
       if (!form.cf_clear_token && form.cf_api_token.trim()) {
         body.cf_api_token = form.cf_api_token.trim()
@@ -116,6 +119,7 @@ export default function Settings() {
         cf_zone_name: data.cf_zone_name || '',
         cf_ttl: data.cf_ttl ?? 1,
         komari_url: data.komari_url || '',
+        acme_email: data.acme_email || '',
       }))
       refreshUser?.()
     } catch (err) { setError(err.message) } finally { setSaving(false) }
@@ -390,6 +394,24 @@ export default function Settings() {
               <input className="input-field w-[100px]" type="number" min="1" value={form.cf_ttl}
                 onChange={e => set('cf_ttl', e.target.value)} />
               <span className="text-[13px] text-ink-mut">秒；1 = Cloudflare Auto（推荐）</span>
+            </div>
+
+            <div className="pt-[22px]">
+              <h3 className="text-[16px] font-bold text-ink mb-1">ACME / Let&apos;s Encrypt</h3>
+              <p className="text-[12px] text-ink-mut m-0 mb-[18px]">
+                VLESS TLS 证书可通过 Cloudflare DNS-01 自动签发（代理服务向导「申请证书」）。
+                使用上方 CF Token（需 Zone DNS Edit）。到期前 30 天面板会自动续期并重新发布。
+              </p>
+            </div>
+            <div className="flex items-center gap-6 pb-[22px] border-b border-line-soft">
+              <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">联系邮箱</label>
+              <div className="flex-1 max-w-[560px]">
+                <input className="input-field w-full" type="email" placeholder="admin@example.com（可选）"
+                  value={form.acme_email} onChange={e => set('acme_email', e.target.value)} />
+                <p className="text-[12px] text-ink-mut mt-1.5 m-0">
+                  Let&apos;s Encrypt 账户联系邮箱；留空则按申请域名生成 admin@域名。
+                </p>
+              </div>
             </div>
 
             <div className="pt-[22px]">

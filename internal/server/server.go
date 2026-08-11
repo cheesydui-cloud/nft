@@ -38,6 +38,7 @@ type Server struct {
 	stopCycle         chan struct{}
 	stopLandingSync   chan struct{}
 	stopLandingExpiry chan struct{}
+	stopACME          chan struct{}
 	enforcerWg        sync.WaitGroup
 	stopAll           chan struct{}
 	stopOnce          sync.Once
@@ -66,27 +67,29 @@ func NewWithPaths(d *sql.DB, docsDir, dbPath string) (*Server, error) {
 	}
 	hub := NewHub(d)
 	disp := &Dispatcher{DB: d, Hub: hub}
-	s := &Server{
-		DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
-		DocsDir: docsDir, DBPath: dbPath,
-		loginLimiter: newLoginLimiter(),
-		stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
-		stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
-		stopAll: make(chan struct{}),
+		s := &Server{
+			DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
+			DocsDir: docsDir, DBPath: dbPath,
+			loginLimiter: newLoginLimiter(),
+			stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
+			stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
+			stopACME: make(chan struct{}),
+			stopAll:  make(chan struct{}),
+		}
+		hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
+			s.enforcePerNodeQuota(userID, nodeID)
+			s.enforceUserQuota(userID)
+			s.enforceExitQuota(userID)
+		}
+		hub.Redispatch = s.redispatchNodes
+		s.enforcerWg.Add(5)
+		safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
+		safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
+		safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
+		safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
+		safeGo(func() { defer s.enforcerWg.Done(); s.acmeRenewEnforcer() })
+		return s, nil
 	}
-	hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
-		s.enforcePerNodeQuota(userID, nodeID)
-		s.enforceUserQuota(userID)
-		s.enforceExitQuota(userID)
-	}
-	hub.Redispatch = s.redispatchNodes
-	s.enforcerWg.Add(4)
-	safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
-	safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
-	safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
-	safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
-	return s, nil
-}
 
 // reconcileNodeOnline aligns DB online flags with the live hub map and demotes
 // nodes whose last_seen is older than the stale TTL (假在线). Call before any
@@ -255,13 +258,14 @@ func (s *Server) Stop() {
 		s.Hub.Close()
 	}
 	close(s.stopExpiry)
-	close(s.stopCycle)
-	close(s.stopLandingSync)
-	close(s.stopLandingExpiry)
-	s.enforcerWg.Wait()
-	s.stopOnce.Do(func() { close(s.stopAll) })
-	s.asyncWg.Wait()
-}
+		close(s.stopCycle)
+		close(s.stopLandingSync)
+		close(s.stopLandingExpiry)
+		close(s.stopACME)
+		s.enforcerWg.Wait()
+		s.stopOnce.Do(func() { close(s.stopAll) })
+		s.asyncWg.Wait()
+	}
 
 // goAsync starts fn in a goroutine unless the server is already stopped.
 // It tracks the goroutine in asyncWg so Stop() can wait for it.
@@ -811,9 +815,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/proxy-services/{id}", s.apiGetProxyService)
 			r.Patch("/proxy-services/{id}", s.apiUpdateProxyService)
 			r.Delete("/proxy-services/{id}", s.apiDeleteProxyService)
-			r.Post("/proxy-services/{id}/publish", s.apiPublishProxyService)
-			r.Post("/proxy-services/{id}/sync-repo", s.apiSyncProxyServiceToRepo)
-			r.Post("/proxy-services/{id}/probe-latency", s.apiProbeProxyServiceLatency)
+				r.Post("/proxy-services/{id}/publish", s.apiPublishProxyService)
+				r.Post("/proxy-services/{id}/acme", s.apiIssueProxyServiceACME)
+				r.Post("/proxy-services/{id}/sync-repo", s.apiSyncProxyServiceToRepo)
+				r.Post("/proxy-services/{id}/probe-latency", s.apiProbeProxyServiceLatency)
 
 			// Proxy core cache (Weir-style panel-side binary cache)
 			r.Get("/proxy-cores", s.apiListProxyCores)

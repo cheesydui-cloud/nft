@@ -77,6 +77,12 @@ const CONFIG_GROUPS = {
         ['cert_configured', '证书'],
         ['key_configured', '私钥'],
         ['cert_info', '证书信息'],
+        ['acme_enabled', 'ACME 自动续期'],
+        ['acme_domain', 'ACME 域名'],
+        ['acme_issuer', 'ACME 签发方'],
+        ['acme_not_after', 'ACME 到期'],
+        ['acme_last_renew_at', '上次续期'],
+        ['acme_last_error', 'ACME 错误'],
       ],
       when: (cfg) => cfg.security === 'tls',
     },
@@ -187,6 +193,7 @@ export default function ProxyServiceDetail() {
   const [svc, setSvc] = useState(null)
   const [probing, setProbing] = useState(false)
   const [latency, setLatency] = useState(null)
+  const [acmeBusy, setAcmeBusy] = useState(false)
   const toast = useToast()
 
   const load = () => {
@@ -254,6 +261,30 @@ export default function ProxyServiceDetail() {
       setLatency(null)
     } catch (err) {
       toast(err.message, 'error')
+    }
+  }
+
+  const issueACME = async () => {
+    const domain = (cfg.server_name || cfg.acme_domain || '').trim()
+    if (!domain) {
+      toast('请先在编辑页填写 server_name（TLS 域名）', 'error')
+      return
+    }
+    setAcmeBusy(true)
+    try {
+      const d = await api.post(`/proxy-services/${id}/acme`, {
+        domain,
+        staging: false,
+        republish: true,
+      })
+      toast(
+        `证书已签发至 ${d.not_after || ''}${d.publish_note ? ' · ' + d.publish_note : ''}`,
+      )
+      load()
+    } catch (err) {
+      toast(err.message || 'ACME 失败', 'error')
+    } finally {
+      setAcmeBusy(false)
     }
   }
 
@@ -448,19 +479,33 @@ export default function ProxyServiceDetail() {
               </p>
             )}
             {proto === 'vless' && cfg.security === 'tls' && cfg.server_name && (
-              <p className={`text-[12px] m-0 ${
-                cfg.cert_info?.expired ? 'text-rose-600 dark:text-rose-300'
-                  : cfg.cert_info?.expiring ? 'text-amber-700 dark:text-amber-300'
-                  : 'text-ink-mut'
-              }`}>
-                TLS SNI：
-                <span className="font-mono text-ink">{cfg.server_name}</span>
-                {' · security=tls'}
-                {(cfg.cert_configured || cfg.cert_pem) ? ' · 证书已配置' : ' · 证书缺失'}
-                {cfg.cert_info?.not_after && (
-                  <> · 到期 {cfg.cert_info.not_after}{cfg.cert_info.expired ? '（已过期）' : cfg.cert_info.expiring ? '（即将到期）' : ''}</>
+              <div className="space-y-1.5">
+                <p className={`text-[12px] m-0 ${
+                  cfg.cert_info?.expired ? 'text-rose-600 dark:text-rose-300'
+                    : cfg.cert_info?.expiring ? 'text-amber-700 dark:text-amber-300'
+                    : 'text-ink-mut'
+                }`}>
+                  TLS SNI：
+                  <span className="font-mono text-ink">{cfg.server_name}</span>
+                  {' · security=tls'}
+                  {(cfg.cert_configured || cfg.cert_pem) ? ' · 证书已配置' : ' · 证书缺失'}
+                  {cfg.acme_enabled ? ' · ACME 自动续期' : ''}
+                  {(cfg.cert_info?.not_after || cfg.acme_not_after) && (
+                    <> · 到期 {cfg.cert_info?.not_after || cfg.acme_not_after}{cfg.cert_info?.expired ? '（已过期）' : cfg.cert_info?.expiring ? '（即将到期）' : ''}</>
+                  )}
+                </p>
+                {cfg.acme_last_error && (
+                  <p className="text-[12px] text-rose-600 m-0">ACME 错误：{cfg.acme_last_error}</p>
                 )}
-              </p>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  disabled={acmeBusy}
+                  onClick={issueACME}
+                >
+                  {acmeBusy ? 'ACME 申请中…' : (cfg.acme_enabled || cfg.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt')}
+                </button>
+              </div>
             )}
             {proto === 'vless' && cfg.security === 'none' && (
               <p className="text-[12px] text-amber-700 dark:text-amber-300 m-0">

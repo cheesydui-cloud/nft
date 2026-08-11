@@ -152,11 +152,114 @@ export default function ProxyServiceWizard() {
   const [probingDest, setProbingDest] = useState(false)
   const [destProbe, setDestProbe] = useState(null)
   const [genEncBusy, setGenEncBusy] = useState(false)
+  const [acmeBusy, setAcmeBusy] = useState(false)
+  const [acmeStaging, setAcmeStaging] = useState(false)
 
   const onlineNodes = useMemo(
     () => nodes.filter(n => n.online === 1 || n.online === true),
     [nodes],
   )
+
+  const issueACME = async () => {
+    const sn = (config.server_name || '').trim()
+    if (!sn) {
+      toast('请先填写域名（server_name / SNI）', 'error')
+      return
+    }
+    // Need a saved service id to attach cert to config_json.
+    let sid = serviceId
+    if (!sid) {
+      try {
+        // Save draft first so ACME has a service row.
+        const body = {
+          name: name.trim() || `${protocol}-${Date.now()}`,
+          protocol,
+          core,
+          sub_visible: subVisible,
+          config_json: {
+            ...config,
+            security: 'tls',
+            server_name: sn,
+          },
+        }
+        const d = await api.post('/proxy-services', body)
+        sid = d?.service?.id || d?.id
+        if (sid) {
+          setServiceId(sid)
+          setName(body.name)
+        }
+      } catch (err) {
+        toast(err.message || '保存服务失败，无法申请证书', 'error')
+        return
+      }
+    }
+    if (!sid) {
+      toast('无法创建服务，请先保存后再申请 ACME', 'error')
+      return
+    }
+    setAcmeBusy(true)
+    try {
+      // Persist current form (except empty PEMs) before issue.
+      await api.patch(`/proxy-services/${sid}`, {
+        name: name.trim() || undefined,
+        sub_visible: subVisible,
+        config_json: {
+          ...config,
+          security: 'tls',
+          server_name: sn,
+          // leave empty PEMs so server preserves / ACME overwrites
+          cert_pem: (config.cert_pem || '').trim() || undefined,
+          key_pem: (config.key_pem || '').trim() || undefined,
+        },
+      }).catch(() => {})
+      const d = await api.post(`/proxy-services/${sid}/acme`, {
+        domain: sn,
+        staging: acmeStaging,
+        republish: true,
+      })
+      const svcCfg = d?.service?.config_json
+      let next = { ...config, security: 'tls', server_name: sn }
+      if (svcCfg) {
+        try {
+          const parsed = typeof svcCfg === 'string' ? JSON.parse(svcCfg) : svcCfg
+          next = {
+            ...next,
+            ...parsed,
+            // redacted response: PEMs empty; keep cert_info flags
+            cert_pem: '',
+            key_pem: '',
+            cert_configured: true,
+            key_configured: true,
+            cert_info: d.cert_info || parsed.cert_info || null,
+            acme_enabled: true,
+            acme_domain: d.domain || sn,
+            acme_not_after: d.not_after || parsed.acme_not_after,
+            acme_issuer: d.issuer || parsed.acme_issuer,
+            acme_last_error: '',
+          }
+        } catch { /* keep */ }
+      } else if (d.cert_info) {
+        next.cert_configured = true
+        next.key_configured = true
+        next.cert_info = d.cert_info
+        next.acme_enabled = true
+        next.acme_domain = d.domain || sn
+        next.acme_not_after = d.not_after
+        next.acme_issuer = d.issuer
+        next.acme_last_error = ''
+      }
+      setConfig(next)
+      toast(
+        d.staging
+          ? `Staging 证书已签发（${d.not_after || ''}）${d.publish_note ? ' · ' + d.publish_note : ''}`
+          : `Let's Encrypt 证书已签发${d.publish_note ? ' · ' + d.publish_note : ''}`,
+      )
+    } catch (err) {
+      toast(err.message || 'ACME 申请失败', 'error')
+    } finally {
+      setAcmeBusy(false)
+    }
+  }
 
   const genKeys = async (kind) => {
     try {
@@ -709,33 +812,51 @@ export default function ProxyServiceWizard() {
                     <div className="border border-dashed border-line rounded-xl p-4 space-y-3">
                       <div className="text-sm font-bold">安全层 · TLS 证书</div>
                       <p className="text-[12px] text-ink-mut m-0">
-                        粘贴 PEM 或上传 <span className="font-mono">.crt/.pem</span> 与私钥；也可一键生成<strong>自签调试证书</strong>。
-                        正式环境请用正规 CA。本版不提供 ACME。证书下发到节点后写入 xray 实例目录（0600）。
+                        推荐：用 Cloudflare DNS-01 一键申请 Let&apos;s Encrypt（需在系统设置配置 CF Token，域名须在该 Zone）。
+                        也可粘贴 PEM / 上传 <span className="font-mono">.crt/.pem</span>，或生成<strong>自签调试证书</strong>。
+                        证书下发到节点后写入 xray 实例目录（0600）；ACME 开启后到期前 30 天自动续期。
                       </p>
-                      {(config.cert_configured || config.key_configured || config.cert_info) && !(config.cert_pem || '').trim() && (
+                      {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
                         <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] space-y-1">
                           <div className="font-semibold text-ink">
                             已保存证书{config.key_configured ? '与私钥' : ''}
+                            {config.acme_enabled ? ' · ACME 自动续期' : ''}
                             {!(config.cert_pem || '').trim() && '（脱敏，留空保存将保留原值）'}
                           </div>
-                          {config.cert_info?.not_after && (
+                          {(config.cert_info?.not_after || config.acme_not_after) && (
                             <div className={`font-mono text-[11px] ${
-                              config.cert_info.expired ? 'text-rose-600' : config.cert_info.expiring ? 'text-amber-600' : 'text-ink-mut'
+                              config.cert_info?.expired ? 'text-rose-600' : config.cert_info?.expiring ? 'text-amber-600' : 'text-ink-mut'
                             }`}>
-                              有效期至 {config.cert_info.not_after}
-                              {config.cert_info.expired ? ' · 已过期' : config.cert_info.days_left != null ? ` · 剩余 ${config.cert_info.days_left} 天` : ''}
-                              {config.cert_info.cn ? ` · CN ${config.cert_info.cn}` : ''}
+                              有效期至 {config.cert_info?.not_after || config.acme_not_after}
+                              {config.cert_info?.expired ? ' · 已过期' : config.cert_info?.days_left != null ? ` · 剩余 ${config.cert_info.days_left} 天` : ''}
+                              {config.cert_info?.cn ? ` · CN ${config.cert_info.cn}` : ''}
+                              {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
                             </div>
                           )}
                           {config.cert_info?.fingerprint && (
                             <div className="font-mono text-[10px] text-ink-mut break-all">SHA256 {config.cert_info.fingerprint}</div>
                           )}
+                          {config.acme_last_error && (
+                            <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
+                          )}
                         </div>
                       )}
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" className="btn-primary text-sm" onClick={() => genKeys('selfsigned')}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary text-sm"
+                          disabled={acmeBusy}
+                          onClick={issueACME}
+                        >
+                          {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                        </button>
+                        <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
                           生成自签证书（调试）
                         </button>
+                        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft ml-1">
+                          <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                          Staging（测试，不受正式额度限制）
+                        </label>
                       </div>
                       <div>
                         <label className="fl block mb-1">证书 PEM（cert）</label>

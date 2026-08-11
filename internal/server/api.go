@@ -2007,32 +2007,36 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 			cfPrefix = "****"
 		}
 	}
-	komariURL, _ := db.GetSetting(s.DB, "komari_url")
-	jsonOK(w, map[string]any{
-		"panel_url": panelURL, "panel_name": panelName,
-		"show_rate_to_user": showRate == "1", "pool_size": poolSize,
-		"cf_token_configured": cfConfigured,
-		"cf_token_prefix":     cfPrefix,
-		"cf_zone_name":        cfZone,
-		"cf_ttl":              cfTTL,
-		"komari_url":          komariURL,
-	})
-}
-
-func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
-	u := userFromCtx(r.Context())
-	var body struct {
-		PanelURL       string  `json:"panel_url"`
-		PanelName      *string `json:"panel_name"`
-		ShowRateToUser *bool   `json:"show_rate_to_user"`
-		PoolSize       *int    `json:"pool_size"`
-		// Cloudflare: empty token string means "leave unchanged"; explicit clear via cf_clear_token.
-		CFAPIToken   *string `json:"cf_api_token"`
-		CFClearToken bool    `json:"cf_clear_token"`
-		CFZoneName   *string `json:"cf_zone_name"`
-		CFTTL        *int    `json:"cf_ttl"`
-		KomariURL    *string `json:"komari_url"`
+		komariURL, _ := db.GetSetting(s.DB, "komari_url")
+		acmeEmail, _ := db.GetSetting(s.DB, "acme_email")
+		jsonOK(w, map[string]any{
+			"panel_url": panelURL, "panel_name": panelName,
+			"show_rate_to_user": showRate == "1", "pool_size": poolSize,
+			"cf_token_configured": cfConfigured,
+			"cf_token_prefix":     cfPrefix,
+			"cf_zone_name":        cfZone,
+			"cf_ttl":              cfTTL,
+			"komari_url":          komariURL,
+			"acme_email":          acmeEmail,
+		})
 	}
+
+	func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
+		u := userFromCtx(r.Context())
+		var body struct {
+			PanelURL       string  `json:"panel_url"`
+			PanelName      *string `json:"panel_name"`
+			ShowRateToUser *bool   `json:"show_rate_to_user"`
+			PoolSize       *int    `json:"pool_size"`
+			// Cloudflare: empty token string means "leave unchanged"; explicit clear via cf_clear_token.
+			CFAPIToken   *string `json:"cf_api_token"`
+			CFClearToken bool    `json:"cf_clear_token"`
+			CFZoneName   *string `json:"cf_zone_name"`
+			CFTTL        *int    `json:"cf_ttl"`
+			KomariURL    *string `json:"komari_url"`
+			// ACME contact email for Let's Encrypt (DNS-01 via CF). Empty string clears.
+			ACMEEmail *string `json:"acme_email"`
+		}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
@@ -2111,23 +2115,31 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.KomariURL != nil {
-		ku, err := normalizeKomariURL(*body.KomariURL)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
+		if body.KomariURL != nil {
+			ku, err := normalizeKomariURL(*body.KomariURL)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if err := db.SetSetting(s.DB, "komari_url", ku); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "settings.komari_url", ku, "")
 		}
-		if err := db.SetSetting(s.DB, "komari_url", ku); err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
-			return
+		if body.ACMEEmail != nil {
+			em := strings.TrimSpace(*body.ACMEEmail)
+			if err := db.SetSetting(s.DB, "acme_email", em); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "settings.acme_email", em, "")
 		}
-		db.WriteAudit(s.DB, u.ID, "settings.komari_url", ku, "")
+		jsonOK(w, map[string]any{"ok": true})
 	}
-	jsonOK(w, map[string]any{"ok": true})
-}
 
-// Node role is a bitmask so a node can be both a rule exit ("落地") and appear
-// in the user's own proxy list ("直连") at the same time.
+	// Node role is a bitmask so a node can be both a rule exit ("落地") and appear
+	// in the user's own proxy list ("直连") at the same time.
 const (
 	roleLanding = 1
 	roleDirect  = 2

@@ -339,3 +339,136 @@ func IsIPv4(s string) bool {
 	ip := net.ParseIP(strings.TrimSpace(s))
 	return ip != nil && ip.To4() != nil
 }
+
+// UpsertTXTRecord ensures a TXT record name → content exists (create or update).
+// Used for ACME DNS-01 (_acme-challenge.*). proxied is always false for TXT.
+// If multiple TXT share the same name, updates the first match with same content
+// or creates a new one when content is new (ACME may need multiple values briefly).
+func (c *Client) UpsertTXTRecord(ctx context.Context, zoneID, name, content string, ttl int) (DNSRecord, error) {
+	zoneID = strings.TrimSpace(zoneID)
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	content = strings.TrimSpace(content)
+	if zoneID == "" {
+		return DNSRecord{}, fmt.Errorf("Zone ID 不能为空")
+	}
+	if name == "" {
+		return DNSRecord{}, fmt.Errorf("DNS 记录名不能为空")
+	}
+	if content == "" {
+		return DNSRecord{}, fmt.Errorf("TXT 内容不能为空")
+	}
+	if ttl <= 0 {
+		ttl = 120 // short TTL for ACME challenges
+	}
+	// Prefer matching existing record with same content (idempotent).
+	existing, err := c.findTXTRecord(ctx, zoneID, name, content)
+	if err != nil {
+		return DNSRecord{}, err
+	}
+	payload := map[string]any{
+		"type":    "TXT",
+		"name":    name,
+		"content": content,
+		"ttl":     ttl,
+	}
+	if existing != nil {
+		if existing.Content == content {
+			return *existing, nil
+		}
+		var out DNSRecord
+		path := fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, existing.ID)
+		if err := c.do(ctx, http.MethodPut, path, payload, &out); err != nil {
+			return DNSRecord{}, err
+		}
+		return out, nil
+	}
+	// Create new TXT (may coexist with other TXT on same name).
+	var out DNSRecord
+	path := fmt.Sprintf("/zones/%s/dns_records", zoneID)
+	if err := c.do(ctx, http.MethodPost, path, payload, &out); err != nil {
+		if isIdenticalRecordErr(err) {
+			if again, ferr := c.findTXTRecord(ctx, zoneID, name, content); ferr == nil && again != nil {
+				return *again, nil
+			}
+			return DNSRecord{Type: "TXT", Name: name, Content: content, TTL: ttl}, nil
+		}
+		return DNSRecord{}, err
+	}
+	return out, nil
+}
+
+// DeleteDNSRecord deletes a record by id.
+func (c *Client) DeleteDNSRecord(ctx context.Context, zoneID, recordID string) error {
+	zoneID = strings.TrimSpace(zoneID)
+	recordID = strings.TrimSpace(recordID)
+	if zoneID == "" || recordID == "" {
+		return fmt.Errorf("Zone ID / record ID 不能为空")
+	}
+	path := fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// DeleteTXTByNameContent removes TXT records matching name (+ optional content).
+// Empty content deletes all TXT for that name (cleanup after ACME).
+func (c *Client) DeleteTXTByNameContent(ctx context.Context, zoneID, name, content string) error {
+	recs, err := c.listTXTRecords(ctx, zoneID, name)
+	if err != nil {
+		return err
+	}
+	content = strings.TrimSpace(content)
+	var last error
+	for _, r := range recs {
+		if content != "" && r.Content != content {
+			continue
+		}
+		if err := c.DeleteDNSRecord(ctx, zoneID, r.ID); err != nil {
+			last = err
+		}
+	}
+	return last
+}
+
+func (c *Client) findTXTRecord(ctx context.Context, zoneID, name, content string) (*DNSRecord, error) {
+	recs, err := c.listTXTRecords(ctx, zoneID, name)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	content = strings.TrimSpace(content)
+	for i := range recs {
+		if !dnsNamesEqual(recs[i].Name, name) {
+			continue
+		}
+		if content == "" || recs[i].Content == content {
+			return &recs[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (c *Client) listTXTRecords(ctx context.Context, zoneID, name string) ([]DNSRecord, error) {
+	zoneID = strings.TrimSpace(zoneID)
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	path := fmt.Sprintf("/zones/%s/dns_records?type=TXT&per_page=100", zoneID)
+	if name != "" {
+		path = fmt.Sprintf("/zones/%s/dns_records?type=TXT&name=%s&per_page=100", zoneID, urlQueryEscape(name))
+	}
+	var recs []DNSRecord
+	if err := c.do(ctx, http.MethodGet, path, nil, &recs); err != nil {
+		// Fallback: unfiltered TXT list
+		path2 := fmt.Sprintf("/zones/%s/dns_records?type=TXT&per_page=100", zoneID)
+		if err2 := c.do(ctx, http.MethodGet, path2, nil, &recs); err2 != nil {
+			return nil, err
+		}
+	}
+	if name == "" {
+		return recs, nil
+	}
+	var out []DNSRecord
+	for _, r := range recs {
+		if dnsNamesEqual(r.Name, name) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}

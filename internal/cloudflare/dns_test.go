@@ -187,3 +187,91 @@ func TestUpsertIdenticalRecordIsSuccess(t *testing.T) {
 		t.Fatalf("got %+v", rec)
 	}
 }
+
+func TestUpsertTXTRecordCreate(t *testing.T) {
+	var gotPost map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/dns_records"):
+			writeCF(w, true, []DNSRecord{})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dns_records"):
+			_ = json.NewDecoder(r.Body).Decode(&gotPost)
+			writeCF(w, true, DNSRecord{ID: "txt1", Type: "TXT", Name: "_acme-challenge.example.com", Content: "abc", TTL: 120})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			writeCF(w, false, nil)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{Token: "tok", BaseURL: srv.URL, HTTPClient: srv.Client()}
+	rec, err := c.UpsertTXTRecord(context.Background(), "zone1", "_acme-challenge.example.com", "abc", 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.ID != "txt1" || rec.Content != "abc" {
+		t.Fatalf("got %+v", rec)
+	}
+	if gotPost["type"] != "TXT" || gotPost["content"] != "abc" {
+		t.Fatalf("payload %+v", gotPost)
+	}
+	if gotPost["proxied"] != nil {
+		t.Fatalf("TXT must not set proxied, got %+v", gotPost)
+	}
+}
+
+func TestUpsertTXTRecordIdempotent(t *testing.T) {
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			writeCF(w, true, []DNSRecord{{
+				ID: "txt1", Type: "TXT", Name: "_acme-challenge.example.com", Content: "same", TTL: 120,
+			}})
+		case r.Method == http.MethodPut:
+			puts++
+			writeCF(w, true, DNSRecord{ID: "txt1", Type: "TXT", Content: "same"})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Token: "tok", BaseURL: srv.URL, HTTPClient: srv.Client()}
+	rec, err := c.UpsertTXTRecord(context.Background(), "zone1", "_acme-challenge.example.com", "same", 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.ID != "txt1" {
+		t.Fatalf("got %+v", rec)
+	}
+	if puts != 0 {
+		t.Fatalf("should not rewrite identical TXT, puts=%d", puts)
+	}
+}
+
+func TestDeleteTXTByNameContent(t *testing.T) {
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			writeCF(w, true, []DNSRecord{
+				{ID: "a", Type: "TXT", Name: "_acme-challenge.example.com", Content: "keep"},
+				{ID: "b", Type: "TXT", Name: "_acme-challenge.example.com", Content: "drop"},
+			})
+		case r.Method == http.MethodDelete:
+			parts := strings.Split(r.URL.Path, "/")
+			deleted = append(deleted, parts[len(parts)-1])
+			writeCF(w, true, map[string]any{"id": parts[len(parts)-1]})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Token: "tok", BaseURL: srv.URL, HTTPClient: srv.Client()}
+	if err := c.DeleteTXTByNameContent(context.Background(), "zone1", "_acme-challenge.example.com", "drop"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "b" {
+		t.Fatalf("deleted=%v", deleted)
+	}
+}
