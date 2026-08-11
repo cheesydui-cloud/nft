@@ -279,34 +279,39 @@ func GenerateSelfSignedTLS(serverName string, validDays int) (certPEM, keyPEM st
 	return certPEM, keyPEM, info, nil
 }
 
-// RedactVLESSConfigJSON replaces sensitive PEM/key material for API responses.
-// Adds cert_info / cert_configured / key_configured for UI. DB storage is unchanged.
-func RedactVLESSConfigJSON(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return raw
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
-		return raw
-	}
-	certPEM, _ := m["cert_pem"].(string)
-	keyPEM, _ := m["key_pem"].(string)
-	serverName, _ := m["server_name"].(string)
-	hasCert := strings.TrimSpace(certPEM) != ""
-	hasKey := strings.TrimSpace(keyPEM) != ""
-	if hasCert || hasKey {
-		info := InspectTLSCert(certPEM, keyPEM, serverName)
-		info.Configured = hasCert
-		m["cert_info"] = info
-		m["cert_configured"] = hasCert
-		m["key_configured"] = hasKey
-		if hasCert {
-			m["cert_pem"] = ""
+	// RedactVLESSConfigJSON replaces sensitive PEM/key material for API responses.
+	// Adds cert_info / cert_configured / key_configured for UI. DB storage is unchanged.
+	func RedactVLESSConfigJSON(raw json.RawMessage) json.RawMessage {
+		if len(raw) == 0 {
+			return raw
 		}
-		if hasKey {
-			m["key_pem"] = ""
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+			return raw
 		}
-	}
+		certPEM, _ := m["cert_pem"].(string)
+		keyPEM, _ := m["key_pem"].(string)
+		serverName, _ := m["server_name"].(string)
+		hasCert := strings.TrimSpace(certPEM) != ""
+		hasKey := strings.TrimSpace(keyPEM) != ""
+		// cert_id vault reference counts as configured even before PEMs are inlined.
+		if certIDFromAny(m["cert_id"]) > 0 {
+			m["cert_configured"] = true
+			m["key_configured"] = true
+		}
+		if hasCert || hasKey {
+			info := InspectTLSCert(certPEM, keyPEM, serverName)
+			info.Configured = hasCert
+			m["cert_info"] = info
+			m["cert_configured"] = hasCert || certIDFromAny(m["cert_id"]) > 0
+			m["key_configured"] = hasKey || certIDFromAny(m["cert_id"]) > 0
+			if hasCert {
+				m["cert_pem"] = ""
+			}
+			if hasKey {
+				m["key_pem"] = ""
+			}
+		}
 	// Soft-redact REALITY private key (keep public/short_id for display).
 	if pk, ok := m["private_key"].(string); ok && strings.TrimSpace(pk) != "" {
 		m["private_key_configured"] = true
@@ -363,20 +368,46 @@ func redactUserPass(raw json.RawMessage) json.RawMessage {
 	return out
 }
 
+func certIDFromAny(v any) int64 {
+	switch t := v.(type) {
+	case float64:
+		return int64(t)
+	case int64:
+		return t
+	case int:
+		return int64(t)
+	case string:
+		var n int64
+		for _, ch := range strings.TrimSpace(t) {
+			if ch < '0' || ch > '9' {
+				return 0
+			}
+			n = n*10 + int64(ch-'0')
+		}
+		return n
+	default:
+		return 0
+	}
+}
+
 func redactTLSPEMs(m map[string]any) {
-	hasCert, hasKey := false, false
-	if s, ok := m["cert_pem"].(string); ok && strings.TrimSpace(s) != "" {
-		hasCert = true
-		m["cert_pem"] = ""
-	}
-	if s, ok := m["key_pem"].(string); ok && strings.TrimSpace(s) != "" {
-		hasKey = true
-		m["key_pem"] = ""
-	}
-	if hasCert {
-		m["cert_configured"] = true
-	}
-	if hasKey {
+		hasCert, hasKey := false, false
+		if s, ok := m["cert_pem"].(string); ok && strings.TrimSpace(s) != "" {
+			hasCert = true
+			m["cert_pem"] = ""
+		}
+		if s, ok := m["key_pem"].(string); ok && strings.TrimSpace(s) != "" {
+			hasKey = true
+			m["key_pem"] = ""
+		}
+		if certIDFromAny(m["cert_id"]) > 0 {
+			m["cert_configured"] = true
+			m["key_configured"] = true
+		}
+		if hasCert {
+			m["cert_configured"] = true
+		}
+		if hasKey {
 		m["key_configured"] = true
 	}
 }

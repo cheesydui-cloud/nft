@@ -15,6 +15,56 @@ import {
 
 const STEPS = ['选协议模板', '协议配置', '选择节点', '发布', '完成']
 
+/** Certificate source picker: vault cert_id vs inline PEM. */
+function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, children }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <button type="button"
+          className={`text-sm px-3 py-1.5 rounded-lg border ${certSource === 'vault' ? 'border-terracotta bg-terracotta/10 text-ink font-semibold' : 'border-line text-ink-soft'}`}
+          onClick={() => onSource('vault')}>
+          从证书库选择
+        </button>
+        <button type="button"
+          className={`text-sm px-3 py-1.5 rounded-lg border ${certSource !== 'vault' ? 'border-terracotta bg-terracotta/10 text-ink font-semibold' : 'border-line text-ink-soft'}`}
+          onClick={() => onSource('inline')}>
+          本服务单独配置
+        </button>
+      </div>
+      {certSource === 'vault' ? (
+        <div>
+          <label className="fl block mb-1">证书库</label>
+          {vaultCerts.length === 0 ? (
+            <p className="text-[12.5px] text-ink-mut m-0">
+              证书库为空。请到「系统设置 → 证书管理」申请 LE / 上传 PEM，或改用「本服务单独配置」。
+            </p>
+          ) : (
+            <select className="input-field font-mono w-full"
+              value={certId || ''}
+              onChange={e => onPick(e.target.value)}>
+              <option value="">— 选择证书 —</option>
+              {vaultCerts.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.domain || c.name || `#${c.id}`}
+                  {c.not_after ? ` · 至 ${String(c.not_after).slice(0, 10)}` : ''}
+                  {c.source === 'acme' ? ' · ACME' : c.source === 'selfsigned' ? ' · 自签' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          {certId ? (
+            <p className="text-[11.5px] text-ink-mut mt-1.5 m-0">
+              已绑定 cert_id={certId}；发布时从证书库注入 PEM。续期在系统设置统一处理。
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  )
+}
+
 const TEMPLATES = [
 	  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
 	  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
@@ -256,6 +306,48 @@ export default function ProxyServiceWizard() {
   const [genEncBusy, setGenEncBusy] = useState(false)
   const [acmeBusy, setAcmeBusy] = useState(false)
   const [acmeStaging, setAcmeStaging] = useState(false)
+  const [vaultCerts, setVaultCerts] = useState([])
+
+  useEffect(() => {
+    api.get('/tls-certificates').then(d => setVaultCerts(d.certificates || [])).catch(() => {})
+  }, [])
+
+  const certSource = config.cert_id ? 'vault' : 'inline'
+  const pickVaultCert = (id) => {
+    const n = Number(id) || 0
+    if (!n) {
+      setConfig(c => ({ ...c, cert_id: 0 }))
+      return
+    }
+    const row = vaultCerts.find(x => x.id === n)
+    setConfig(c => ({
+      ...c,
+      cert_id: n,
+      cert_pem: '',
+      key_pem: '',
+      cert_configured: true,
+      key_configured: true,
+      server_name: (c.server_name || '').trim() || row?.domain || c.server_name,
+      share_host: (c.share_host || '').trim() || row?.domain || c.share_host,
+      acme_enabled: !!row?.acme_enabled,
+      acme_not_after: row?.not_after || c.acme_not_after,
+      acme_issuer: row?.acme_issuer || c.acme_issuer,
+      cert_info: row ? {
+        configured: true,
+        not_after: row.not_after,
+        fingerprint: row.fingerprint,
+        cn: row.domain,
+      } : c.cert_info,
+    }))
+  }
+  const setCertSource = (src) => {
+    if (src === 'vault') {
+      // Keep existing cert_id if any; otherwise wait for select.
+      setConfig(c => ({ ...c, cert_pem: '', key_pem: '' }))
+    } else {
+      setConfig(c => ({ ...c, cert_id: 0 }))
+    }
+  }
 
   const onlineNodes = useMemo(
     () => nodes.filter(n => n.online === 1 || n.online === true),
@@ -896,58 +988,66 @@ export default function ProxyServiceWizard() {
 
                   {/* ④ TLS 证书 */}
                   {sec === 'tls' && (
-                    <FormSection title="TLS 证书" hint="推荐 Cloudflare DNS-01 一键申请；也可粘贴 PEM 或自签调试证书。">
-                      {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
-                        <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px] space-y-1">
-                          <div className="font-semibold text-ink">
-                            已保存证书{config.key_configured ? '与私钥' : ''}
-                            {config.acme_enabled ? ' · ACME 自动续期' : ''}
-                            {!(config.cert_pem || '').trim() && '（脱敏，留空保存将保留原值）'}
-                          </div>
-                          {(config.cert_info?.not_after || config.acme_not_after) && (
-                            <div className={`font-mono text-[11px] ${
-                              config.cert_info?.expired ? 'text-rose-600' : config.cert_info?.expiring ? 'text-amber-600' : 'text-ink-mut'
-                            }`}>
-                              有效期至 {config.cert_info?.not_after || config.acme_not_after}
-                              {config.cert_info?.expired ? ' · 已过期' : config.cert_info?.days_left != null ? ` · 剩余 ${config.cert_info.days_left} 天` : ''}
-                              {config.cert_info?.cn ? ` · CN ${config.cert_info.cn}` : ''}
-                              {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
+                    <FormSection title="TLS 证书" hint="推荐证书库统一管理；也可本服务 ACME / 粘贴 PEM / 自签。">
+                      <CertVaultPicker
+                        certSource={certSource}
+                        vaultCerts={vaultCerts}
+                        certId={config.cert_id}
+                        onSource={setCertSource}
+                        onPick={pickVaultCert}
+                      >
+                        {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
+                          <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px] space-y-1">
+                            <div className="font-semibold text-ink">
+                              已保存证书{config.key_configured ? '与私钥' : ''}
+                              {config.acme_enabled ? ' · ACME 自动续期' : ''}
+                              {!(config.cert_pem || '').trim() && '（脱敏，留空保存将保留原值）'}
                             </div>
-                          )}
-                          {config.cert_info?.fingerprint && (
-                            <div className="font-mono text-[10px] text-ink-mut break-all">SHA256 {config.cert_info.fingerprint}</div>
-                          )}
-                          {config.acme_last_error && (
-                            <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
-                          )}
+                            {(config.cert_info?.not_after || config.acme_not_after) && (
+                              <div className={`font-mono text-[11px] ${
+                                config.cert_info?.expired ? 'text-rose-600' : config.cert_info?.expiring ? 'text-amber-600' : 'text-ink-mut'
+                              }`}>
+                                有效期至 {config.cert_info?.not_after || config.acme_not_after}
+                                {config.cert_info?.expired ? ' · 已过期' : config.cert_info?.days_left != null ? ` · 剩余 ${config.cert_info.days_left} 天` : ''}
+                                {config.cert_info?.cn ? ` · CN ${config.cert_info.cn}` : ''}
+                                {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
+                              </div>
+                            )}
+                            {config.cert_info?.fingerprint && (
+                              <div className="font-mono text-[10px] text-ink-mut break-all">SHA256 {config.cert_info.fingerprint}</div>
+                            )}
+                            {config.acme_last_error && (
+                              <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
+                            {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                          </button>
+                          <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
+                            生成自签证书（调试）
+                          </button>
+                          <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                            <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                            Staging
+                          </label>
                         </div>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
-                          {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
-                        </button>
-                        <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
-                          生成自签证书（调试）
-                        </button>
-                        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
-                          <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
-                          Staging
-                        </label>
-                      </div>
-                      <div>
-                        <label className="fl block mb-1">证书 PEM（cert）</label>
-                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
-                          onChange={e => setCfg('cert_pem', e.target.value)}
-                          placeholder={config.cert_configured ? '已配置 · 留空保留原证书' : '-----BEGIN CERTIFICATE-----'} />
-                        <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
-                      </div>
-                      <div>
-                        <label className="fl block mb-1">私钥 PEM（key）</label>
-                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
-                          onChange={e => setCfg('key_pem', e.target.value)}
-                          placeholder={config.key_configured ? '已配置 · 留空保留原私钥' : '-----BEGIN PRIVATE KEY-----'} />
-                        <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
-                      </div>
+                        <div>
+                          <label className="fl block mb-1">证书 PEM（cert）</label>
+                          <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
+                            onChange={e => setCfg('cert_pem', e.target.value)}
+                            placeholder={config.cert_configured ? '已配置 · 留空保留原证书' : '-----BEGIN CERTIFICATE-----'} />
+                          <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                        </div>
+                        <div>
+                          <label className="fl block mb-1">私钥 PEM（key）</label>
+                          <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
+                            onChange={e => setCfg('key_pem', e.target.value)}
+                            placeholder={config.key_configured ? '已配置 · 留空保留原私钥' : '-----BEGIN PRIVATE KEY-----'} />
+                          <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs" onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                        </div>
+                      </CertVaultPicker>
                       <div className="grid sm:grid-cols-2 gap-3">
                         <div>
                           <label className="fl block mb-1">ALPN（可选）</label>
@@ -1288,55 +1388,63 @@ export default function ProxyServiceWizard() {
                           options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
                       </div>
                     </div>
-                    {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
-                      <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px] space-y-1">
-                        <div className="font-semibold text-ink">
-                          已保存证书{config.key_configured ? '与私钥' : ''}
-                          {config.acme_enabled ? ' · ACME 自动续期' : ''}
-                          {'（脱敏，留空保存将保留原值）'}
-                        </div>
-                        {(config.cert_info?.not_after || config.acme_not_after) && (
-                          <div className="font-mono text-[11px] text-ink-mut">
-                            有效期至 {config.cert_info?.not_after || config.acme_not_after}
-                            {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
+                    <CertVaultPicker
+                      certSource={certSource}
+                      vaultCerts={vaultCerts}
+                      certId={config.cert_id}
+                      onSource={setCertSource}
+                      onPick={pickVaultCert}
+                    >
+                      {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
+                        <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px] space-y-1">
+                          <div className="font-semibold text-ink">
+                            已保存证书{config.key_configured ? '与私钥' : ''}
+                            {config.acme_enabled ? ' · ACME 自动续期' : ''}
+                            {'（脱敏，留空保存将保留原值）'}
                           </div>
-                        )}
-                        {config.acme_last_error && (
-                          <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
-                        )}
+                          {(config.cert_info?.not_after || config.acme_not_after) && (
+                            <div className="font-mono text-[11px] text-ink-mut">
+                              有效期至 {config.cert_info?.not_after || config.acme_not_after}
+                              {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
+                            </div>
+                          )}
+                          {config.acme_last_error && (
+                            <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
+                          {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                        </button>
+                        <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
+                          生成自签证书（调试）
+                        </button>
+                        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                          <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                          Staging
+                        </label>
                       </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
-                        {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
-                      </button>
-                      <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
-                        生成自签证书（调试）
-                      </button>
-                      <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
-                        <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
-                        Staging
-                      </label>
-                    </div>
-                    <p className="text-[11.5px] text-ink-mut m-0 leading-relaxed">
-                      ACME 需系统设置里配置 Cloudflare API Token（DNS-01）。域名须在该 CF 账号下。自签仅调试，客户端要勾选 insecure。
-                    </p>
-                    <div>
-                      <label className="fl block mb-1">证书 PEM</label>
-                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
-                        onChange={e => setCfg('cert_pem', e.target.value)}
-                        placeholder={config.cert_configured ? '已配置 · 留空保留原证书' : '-----BEGIN CERTIFICATE-----'} />
-                      <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
-                        onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">私钥 PEM</label>
-                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
-                        onChange={e => setCfg('key_pem', e.target.value)}
-                        placeholder={config.key_configured ? '已配置 · 留空保留原私钥' : '-----BEGIN PRIVATE KEY-----'} />
-                      <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
-                        onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
-                    </div>
+                      <p className="text-[11.5px] text-ink-mut m-0 leading-relaxed">
+                        ACME 需系统设置里配置 Cloudflare API Token（DNS-01）。域名须在该 CF 账号下。自签仅调试，客户端要勾选 insecure。
+                      </p>
+                      <div>
+                        <label className="fl block mb-1">证书 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
+                          onChange={e => setCfg('cert_pem', e.target.value)}
+                          placeholder={config.cert_configured ? '已配置 · 留空保留原证书' : '-----BEGIN CERTIFICATE-----'} />
+                        <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
+                          onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">私钥 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
+                          onChange={e => setCfg('key_pem', e.target.value)}
+                          placeholder={config.key_configured ? '已配置 · 留空保留原私钥' : '-----BEGIN PRIVATE KEY-----'} />
+                        <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
+                          onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                      </div>
+                    </CertVaultPicker>
                     <div>
                       <label className="fl block mb-1">ALPN（可选）</label>
                       <input className="input-field font-mono" value={config.alpn || ''}
@@ -1420,40 +1528,48 @@ export default function ProxyServiceWizard() {
                           }))
                         }} placeholder="vpn.example.com" />
                     </div>
-                    {(config.cert_configured || config.key_configured || config.acme_enabled) && !(config.cert_pem || '').trim() && (
-                      <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px]">
-                        已保存证书{config.acme_enabled ? ' · ACME 自动续期' : ''}（脱敏）
-                        {config.acme_not_after ? ` · 至 ${config.acme_not_after}` : ''}
+                    <CertVaultPicker
+                      certSource={certSource}
+                      vaultCerts={vaultCerts}
+                      certId={config.cert_id}
+                      onSource={setCertSource}
+                      onPick={pickVaultCert}
+                    >
+                      {(config.cert_configured || config.key_configured || config.acme_enabled) && !(config.cert_pem || '').trim() && (
+                        <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px]">
+                          已保存证书{config.acme_enabled ? ' · ACME 自动续期' : ''}（脱敏）
+                          {config.acme_not_after ? ` · 至 ${config.acme_not_after}` : ''}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
+                          {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                        </button>
+                        <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
+                          生成自签证书（调试）
+                        </button>
+                        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                          <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                          Staging
+                        </label>
                       </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
-                        {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
-                      </button>
-                      <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
-                        生成自签证书（调试）
-                      </button>
-                      <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
-                        <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
-                        Staging
-                      </label>
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">证书 PEM</label>
-                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
-                        onChange={e => setCfg('cert_pem', e.target.value)}
-                        placeholder={config.cert_configured ? '已配置 · 留空保留' : '-----BEGIN CERTIFICATE-----'} />
-                      <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
-                        onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
-                    </div>
-                    <div>
-                      <label className="fl block mb-1">私钥 PEM</label>
-                      <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
-                        onChange={e => setCfg('key_pem', e.target.value)}
-                        placeholder={config.key_configured ? '已配置 · 留空保留' : '-----BEGIN PRIVATE KEY-----'} />
-                      <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
-                        onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
-                    </div>
+                      <div>
+                        <label className="fl block mb-1">证书 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
+                          onChange={e => setCfg('cert_pem', e.target.value)}
+                          placeholder={config.cert_configured ? '已配置 · 留空保留' : '-----BEGIN CERTIFICATE-----'} />
+                        <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
+                          onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">私钥 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
+                          onChange={e => setCfg('key_pem', e.target.value)}
+                          placeholder={config.key_configured ? '已配置 · 留空保留' : '-----BEGIN PRIVATE KEY-----'} />
+                        <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
+                          onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
+                      </div>
+                    </CertVaultPicker>
                   </FormSection>
                   <FormSection title="传输" hint="tcp ≈ https 客户端；udp ≈ quic；留空双栈。">
                     <Select

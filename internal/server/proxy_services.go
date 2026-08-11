@@ -258,11 +258,17 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-				// Fail fast on illegal config / missing TLS certs before agents.
-					if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
-						jsonErr(w, http.StatusBadRequest, err.Error())
-						return
-					}
+		// Expand cert_id vault reference → cert_pem/key_pem for validate + agent.
+		cfg, err = s.resolveProxyConfigCertID(cfg)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Fail fast on illegal config / missing TLS certs before agents.
+		if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
 		svc.ConfigJSON = cfg
 
@@ -942,7 +948,7 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 			case "vless":
 				keepKeys = []string{
 					"private_key", "public_key", "short_id",
-					"cert_pem", "key_pem",
+					"cert_pem", "key_pem", "cert_id",
 					"encryption", "decryption", "uuid",
 				}
 			case "shadowsocks", "ss":
@@ -952,9 +958,9 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 			case "socks5", "socks":
 				keepKeys = []string{"password", "username"}
 			case "anytls":
-				keepKeys = []string{"password", "username", "cert_pem", "key_pem"}
+				keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
 			case "naive", "naiveproxy":
-				keepKeys = []string{"password", "username", "cert_pem", "key_pem"}
+				keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
 			default:
 				return incoming
 			}

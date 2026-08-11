@@ -263,13 +263,17 @@ func (s *Server) publishProxyToNodes(serviceID int64, nodeIDs []int64, forceCore
 		return 0, len(nodeIDs)
 	}
 	cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
-		if err != nil {
-			return 0, len(nodeIDs)
-		}
-		if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
-			return 0, len(nodeIDs)
-		}
-		_ = db.UpdateProxyService(s.DB, serviceID, svc.Name, cfg, svc.SubVisible)
+	if err != nil {
+		return 0, len(nodeIDs)
+	}
+	cfg, err = s.resolveProxyConfigCertID(cfg)
+	if err != nil {
+		return 0, len(nodeIDs)
+	}
+	if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
+		return 0, len(nodeIDs)
+	}
+	_ = db.UpdateProxyService(s.DB, serviceID, svc.Name, cfg, svc.SubVisible)
 	svc.ConfigJSON = cfg
 	defaultPort := proxysvc.ListenPortFromConfig(cfg)
 	cfgShare := proxysvc.ShareHostFromConfig(cfg)
@@ -374,71 +378,140 @@ func (s *Server) acmeRenewEnforcer() {
 }
 
 func (s *Server) runACMERenewPass() {
+	// 1) Certificate vault (preferred): renew once, fan-out to all referencing services.
+	s.runACMERenewVaultPass()
+	// 2) Legacy per-service ACME (inline PEM, no cert_id).
 	list, err := db.ListProxyServices(s.DB)
 	if err != nil {
 		return
 	}
 	for _, svc := range list {
-			if svc == nil {
-				continue
-			}
-			proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
-			if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
-				continue
-			}
-			var m map[string]any
-			if err := json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &m); err != nil {
-				continue
-			}
-			enabled, _ := m["acme_enabled"].(bool)
-			if !enabled {
-				if s, ok := m["acme_enabled"].(string); !ok || !strings.EqualFold(s, "true") {
-					continue
-				}
-			}
-			domain, _ := m["acme_domain"].(string)
-			if domain == "" {
-				domain, _ = m["server_name"].(string)
-			}
-			if domain == "" {
-				continue
-			}
-			// Skip if still valid for > 30 days.
-			if na, _ := m["acme_not_after"].(string); na != "" {
-				if t, err := time.Parse(time.RFC3339, na); err == nil {
-					if time.Until(t) > 30*24*time.Hour {
-						continue
-					}
-				}
-			} else if certPEM, _ := m["cert_pem"].(string); certPEM != "" {
-				info := proxysvc.InspectTLSCert(certPEM, "", domain)
-				if info.DaysLeft > 30 && !info.Expired {
-					continue
-				}
-			}
-			log.Printf("acme: renewing cert for service %d (%s) domain %s", svc.ID, proto, domain)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			res, err := s.issueACMEForDomain(ctx, domain, "", false)
-			cancel()
-			if err != nil {
-				log.Printf("acme: renew failed service=%d: %v", svc.ID, err)
-				_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
-				continue
-			}
-			cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
-			if err != nil {
-				continue
-			}
-			if err := db.UpdateProxyService(s.DB, svc.ID, svc.Name, cfgBytes, svc.SubVisible); err != nil {
-				log.Printf("acme: save failed service=%d: %v", svc.ID, err)
-				continue
-			}
-			// Republish instances so agents get new cert.
-			nodeIDs := proxyInstanceNodeIDs(s.DB, svc.ID)
-			ok, fail := s.publishProxyToNodes(svc.ID, nodeIDs, false)
-			log.Printf("acme: renewed service=%d domain=%s publish ok=%d fail=%d", svc.ID, domain, ok, fail)
+		if svc == nil {
+			continue
 		}
+		proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
+		if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
+			continue
+		}
+		// Skip services that already reference vault certs — handled above.
+		if db.CertIDFromConfigJSON(svc.ConfigJSON) > 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &m); err != nil {
+			continue
+		}
+		enabled, _ := m["acme_enabled"].(bool)
+		if !enabled {
+			if s, ok := m["acme_enabled"].(string); !ok || !strings.EqualFold(s, "true") {
+				continue
+			}
+		}
+		domain, _ := m["acme_domain"].(string)
+		if domain == "" {
+			domain, _ = m["server_name"].(string)
+		}
+		if domain == "" {
+			continue
+		}
+		// Skip if still valid for > 30 days.
+		if na, _ := m["acme_not_after"].(string); na != "" {
+			if t, err := time.Parse(time.RFC3339, na); err == nil {
+				if time.Until(t) > 30*24*time.Hour {
+					continue
+				}
+			}
+		} else if certPEM, _ := m["cert_pem"].(string); certPEM != "" {
+			info := proxysvc.InspectTLSCert(certPEM, "", domain)
+			if info.DaysLeft > 30 && !info.Expired {
+				continue
+			}
+		}
+		log.Printf("acme: renewing cert for service %d (%s) domain %s", svc.ID, proto, domain)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		res, err := s.issueACMEForDomain(ctx, domain, "", false)
+		cancel()
+		if err != nil {
+			log.Printf("acme: renew failed service=%d: %v", svc.ID, err)
+			_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
+			continue
+		}
+		cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
+		if err != nil {
+			continue
+		}
+		if err := db.UpdateProxyService(s.DB, svc.ID, svc.Name, cfgBytes, svc.SubVisible); err != nil {
+			log.Printf("acme: save failed service=%d: %v", svc.ID, err)
+			continue
+		}
+		// Republish instances so agents get new cert.
+		nodeIDs := proxyInstanceNodeIDs(s.DB, svc.ID)
+		ok, fail := s.publishProxyToNodes(svc.ID, nodeIDs, false)
+		log.Printf("acme: renewed service=%d domain=%s publish ok=%d fail=%d", svc.ID, domain, ok, fail)
 	}
+}
+
+// runACMERenewVaultPass renews ACME-enabled vault certificates near expiry.
+func (s *Server) runACMERenewVaultPass() {
+	certs, err := db.ListTLSCertificatesACMEEnabled(s.DB)
+	if err != nil || len(certs) == 0 {
+		return
+	}
+	for _, c := range certs {
+		if c == nil {
+			continue
+		}
+		domain := strings.TrimSpace(c.Domain)
+		if domain == "" {
+			continue
+		}
+		// Skip if still valid for > 30 days.
+		if c.NotAfter != "" {
+			if t, err := time.Parse(time.RFC3339, c.NotAfter); err == nil {
+				if time.Until(t) > 30*24*time.Hour {
+					continue
+				}
+			}
+		} else if c.CertPEM != "" {
+			info := proxysvc.InspectTLSCert(c.CertPEM, "", domain)
+			if info.DaysLeft > 30 && !info.Expired {
+				continue
+			}
+		}
+		log.Printf("acme: renewing vault cert %d domain %s", c.ID, domain)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		res, err := s.issueACMEForDomain(ctx, domain, "", false)
+		cancel()
+		if err != nil {
+			log.Printf("acme: vault renew failed id=%d: %v", c.ID, err)
+			_ = db.PatchTLSCertificateError(s.DB, c.ID, err.Error())
+			continue
+		}
+		info := proxysvc.InspectTLSCert(res.CertPEM, res.KeyPEM, domain)
+		now := time.Now().UTC().Format(time.RFC3339)
+		if err := db.UpdateTLSCertificateMaterial(s.DB, c.ID, res.CertPEM, res.KeyPEM, db.TLSCertSourceACME, true,
+			"cloudflare-dns01", res.Issuer,
+			res.NotBefore.UTC().Format(time.RFC3339),
+			res.NotAfter.UTC().Format(time.RFC3339),
+			info.Fingerprint, "", now); err != nil {
+			log.Printf("acme: vault save failed id=%d: %v", c.ID, err)
+			continue
+		}
+		svcIDs, _ := db.ListProxyServiceIDsByCertID(s.DB, c.ID)
+		pubOK, pubFail := 0, 0
+		for _, sid := range svcIDs {
+			if err := s.syncCertVaultIntoService(sid, c.ID, res.CertPEM, res.KeyPEM, domain, res.Issuer,
+				res.NotBefore.UTC().Format(time.RFC3339), res.NotAfter.UTC().Format(time.RFC3339)); err != nil {
+				continue
+			}
+			ok, fail := s.publishProxyToNodes(sid, proxyInstanceNodeIDs(s.DB, sid), false)
+			pubOK += ok
+			pubFail += fail
+		}
+		log.Printf("acme: vault renewed id=%d domain=%s services=%d publish ok=%d fail=%d",
+			c.ID, domain, len(svcIDs), pubOK, pubFail)
+	}
+}
 
 func proxyInstanceNodeIDs(d *sql.DB, serviceID int64) []int64 {
 	inst, err := db.ListProxyInstances(d, serviceID)

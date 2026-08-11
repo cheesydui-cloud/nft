@@ -42,8 +42,27 @@ export default function Settings() {
   const [coreBusy, setCoreBusy] = useState(false)
   const [coreError, setCoreError] = useState('')
 
+  // TLS certificate vault
+  const [certs, setCerts] = useState([])
+  const [certBusy, setCertBusy] = useState(false)
+  const [certForm, setCertForm] = useState({
+    mode: 'acme',
+    name: '',
+    domain: '',
+    cert_pem: '',
+    key_pem: '',
+    note: '',
+    staging: false,
+    days: 365,
+  })
+  const [certOpen, setCertOpen] = useState(false)
+
   const loadCores = () => {
     api.get('/proxy-cores').then(d => setCores(d.cores || [])).catch(() => {})
+  }
+
+  const loadCerts = () => {
+    api.get('/tls-certificates').then(d => setCerts(d.certificates || [])).catch(() => {})
   }
 
   useEffect(() => {
@@ -72,9 +91,96 @@ export default function Settings() {
   }
   useEffect(() => { loadMigStatus() }, [])
   useEffect(() => { loadCores() }, [])
+  useEffect(() => { loadCerts() }, [])
   useEffect(() => {
     api.get('/system/update').then(setUpd).catch(() => {})
   }, [])
+
+  const createCert = async () => {
+    const domain = (certForm.domain || '').trim()
+    if (certForm.mode !== 'upload' && !domain) {
+      toast('请填写域名', 'error')
+      return
+    }
+    if (certForm.mode === 'upload' && (!(certForm.cert_pem || '').trim() || !(certForm.key_pem || '').trim())) {
+      toast('请粘贴证书与私钥 PEM', 'error')
+      return
+    }
+    setCertBusy(true)
+    try {
+      const body = {
+        mode: certForm.mode,
+        name: (certForm.name || '').trim() || domain,
+        domain,
+        note: (certForm.note || '').trim(),
+        staging: !!certForm.staging,
+        days: parseInt(certForm.days, 10) || 365,
+      }
+      if (certForm.mode === 'upload') {
+        body.cert_pem = certForm.cert_pem
+        body.key_pem = certForm.key_pem
+      }
+      const d = await api.post('/tls-certificates', body)
+      toast(d.warning || `证书已添加：${d.certificate?.domain || domain}`)
+      setCertForm({ mode: 'acme', name: '', domain: '', cert_pem: '', key_pem: '', note: '', staging: false, days: 365 })
+      setCertOpen(false)
+      loadCerts()
+    } catch (err) {
+      toast(err.message || '创建证书失败', 'error')
+    } finally {
+      setCertBusy(false)
+    }
+  }
+
+  const renewCert = async (id) => {
+    setCertBusy(true)
+    try {
+      const d = await api.post(`/tls-certificates/${id}/renew`, { republish: true })
+      toast(`已续期 · 关联服务 ${d.services ?? 0} · 发布 ${d.publish_ok ?? 0}/${(d.publish_ok ?? 0) + (d.publish_fail ?? 0)}`)
+      loadCerts()
+    } catch (err) {
+      toast(err.message || '续期失败', 'error')
+    } finally {
+      setCertBusy(false)
+    }
+  }
+
+  const deleteCert = async (c) => {
+    const refs = c.ref_count || 0
+    if (!(await confirm({
+      title: '删除证书',
+      message: refs > 0
+        ? `证书 ${c.domain || c.name} 仍被 ${refs} 个代理服务引用。强制删除后这些服务需重新配置证书。确定？`
+        : `确定删除证书 ${c.domain || c.name || '#' + c.id}？`,
+      confirmText: refs > 0 ? '强制删除' : '删除',
+    }))) return
+    setCertBusy(true)
+    try {
+      await api.del(`/tls-certificates/${c.id}${refs > 0 ? '?force=1' : ''}`)
+      toast('已删除')
+      loadCerts()
+    } catch (err) {
+      toast(err.message || '删除失败', 'error')
+    } finally {
+      setCertBusy(false)
+    }
+  }
+
+  const sourceLabel = (s) => {
+    if (s === 'acme') return 'ACME'
+    if (s === 'selfsigned') return '自签'
+    return '上传'
+  }
+
+  const daysLeftLabel = (notAfter) => {
+    if (!notAfter) return '—'
+    const t = Date.parse(notAfter)
+    if (Number.isNaN(t)) return notAfter
+    const days = Math.floor((t - Date.now()) / 86400000)
+    if (days < 0) return `已过期 ${-days} 天`
+    if (days <= 14) return `剩余 ${days} 天 · 将到期`
+    return `剩余 ${days} 天`
+  }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -399,8 +505,8 @@ export default function Settings() {
             <div className="pt-[22px]">
               <h3 className="text-[16px] font-bold text-ink mb-1">ACME / Let&apos;s Encrypt</h3>
               <p className="text-[12px] text-ink-mut m-0 mb-[18px]">
-                VLESS TLS 证书可通过 Cloudflare DNS-01 自动签发（代理服务向导「申请证书」）。
-                使用上方 CF Token（需 Zone DNS Edit）。到期前 30 天面板会自动续期并重新发布。
+                VLESS / AnyTLS / Naive TLS 证书可通过 Cloudflare DNS-01 签发。推荐在下方「证书管理」统一申请，
+                代理服务通过 cert_id 引用；也可在向导内单独申请。到期前 30 天面板自动续期并重新发布。
               </p>
             </div>
             <div className="flex items-center gap-6 pb-[22px] border-b border-line-soft">
@@ -412,6 +518,157 @@ export default function Settings() {
                   Let&apos;s Encrypt 账户联系邮箱；留空则按申请域名生成 admin@域名。
                 </p>
               </div>
+            </div>
+
+            <div className="pt-[22px]">
+              <div className="flex items-start justify-between gap-4 mb-[14px]">
+                <div>
+                  <h3 className="text-[16px] font-bold text-ink mb-1">证书管理</h3>
+                  <p className="text-[12px] text-ink-mut m-0">
+                    集中存放 TLS 证书；VLESS TLS / AnyTLS / Naive 可在向导中选择「从证书库」。
+                    一证多服务，续期一次全部重发。
+                  </p>
+                </div>
+                <button type="button" className="btn-primary text-sm shrink-0" onClick={() => setCertOpen(o => !o)}>
+                  {certOpen ? '收起' : '添加证书'}
+                </button>
+              </div>
+
+              {certOpen && (
+                <div className="rounded-xl border border-line bg-raised/40 p-4 mb-4 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { v: 'acme', l: '申请 Let\'s Encrypt' },
+                      { v: 'upload', l: '上传 PEM' },
+                      { v: 'selfsigned', l: '自签调试' },
+                    ].map(o => (
+                      <button key={o.v} type="button"
+                        className={`text-sm px-3 py-1.5 rounded-lg border ${certForm.mode === o.v ? 'border-terracotta bg-terracotta/10 text-ink font-semibold' : 'border-line text-ink-soft'}`}
+                        onClick={() => setCertForm(f => ({ ...f, mode: o.v }))}>
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="fl block mb-1">域名 *</label>
+                      <input className="input-field font-mono w-full" value={certForm.domain}
+                        onChange={e => setCertForm(f => ({ ...f, domain: e.target.value }))}
+                        placeholder="vpn.example.com" />
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">显示名称</label>
+                      <input className="input-field w-full" value={certForm.name}
+                        onChange={e => setCertForm(f => ({ ...f, name: e.target.value }))}
+                        placeholder="可选，默认用域名" />
+                    </div>
+                  </div>
+                  {certForm.mode === 'acme' && (
+                    <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                      <input type="checkbox" checked={certForm.staging}
+                        onChange={e => setCertForm(f => ({ ...f, staging: e.target.checked }))} />
+                      Staging（测试环境，客户端不信任）
+                    </label>
+                  )}
+                  {certForm.mode === 'selfsigned' && (
+                    <div>
+                      <label className="fl block mb-1">有效天数</label>
+                      <input className="input-field w-[120px]" type="number" min="1" max="825" value={certForm.days}
+                        onChange={e => setCertForm(f => ({ ...f, days: e.target.value }))} />
+                    </div>
+                  )}
+                  {certForm.mode === 'upload' && (
+                    <>
+                      <div>
+                        <label className="fl block mb-1">证书 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[80px] w-full" value={certForm.cert_pem}
+                          onChange={e => setCertForm(f => ({ ...f, cert_pem: e.target.value }))}
+                          placeholder="-----BEGIN CERTIFICATE-----" />
+                      </div>
+                      <div>
+                        <label className="fl block mb-1">私钥 PEM</label>
+                        <textarea className="input-field font-mono text-xs min-h-[80px] w-full" value={certForm.key_pem}
+                          onChange={e => setCertForm(f => ({ ...f, key_pem: e.target.value }))}
+                          placeholder="-----BEGIN PRIVATE KEY-----" />
+                      </div>
+                    </>
+                  )}
+                  <div>
+                    <label className="fl block mb-1">备注</label>
+                    <input className="input-field w-full" value={certForm.note}
+                      onChange={e => setCertForm(f => ({ ...f, note: e.target.value }))}
+                      placeholder="可选" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" className="btn-primary text-sm" disabled={certBusy} onClick={createCert}>
+                      {certBusy ? '处理中…' : (certForm.mode === 'acme' ? '申请并入库' : '保存到证书库')}
+                    </button>
+                    <button type="button" className="btn-secondary text-sm" onClick={() => setCertOpen(false)}>取消</button>
+                  </div>
+                </div>
+              )}
+
+              {certs.length === 0 ? (
+                <p className="text-[13px] text-ink-mut mb-0 pb-[22px] border-b border-line-soft">
+                  暂无证书。点击「添加证书」申请 LE、上传 PEM 或生成自签。
+                </p>
+              ) : (
+                <div className="overflow-x-auto pb-[22px] border-b border-line-soft">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="text-left text-ink-mut border-b border-line-soft">
+                        <th className="py-2 pr-3 font-medium">域名</th>
+                        <th className="py-2 pr-3 font-medium">来源</th>
+                        <th className="py-2 pr-3 font-medium">有效期</th>
+                        <th className="py-2 pr-3 font-medium">引用</th>
+                        <th className="py-2 pr-3 font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {certs.map(c => {
+                        const expired = c.not_after && Date.parse(c.not_after) < Date.now()
+                        const expiring = c.not_after && !expired && (Date.parse(c.not_after) - Date.now()) < 14 * 86400000
+                        return (
+                          <tr key={c.id} className="border-b border-line-soft/60 align-top">
+                            <td className="py-2.5 pr-3">
+                              <div className="font-mono font-semibold text-ink">{c.domain || '—'}</div>
+                              {c.name && c.name !== c.domain && (
+                                <div className="text-[11px] text-ink-mut">{c.name}</div>
+                              )}
+                              {c.last_error && (
+                                <div className="text-[11px] text-rose-600 mt-0.5 max-w-[280px] truncate" title={c.last_error}>
+                                  {c.last_error}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 pr-3 text-ink-soft">
+                              {sourceLabel(c.source)}
+                              {c.acme_enabled ? ' · 自动续期' : ''}
+                            </td>
+                            <td className={`py-2.5 pr-3 font-mono text-[12px] ${expired ? 'text-rose-600' : expiring ? 'text-amber-600' : 'text-ink-mut'}`}>
+                              {daysLeftLabel(c.not_after)}
+                              {c.not_after && (
+                                <div className="text-[10px] opacity-80">{String(c.not_after).slice(0, 10)}</div>
+                              )}
+                            </td>
+                            <td className="py-2.5 pr-3 text-ink-soft">{c.ref_count ?? 0}</td>
+                            <td className="py-2.5 pr-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {(c.source === 'acme' || c.acme_enabled) && (
+                                  <button type="button" className="btn-secondary text-xs px-2 py-1" disabled={certBusy}
+                                    onClick={() => renewCert(c.id)}>续期</button>
+                                )}
+                                <button type="button" className="btn-secondary text-xs px-2 py-1 text-rose-600" disabled={certBusy}
+                                  onClick={() => deleteCert(c)}>删除</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <div className="pt-[22px]">

@@ -50,16 +50,18 @@ type VLESSConfig struct {
 	SpiderX     string `json:"spider_x"`
 	XHTTPMode   string `json:"xhttp_mode"`   // auto | packet-up | stream-up | stream-one
 	ServiceName string `json:"service_name"` // gRPC service name
-	// TLS fields (security=tls)
-	ALPN          string `json:"alpn"`           // e.g. "h2,http/1.1"
-	AllowInsecure bool   `json:"allow_insecure"` // client skip verify (URI only)
-	CertPEM       string `json:"cert_pem"`       // server certificate PEM
-	KeyPEM        string `json:"key_pem"`        // server private key PEM
-	// Deploy-only: absolute paths written by agent before BuildXrayVLESSConfig.
-	// Not set by panel; never required in config_json from API.
-	CertFile string `json:"cert_file,omitempty"`
-	KeyFile  string `json:"key_file,omitempty"`
-}
+		// TLS fields (security=tls)
+		ALPN          string `json:"alpn"`           // e.g. "h2,http/1.1"
+		AllowInsecure bool   `json:"allow_insecure"` // client skip verify (URI only)
+		CertPEM       string `json:"cert_pem"`       // server certificate PEM
+		KeyPEM        string `json:"key_pem"`        // server private key PEM
+		// CertID references tls_certificates vault; panel resolves to PEM before deploy.
+		CertID int64 `json:"cert_id,omitempty"`
+		// Deploy-only: absolute paths written by agent before BuildXrayVLESSConfig.
+		// Not set by panel; never required in config_json from API.
+		CertFile string `json:"cert_file,omitempty"`
+		KeyFile  string `json:"key_file,omitempty"`
+	}
 
 // NetworksForSecurity returns allowed transport networks for a security mode.
 func NetworksForSecurity(security string) []string {
@@ -304,6 +306,7 @@ type AnyTLSConfig struct {
 	AllowInsecure bool   `json:"allow_insecure,omitempty"`
 	CertPEM       string `json:"cert_pem,omitempty"`
 	KeyPEM        string `json:"key_pem,omitempty"`
+	CertID        int64  `json:"cert_id,omitempty"`
 	CertFile      string `json:"cert_file,omitempty"`
 	KeyFile       string `json:"key_file,omitempty"`
 	// PaddingScheme optional; empty → sing-box default.
@@ -329,6 +332,7 @@ type NaiveConfig struct {
 	AllowInsecure bool   `json:"allow_insecure,omitempty"`
 	CertPEM       string `json:"cert_pem,omitempty"`
 	KeyPEM        string `json:"key_pem,omitempty"`
+	CertID        int64  `json:"cert_id,omitempty"`
 	CertFile      string `json:"cert_file,omitempty"`
 	KeyFile       string `json:"key_file,omitempty"`
 	// QuicCongestionControl since sing-box 1.13; empty → default bbr.
