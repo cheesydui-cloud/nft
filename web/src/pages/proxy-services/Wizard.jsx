@@ -268,21 +268,26 @@ export default function ProxyServiceWizard() {
       toast('请先填写域名（server_name / SNI）', 'error')
       return
     }
+    // VLESS ACME also flips security=tls; AnyTLS/Naive already TLS-only.
+    const isVless = protocol === 'vless'
     // Need a saved service id to attach cert to config_json.
     let sid = serviceId
     if (!sid) {
       try {
         // Save draft first so ACME has a service row.
+        const cfg = {
+          ...config,
+          server_name: sn,
+          ...(isVless ? { security: 'tls' } : {}),
+        }
+        // Prefer share_host = domain when empty (import-friendly).
+        if (!(cfg.share_host || '').trim()) cfg.share_host = sn
         const body = {
           name: name.trim() || `${protocol}-${Date.now()}`,
           protocol,
           core,
           sub_visible: subVisible,
-          config_json: {
-            ...config,
-            security: 'tls',
-            server_name: sn,
-          },
+          config_json: cfg,
         }
         const d = await api.post('/proxy-services', body)
         sid = d?.service?.id || d?.id
@@ -302,17 +307,18 @@ export default function ProxyServiceWizard() {
     setAcmeBusy(true)
     try {
       // Persist current form (except empty PEMs) before issue.
+      const patchCfg = {
+        ...config,
+        server_name: sn,
+        ...(isVless ? { security: 'tls' } : {}),
+        cert_pem: (config.cert_pem || '').trim() || undefined,
+        key_pem: (config.key_pem || '').trim() || undefined,
+      }
+      if (!(patchCfg.share_host || '').trim()) patchCfg.share_host = sn
       await api.patch(`/proxy-services/${sid}`, {
         name: name.trim() || undefined,
         sub_visible: subVisible,
-        config_json: {
-          ...config,
-          security: 'tls',
-          server_name: sn,
-          // leave empty PEMs so server preserves / ACME overwrites
-          cert_pem: (config.cert_pem || '').trim() || undefined,
-          key_pem: (config.key_pem || '').trim() || undefined,
-        },
+        config_json: patchCfg,
       }).catch(() => {})
       const d = await api.post(`/proxy-services/${sid}/acme`, {
         domain: sn,
@@ -320,7 +326,12 @@ export default function ProxyServiceWizard() {
         republish: true,
       })
       const svcCfg = d?.service?.config_json
-      let next = { ...config, security: 'tls', server_name: sn }
+      let next = {
+        ...config,
+        server_name: sn,
+        share_host: (config.share_host || '').trim() || sn,
+        ...(isVless ? { security: 'tls' } : {}),
+      }
       if (svcCfg) {
         try {
           const parsed = typeof svcCfg === 'string' ? JSON.parse(svcCfg) : svcCfg
@@ -1255,12 +1266,21 @@ export default function ProxyServiceWizard() {
                         placeholder="域名或 IP；建议填证书域名" />
                     </div>
                   </FormSection>
-                  <FormSection title="域名与证书" hint="TLS 必填；证书 CN/SAN 须覆盖 server_name。">
+                  <FormSection title="域名与证书" hint="TLS 必填。推荐 ACME 一键；调试可用自签（客户端须勾选 insecure）。">
                     <div className="grid sm:grid-cols-2 gap-3">
                       <div>
                         <label className="fl block mb-1">域名（SNI）*</label>
                         <input className="input-field font-mono" value={config.server_name || ''}
-                          onChange={e => setCfg('server_name', e.target.value)} placeholder="vpn.example.com" />
+                          onChange={e => {
+                            const v = e.target.value
+                            setConfig(c => ({
+                              ...c,
+                              server_name: v,
+                              // 同步空 share_host，订阅主机名与证书域名一致
+                              share_host: (c.share_host || '').trim() ? c.share_host : v,
+                            }))
+                          }} placeholder="vpn.example.com" />
+                        <p className="text-[11px] text-ink-mut mt-1">须解析到节点 IP（或中转入口）；证书 SAN 须覆盖此域名。</p>
                       </div>
                       <div>
                         <label className="fl block mb-1">客户端指纹</label>
@@ -1268,32 +1288,64 @@ export default function ProxyServiceWizard() {
                           options={REALITY_FP_OPTIONS.map(v => ({ value: v, label: v }))} />
                       </div>
                     </div>
-                    {(config.cert_configured || config.key_configured) && !(config.cert_pem || '').trim() && (
-                      <p className="text-[12px] text-ink-mut m-0">证书已配置（脱敏，留空保存保留原值）</p>
+                    {(config.cert_configured || config.key_configured || config.cert_info || config.acme_enabled) && !(config.cert_pem || '').trim() && (
+                      <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px] space-y-1">
+                        <div className="font-semibold text-ink">
+                          已保存证书{config.key_configured ? '与私钥' : ''}
+                          {config.acme_enabled ? ' · ACME 自动续期' : ''}
+                          {'（脱敏，留空保存将保留原值）'}
+                        </div>
+                        {(config.cert_info?.not_after || config.acme_not_after) && (
+                          <div className="font-mono text-[11px] text-ink-mut">
+                            有效期至 {config.cert_info?.not_after || config.acme_not_after}
+                            {config.acme_issuer ? ` · ${config.acme_issuer}` : ''}
+                          </div>
+                        )}
+                        {config.acme_last_error && (
+                          <div className="text-rose-600 text-[11px]">上次 ACME 错误：{config.acme_last_error}</div>
+                        )}
+                      </div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
+                        {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                      </button>
+                      <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
+                        生成自签证书（调试）
+                      </button>
+                      <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                        <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                        Staging
+                      </label>
+                    </div>
+                    <p className="text-[11.5px] text-ink-mut m-0 leading-relaxed">
+                      ACME 需系统设置里配置 Cloudflare API Token（DNS-01）。域名须在该 CF 账号下。自签仅调试，客户端要勾选 insecure。
+                    </p>
                     <div>
                       <label className="fl block mb-1">证书 PEM</label>
                       <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
-                        onChange={e => setCfg('cert_pem', e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+                        onChange={e => setCfg('cert_pem', e.target.value)}
+                        placeholder={config.cert_configured ? '已配置 · 留空保留原证书' : '-----BEGIN CERTIFICATE-----'} />
                       <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
                         onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
                     </div>
                     <div>
                       <label className="fl block mb-1">私钥 PEM</label>
                       <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
-                        onChange={e => setCfg('key_pem', e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" />
+                        onChange={e => setCfg('key_pem', e.target.value)}
+                        placeholder={config.key_configured ? '已配置 · 留空保留原私钥' : '-----BEGIN PRIVATE KEY-----'} />
                       <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
                         onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
                     </div>
                     <div>
                       <label className="fl block mb-1">ALPN（可选）</label>
                       <input className="input-field font-mono" value={config.alpn || ''}
-                        onChange={e => setCfg('alpn', e.target.value)} placeholder="h2,http/1.1" />
+                        onChange={e => setCfg('alpn', e.target.value)} placeholder="一般留空" />
                     </div>
                     <label className="flex items-center gap-2 text-sm">
                       <input type="checkbox" checked={!!config.allow_insecure}
                         onChange={e => setCfg('allow_insecure', e.target.checked)} />
-                      <span>客户端 allow insecure（分享 URI insecure=1）</span>
+                      <span>客户端 allow insecure（分享 URI insecure=1，自签时勾选）</span>
                     </label>
                   </FormSection>
                   <FormSection title="监听与高级" collapsible
@@ -1355,26 +1407,50 @@ export default function ProxyServiceWizard() {
                         onChange={e => setCfg('share_host', e.target.value)} />
                     </div>
                   </FormSection>
-                  <FormSection title="域名与证书" hint="TLS 必填。">
+                  <FormSection title="域名与证书" hint="TLS 必填。推荐 ACME 一键；调试可用自签。">
                     <div>
                       <label className="fl block mb-1">域名（SNI）*</label>
                       <input className="input-field font-mono" value={config.server_name || ''}
-                        onChange={e => setCfg('server_name', e.target.value)} placeholder="vpn.example.com" />
+                        onChange={e => {
+                          const v = e.target.value
+                          setConfig(c => ({
+                            ...c,
+                            server_name: v,
+                            share_host: (c.share_host || '').trim() ? c.share_host : v,
+                          }))
+                        }} placeholder="vpn.example.com" />
                     </div>
-                    {(config.cert_configured || config.key_configured) && !(config.cert_pem || '').trim() && (
-                      <p className="text-[12px] text-ink-mut m-0">证书已配置（脱敏，留空保存保留原值）</p>
+                    {(config.cert_configured || config.key_configured || config.acme_enabled) && !(config.cert_pem || '').trim() && (
+                      <div className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-[12.5px]">
+                        已保存证书{config.acme_enabled ? ' · ACME 自动续期' : ''}（脱敏）
+                        {config.acme_not_after ? ` · 至 ${config.acme_not_after}` : ''}
+                      </div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className="btn-primary text-sm" disabled={acmeBusy} onClick={issueACME}>
+                        {acmeBusy ? 'ACME 申请中…' : (config.acme_enabled || config.cert_configured ? '续期 / 重新申请 ACME' : '申请 Let\'s Encrypt（DNS-01）')}
+                      </button>
+                      <button type="button" className="btn-secondary text-sm" onClick={() => genKeys('selfsigned')}>
+                        生成自签证书（调试）
+                      </button>
+                      <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft">
+                        <input type="checkbox" checked={acmeStaging} onChange={e => setAcmeStaging(e.target.checked)} />
+                        Staging
+                      </label>
+                    </div>
                     <div>
                       <label className="fl block mb-1">证书 PEM</label>
                       <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.cert_pem || ''}
-                        onChange={e => setCfg('cert_pem', e.target.value)} />
+                        onChange={e => setCfg('cert_pem', e.target.value)}
+                        placeholder={config.cert_configured ? '已配置 · 留空保留' : '-----BEGIN CERTIFICATE-----'} />
                       <input type="file" accept=".pem,.crt,.cer,.txt" className="mt-1 text-xs"
                         onChange={e => readPemFile(e.target.files?.[0], 'cert_pem')} />
                     </div>
                     <div>
                       <label className="fl block mb-1">私钥 PEM</label>
                       <textarea className="input-field font-mono text-xs min-h-[88px]" value={config.key_pem || ''}
-                        onChange={e => setCfg('key_pem', e.target.value)} />
+                        onChange={e => setCfg('key_pem', e.target.value)}
+                        placeholder={config.key_configured ? '已配置 · 留空保留' : '-----BEGIN PRIVATE KEY-----'} />
                       <input type="file" accept=".pem,.key,.txt" className="mt-1 text-xs"
                         onChange={e => readPemFile(e.target.files?.[0], 'key_pem')} />
                     </div>

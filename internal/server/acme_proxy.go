@@ -31,52 +31,49 @@ func (s *Server) apiIssueProxyServiceACME(w http.ResponseWriter, r *http.Request
 		jsonErr(w, http.StatusNotFound, "服务不存在")
 		return
 	}
-	if !strings.EqualFold(svc.Protocol, "vless") {
-		jsonErr(w, http.StatusBadRequest, "仅 VLESS 支持 ACME 证书")
-		return
-	}
-	var body struct {
-		Domain    string `json:"domain"`
-		Email     string `json:"email"`
-		Staging   bool   `json:"staging"`
-		Republish *bool  `json:"republish"` // default true when instances exist
-	}
-	if r.Body != nil && r.ContentLength != 0 {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}
+	proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
+		if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
+			jsonErr(w, http.StatusBadRequest, "仅 VLESS / AnyTLS / Naive 支持 ACME 证书")
+			return
+		}
+		var body struct {
+			Domain    string `json:"domain"`
+			Email     string `json:"email"`
+			Staging   bool   `json:"staging"`
+			Republish *bool  `json:"republish"` // default true when instances exist
+		}
+		if r.Body != nil && r.ContentLength != 0 {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
 
-	var vc proxysvc.VLESSConfig
-	if err := json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &vc); err != nil {
-		jsonErr(w, http.StatusBadRequest, "配置无效: "+err.Error())
-		return
-	}
-	domain := strings.TrimSpace(body.Domain)
-	if domain == "" {
-		domain = strings.TrimSpace(vc.ServerName)
-	}
-	if domain == "" {
-		jsonErr(w, http.StatusBadRequest, "请填写域名（server_name 或 body.domain）")
-		return
-	}
+		// Read server_name from generic config map (works for vless/anytls/naive).
+		var cfgMap map[string]any
+		_ = json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &cfgMap)
+		domain := strings.TrimSpace(body.Domain)
+		if domain == "" {
+			if sn, _ := cfgMap["server_name"].(string); strings.TrimSpace(sn) != "" {
+				domain = strings.TrimSpace(sn)
+			}
+		}
+		if domain == "" {
+			jsonErr(w, http.StatusBadRequest, "请填写域名（server_name 或 body.domain）")
+			return
+		}
 
-	res, err := s.issueACMEForDomain(r.Context(), domain, body.Email, body.Staging)
-	if err != nil {
-		// Persist last error into config for UI.
-		_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
-		jsonErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
+		res, err := s.issueACMEForDomain(r.Context(), domain, body.Email, body.Staging)
+		if err != nil {
+			// Persist last error into config for UI.
+			_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
+			jsonErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
 
-	// Merge PEM + metadata into config.
-	vc.Security = "tls"
-	vc.ServerName = domain
-	vc.CertPEM = res.CertPEM
-	vc.KeyPEM = res.KeyPEM
-	cfgBytes, err := mergeACMEIntoConfig(svc.ConfigJSON, &vc, res)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+		// Merge PEM + metadata into config (protocol-aware).
+		cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	if err := db.UpdateProxyService(s.DB, id, svc.Name, cfgBytes, svc.SubVisible); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -180,25 +177,39 @@ func (s *Server) issueACMEForDomain(ctx context.Context, domain, email string, s
 }
 
 func mergeACMEIntoConfig(raw json.RawMessage, vc *proxysvc.VLESSConfig, res *acmeclient.Result) (json.RawMessage, error) {
-	var m map[string]any
-	if err := json.Unmarshal(nonzeroRaw(raw), &m); err != nil || m == nil {
-		m = map[string]any{}
+		return mergeACMEIntoConfigJSON(raw, "vless", vc.ServerName, res)
 	}
-	// Marshal VLESS core fields we care about.
-	m["security"] = "tls"
-	m["server_name"] = vc.ServerName
-	m["cert_pem"] = res.CertPEM
-	m["key_pem"] = res.KeyPEM
-	m["acme_enabled"] = true
-	m["acme_provider"] = "cloudflare-dns01"
-	m["acme_domain"] = res.Domain
-	m["acme_issuer"] = res.Issuer
-	m["acme_not_before"] = res.NotBefore.UTC().Format(time.RFC3339)
-	m["acme_not_after"] = res.NotAfter.UTC().Format(time.RFC3339)
-	m["acme_last_renew_at"] = time.Now().UTC().Format(time.RFC3339)
-	m["acme_last_error"] = ""
-	return json.Marshal(m)
-}
+
+	// mergeACMEIntoConfigJSON writes cert/key + ACME metadata for TLS-bearing protocols.
+	// VLESS also flips security=tls; AnyTLS/Naive already require TLS and only need PEM + SNI.
+	func mergeACMEIntoConfigJSON(raw json.RawMessage, protocol, domain string, res *acmeclient.Result) (json.RawMessage, error) {
+		var m map[string]any
+		if err := json.Unmarshal(nonzeroRaw(raw), &m); err != nil || m == nil {
+			m = map[string]any{}
+		}
+		proto := strings.ToLower(strings.TrimSpace(protocol))
+		if proto == "vless" {
+			m["security"] = "tls"
+		}
+		if strings.TrimSpace(domain) != "" {
+			m["server_name"] = domain
+		}
+		// Prefer certificate domain as share host when empty (client import friendlier).
+		if sh, _ := m["share_host"].(string); strings.TrimSpace(sh) == "" && strings.TrimSpace(domain) != "" {
+			m["share_host"] = domain
+		}
+		m["cert_pem"] = res.CertPEM
+		m["key_pem"] = res.KeyPEM
+		m["acme_enabled"] = true
+		m["acme_provider"] = "cloudflare-dns01"
+		m["acme_domain"] = res.Domain
+		m["acme_issuer"] = res.Issuer
+		m["acme_not_before"] = res.NotBefore.UTC().Format(time.RFC3339)
+		m["acme_not_after"] = res.NotAfter.UTC().Format(time.RFC3339)
+		m["acme_last_renew_at"] = time.Now().UTC().Format(time.RFC3339)
+		m["acme_last_error"] = ""
+		return json.Marshal(m)
+	}
 
 func (s *Server) patchProxyConfigACMEMeta(svc *db.ProxyService, domain, issuer string, notAfter *time.Time, lastErr string) error {
 	if svc == nil {
@@ -252,18 +263,13 @@ func (s *Server) publishProxyToNodes(serviceID int64, nodeIDs []int64, forceCore
 		return 0, len(nodeIDs)
 	}
 	cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
-	if err != nil {
-		return 0, len(nodeIDs)
-	}
-	if strings.EqualFold(svc.Protocol, "vless") {
-		var vc proxysvc.VLESSConfig
-		if err := json.Unmarshal(cfg, &vc); err == nil {
-			if err := proxysvc.ValidateVLESSDeploy(&vc); err != nil {
-				return 0, len(nodeIDs)
-			}
+		if err != nil {
+			return 0, len(nodeIDs)
 		}
-	}
-	_ = db.UpdateProxyService(s.DB, serviceID, svc.Name, cfg, svc.SubVisible)
+		if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
+			return 0, len(nodeIDs)
+		}
+		_ = db.UpdateProxyService(s.DB, serviceID, svc.Name, cfg, svc.SubVisible)
 	svc.ConfigJSON = cfg
 	defaultPort := proxysvc.ListenPortFromConfig(cfg)
 	cfgShare := proxysvc.ShareHostFromConfig(cfg)
@@ -373,66 +379,66 @@ func (s *Server) runACMERenewPass() {
 		return
 	}
 	for _, svc := range list {
-		if svc == nil || !strings.EqualFold(svc.Protocol, "vless") {
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &m); err != nil {
-			continue
-		}
-		enabled, _ := m["acme_enabled"].(bool)
-		if !enabled {
-			if s, ok := m["acme_enabled"].(string); !ok || !strings.EqualFold(s, "true") {
+			if svc == nil {
 				continue
 			}
-		}
-		domain, _ := m["acme_domain"].(string)
-		if domain == "" {
-			domain, _ = m["server_name"].(string)
-		}
-		if domain == "" {
-			continue
-		}
-		// Skip if still valid for > 30 days.
-		if na, _ := m["acme_not_after"].(string); na != "" {
-			if t, err := time.Parse(time.RFC3339, na); err == nil {
-				if time.Until(t) > 30*24*time.Hour {
+			proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
+			if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
+				continue
+			}
+			var m map[string]any
+			if err := json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &m); err != nil {
+				continue
+			}
+			enabled, _ := m["acme_enabled"].(bool)
+			if !enabled {
+				if s, ok := m["acme_enabled"].(string); !ok || !strings.EqualFold(s, "true") {
 					continue
 				}
 			}
-		} else if certPEM, _ := m["cert_pem"].(string); certPEM != "" {
-			info := proxysvc.InspectTLSCert(certPEM, "", domain)
-			if info.DaysLeft > 30 && !info.Expired {
+			domain, _ := m["acme_domain"].(string)
+			if domain == "" {
+				domain, _ = m["server_name"].(string)
+			}
+			if domain == "" {
 				continue
 			}
+			// Skip if still valid for > 30 days.
+			if na, _ := m["acme_not_after"].(string); na != "" {
+				if t, err := time.Parse(time.RFC3339, na); err == nil {
+					if time.Until(t) > 30*24*time.Hour {
+						continue
+					}
+				}
+			} else if certPEM, _ := m["cert_pem"].(string); certPEM != "" {
+				info := proxysvc.InspectTLSCert(certPEM, "", domain)
+				if info.DaysLeft > 30 && !info.Expired {
+					continue
+				}
+			}
+			log.Printf("acme: renewing cert for service %d (%s) domain %s", svc.ID, proto, domain)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			res, err := s.issueACMEForDomain(ctx, domain, "", false)
+			cancel()
+			if err != nil {
+				log.Printf("acme: renew failed service=%d: %v", svc.ID, err)
+				_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
+				continue
+			}
+			cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
+			if err != nil {
+				continue
+			}
+			if err := db.UpdateProxyService(s.DB, svc.ID, svc.Name, cfgBytes, svc.SubVisible); err != nil {
+				log.Printf("acme: save failed service=%d: %v", svc.ID, err)
+				continue
+			}
+			// Republish instances so agents get new cert.
+			nodeIDs := proxyInstanceNodeIDs(s.DB, svc.ID)
+			ok, fail := s.publishProxyToNodes(svc.ID, nodeIDs, false)
+			log.Printf("acme: renewed service=%d domain=%s publish ok=%d fail=%d", svc.ID, domain, ok, fail)
 		}
-		log.Printf("acme: renewing cert for service %d domain %s", svc.ID, domain)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		res, err := s.issueACMEForDomain(ctx, domain, "", false)
-		cancel()
-		if err != nil {
-			log.Printf("acme: renew failed service=%d: %v", svc.ID, err)
-			_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
-			continue
-		}
-		var vc proxysvc.VLESSConfig
-		_ = json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &vc)
-		vc.Security = "tls"
-		vc.ServerName = domain
-		cfgBytes, err := mergeACMEIntoConfig(svc.ConfigJSON, &vc, res)
-		if err != nil {
-			continue
-		}
-		if err := db.UpdateProxyService(s.DB, svc.ID, svc.Name, cfgBytes, svc.SubVisible); err != nil {
-			log.Printf("acme: save failed service=%d: %v", svc.ID, err)
-			continue
-		}
-		// Republish instances so agents get new cert.
-		nodeIDs := proxyInstanceNodeIDs(s.DB, svc.ID)
-		ok, fail := s.publishProxyToNodes(svc.ID, nodeIDs, false)
-		log.Printf("acme: renewed service=%d domain=%s publish ok=%d fail=%d", svc.ID, domain, ok, fail)
 	}
-}
 
 func proxyInstanceNodeIDs(d *sql.DB, serviceID int64) []int64 {
 	inst, err := db.ListProxyInstances(d, serviceID)
