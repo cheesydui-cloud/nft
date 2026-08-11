@@ -138,6 +138,13 @@ type Rule struct {
 	Proto           string        `json:"proto"`
 	ExitHost        string        `json:"exit_host"`
 	ExitPort        int           `json:"exit_port"`
+	// ExitType is "direct" (default L4 to exit_host:exit_port) or "socks5"
+	// (userspace CONNECT via ExitURI to that target).
+	ExitType string `json:"exit_type"`
+	// ExitURI is the SOCKS5 proxy URI (socks5://user:pass@host:port) when
+	// ExitType is socks5. Empty for direct exits. Passwords live in this URI;
+	// list/detail APIs may redact credentials before returning to the client.
+	ExitURI         string        `json:"exit_uri,omitempty"`
 	EntryListenPort int           `json:"entry_listen_port"`
 	Comment         string        `json:"comment"`
 	Disabled        bool          `json:"disabled"`
@@ -822,21 +829,22 @@ func RecordUpgradeResult(d DBTX, nodeID int64, version, status, errText string) 
 
 // Rules
 
-// exit_uri exists as a column (migration 0010) but is no longer read or
-// written: user proxy URIs are kept client-side only, so the column is left
-// out of the projection rather than dropped (dropping needs a table rebuild).
-// bandwidth_mbps is likewise dead (shaping moved to the per-grant rate limit
-// on user_nodes) and stays out of the projection.
-const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids,exit_bytes`
+// bandwidth_mbps is dead (shaping moved to the per-grant rate limit on
+// user_nodes) and stays out of the projection. exit_uri / exit_type are live
+// for SOCKS5 chain exits (migration 0010 + 0062).
+const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,COALESCE(exit_type,'direct'),COALESCE(exit_uri,''),entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids,exit_bytes`
 
 func scanRule(r rowScanner) (*Rule, error) {
 	rl := &Rule{}
 	var disabled int
 	var viaJSON string
-	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON, &rl.ExitBytes); err != nil {
+	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.ExitType, &rl.ExitURI, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON, &rl.ExitBytes); err != nil {
 		return nil, err
 	}
 	rl.Disabled = disabled == 1
+	if rl.ExitType == "" {
+		rl.ExitType = "direct"
+	}
 	rl.ViaNodeIDs = decodeViaNodeIDs(viaJSON)
 	return rl, nil
 }

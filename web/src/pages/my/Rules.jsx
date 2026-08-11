@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components/Layout'
 import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
-import { RuleFormModal, ruleFormToPayload } from '../../components/RuleFormModal'
+import { RuleFormModal, ruleFormToPayload, isChainRule } from '../../components/RuleFormModal'
 import { parseURIs, landingIndex, mergeLanding, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, loadLocalRoles, nodeHasRole, ROLE_LANDING, enrichRuleWithLanding } from '../../lib/landing'
 import { copyToClipboard } from '../../lib/clipboard'
 import { formatRuleCopyText } from '../../lib/relayCopy'
@@ -15,8 +15,18 @@ export default function MyRules() {
   const [loading, setLoading] = useState(true)
   const [serverLanding, setServerLanding] = useState([])
   const [createOpen, setCreateOpen] = useState(false)
+  const [createVariant, setCreateVariant] = useState('port')
   const [createInitial, setCreateInitial] = useState(null)
   const [search, setSearch] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = searchParams.get('tab') === 'chain' ? 'chain' : 'port'
+  const setTab = (t) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (t === 'chain') next.set('tab', 'chain'); else next.delete('tab')
+      return next
+    }, { replace: true })
+  }
   const [probeAllTrigger, setProbeAllTrigger] = useState(0)
   const navigate = useNavigate()
   const toast = useToast()
@@ -85,7 +95,11 @@ export default function MyRules() {
     if (!(await confirm({ title: '删除规则', message: `确认删除规则「${rule.name}」？`, confirmText: '删除', danger: true }))) return
     try { await api.del(`/my/rules/${rule.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
-  const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
+  const openCreate = (variant = tab) => {
+    setCreateVariant(variant)
+    setCreateInitial(null)
+    setCreateOpen(true)
+  }
   const copyRule = async (rule) => {
     const text = formatRuleCopyText(rule, {
       username: user?.username,
@@ -106,30 +120,55 @@ export default function MyRules() {
 
   const q = search.trim().toLowerCase()
   const enriched = rules.map(enrich)
-  const filtered = !q ? enriched : enriched.filter(r => {
+  const portRules = enriched.filter(r => !isChainRule(r, node_by_id))
+  const chainRules = enriched.filter(r => isChainRule(r, node_by_id))
+  const tabbed = tab === 'chain' ? chainRules : portRules
+  const filtered = !q ? tabbed : tabbed.filter(r => {
     const node = node_by_id?.[r.node_id]
     const exit = r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : ''
-    return [r.name, node?.name, r.entry, exit].some(v => (v || '').toLowerCase().includes(q))
+    return [r.name, node?.name, r.entry, exit, r.exit_uri].some(v => (v || '').toLowerCase().includes(q))
   })
 
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="我的规则" count={rules.length} />
+      <PageHeader title="代理转发" count={rules.length} />
 
       <Panel fill>
+        <div className="flex items-center gap-1 px-[22px] pt-3 border-b border-line-soft">
+          {[
+            { id: 'port', label: '端口转发', count: portRules.length },
+            { id: 'chain', label: '链式转发', count: chainRules.length },
+          ].map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`px-3.5 py-2 text-[13.5px] font-medium border-b-2 -mb-px transition-colors cursor-pointer bg-transparent ${
+                tab === t.id
+                  ? 'border-emerald-600 text-ink'
+                  : 'border-transparent text-ink-mut hover:text-ink'
+              }`}
+            >
+              {t.label}
+              <span className="ml-1.5 text-[11px] text-ink-mut">{t.count}</span>
+            </button>
+          ))}
+        </div>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索规则名称、节点、目标…" />
           <ToolbarActions>
             <ToolbarButton onClick={() => setProbeAllTrigger(t => t + 1)} secondary>测试所有</ToolbarButton>
-            <ToolbarButton onClick={openCreate}>＋ 创建规则</ToolbarButton>
+            <ToolbarButton onClick={() => openCreate(tab)}>
+              {tab === 'chain' ? '＋ 链式转发' : '＋ 端口转发'}
+            </ToolbarButton>
           </ToolbarActions>
         </PanelToolbar>
 
         {rules.length === 0 ? (
-          <Empty title="暂无规则" desc="点击右上角「创建规则」开始。" />
+          <Empty title="暂无规则" desc={tab === 'chain' ? '点击右上角「链式转发」开始。' : '点击右上角「端口转发」开始。'} />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配规则" desc="试试别的关键词。" />
+          <Empty title="无匹配规则" desc={tab === 'chain' ? '当前没有链式转发，或筛选无结果。' : '当前没有端口转发，或筛选无结果。'} />
         ) : (
           <TableScroll>
             <RulesTable variant="my" rules={filtered} nodeMap={node_by_id} blurred={blurred}
@@ -142,7 +181,10 @@ export default function MyRules() {
       </div>
 
       <RuleFormModal
-        open={createOpen} onClose={() => setCreateOpen(false)} title="创建规则" submitLabel="创建规则"
+        open={createOpen} onClose={() => setCreateOpen(false)}
+        title={createVariant === 'chain' ? '创建链式转发' : '创建端口转发'}
+        submitLabel="创建"
+        variant={createVariant}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate} showStack={false}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))

@@ -299,8 +299,11 @@ func CreateRule(d DBTX, r *Rule) (int64, error) {
 	if r.EntryFamily == "" {
 		r.EntryFamily = "v4"
 	}
-	res, err := d.Exec(`INSERT INTO rules(node_id,owner_id,name,proto,exit_host,exit_port,comment,created_at,entry_family,via_node_ids) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		r.NodeID, r.OwnerID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.Comment, now(), r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs))
+	if r.ExitType == "" {
+		r.ExitType = "direct"
+	}
+	res, err := d.Exec(`INSERT INTO rules(node_id,owner_id,name,proto,exit_host,exit_port,exit_type,exit_uri,comment,created_at,entry_family,via_node_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.NodeID, r.OwnerID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.ExitType, r.ExitURI, r.Comment, now(), r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs))
 	if err != nil {
 		return 0, err
 	}
@@ -319,8 +322,11 @@ func UpdateRuleHeader(d DBTX, r *Rule) error {
 	if r.EntryFamily == "" {
 		r.EntryFamily = "v4"
 	}
-	_, err := d.Exec(`UPDATE rules SET node_id=?,owner_id=?,name=?,proto=?,exit_host=?,exit_port=?,comment=?,entry_family=?,via_node_ids=? WHERE id=?`,
-		r.NodeID, r.OwnerID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.Comment, r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs), r.ID)
+	if r.ExitType == "" {
+		r.ExitType = "direct"
+	}
+	_, err := d.Exec(`UPDATE rules SET node_id=?,owner_id=?,name=?,proto=?,exit_host=?,exit_port=?,exit_type=?,exit_uri=?,comment=?,entry_family=?,via_node_ids=? WHERE id=?`,
+		r.NodeID, r.OwnerID, r.Name, r.Proto, r.ExitHost, r.ExitPort, r.ExitType, r.ExitURI, r.Comment, r.EntryFamily, encodeViaNodeIDs(r.ViaNodeIDs), r.ID)
 	return err
 }
 

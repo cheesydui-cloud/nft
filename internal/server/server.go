@@ -603,15 +603,24 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 				}
 			}
 		}
-		if resolver.IsHostname(rh.TargetHost) {
-			rule.DestHost = rh.TargetHost
-		} else {
-			rule.DestIP = rh.TargetHost
+			if resolver.IsHostname(rh.TargetHost) {
+				rule.DestHost = rh.TargetHost
+			} else {
+				rule.DestIP = rh.TargetHost
+			}
+			// SOCKS5 exit only on the final hop of a rule: intermediate hops
+			// still L4-dial the next relay listen port.
+			if r := ruleMap[rh.RuleID]; r != nil && r.ExitType == "socks5" && r.ExitURI != "" {
+				if n := hopCounts[rh.RuleID]; n > 0 && rh.Position == n-1 {
+					rule.ExitProxy = r.ExitURI
+					// SOCKS CONNECT requires the userspace dialer.
+					rule.Mode = nft.ModeUserspace
+				}
+			}
+			rules = append(rules, rule)
 		}
-		rules = append(rules, rule)
+		return rules
 	}
-	return rules
-}
 
 // computeRev returns a stable hash of the ruleset so a reconnecting
 // agent whose last_applied_rev matches can be skipped. Determinism

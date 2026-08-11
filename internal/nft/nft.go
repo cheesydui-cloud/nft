@@ -54,6 +54,11 @@ type Rule struct {
 		// per-rule cap.
 	ShapeGroup int64 `json:"shape_group,omitempty"`
 	RateMBytes int   `json:"rate_mbytes,omitempty"`
+	// ExitProxy is a SOCKS5 URI (socks5://user:pass@host:port) for the final
+	// hop only. When set, the userspace dialer CONNECTs through that proxy to
+	// DestIP/DestHost:DestPort instead of dialing the target directly. Empty
+	// means a plain TCP dial (or kernel DNAT). Intermediate hops never set this.
+	ExitProxy string `json:"exit_proxy,omitempty"`
 }
 
 // EffectiveMode normalizes the mode: an empty or unrecognized value means

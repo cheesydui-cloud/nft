@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,10 +56,23 @@ var relayLinger = 60 * time.Second
 // long-lived sessions (e.g. an interactive shell left open).
 var relayIdleTimeout = 10 * time.Minute
 
-type target struct{ addr string }
+// target is the hot-updatable dial destination for a userspace listener.
+// exitProxy, when non-empty, forces every dial through SOCKS5 CONNECT.
+type target struct {
+	addr      string
+	exitProxy string
+}
 
 func targetAddr(r nft.Rule) string {
-	return net.JoinHostPort(r.DestIP, strconv.Itoa(r.DestPort))
+	host := r.DestIP
+	if host == "" {
+		host = r.DestHost
+	}
+	return net.JoinHostPort(host, strconv.Itoa(r.DestPort))
+}
+
+func targetOf(r nft.Rule) *target {
+	return &target{addr: targetAddr(r), exitProxy: strings.TrimSpace(r.ExitProxy)}
 }
 
 // setKeepAlive enables TCP keepalive on c when it is a TCP connection; it is a
@@ -68,17 +82,6 @@ func setKeepAlive(c net.Conn) {
 		_ = tcp.SetKeepAlive(true)
 		_ = tcp.SetKeepAlivePeriod(keepAlivePeriod)
 	}
-}
-
-// dialUpstream is the single entry point for opening an upstream leg, so every
-// pooled or on-demand connection gets the same dial timeout and keepalive.
-func dialUpstream(addr string) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, dialTimeout)
-	if err != nil {
-		return nil, err
-	}
-	setKeepAlive(c)
-	return c, nil
 }
 
 // makeLimiter converts a Mbps cap into a byte/sec token-bucket limiter, or nil

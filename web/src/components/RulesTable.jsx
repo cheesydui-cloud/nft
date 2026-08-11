@@ -122,7 +122,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                 <span className="inline-flex items-center gap-1.5 font-mono text-ink-soft">
                   <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
                   <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
-                  {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
+                  {r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
                 </span>
               </td>
               {isAdmin && (
@@ -187,8 +187,15 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
                     if (r.relay_uri) return proxyRow(r.relay_uri, null)
                     return (
                       <div className="flex items-center gap-1.5 flex-wrap text-ink-soft">
-                        <ExitKindBadge kind={r.exit_kind} protocol={r.landing_protocol} />
+                        {r.exit_type === 'socks5'
+                          ? <Badge color="blue">SK5</Badge>
+                          : <ExitKindBadge kind={r.exit_kind} protocol={r.landing_protocol} />}
                         {exitLabel}
+                        {r.exit_type === 'socks5' && r.exit_uri && (
+                          <span className="text-[11px] text-ink-mut font-mono truncate max-w-[180px]" title={r.exit_uri}>
+                            via {r.exit_uri}
+                          </span>
+                        )}
                       </div>
                     )
                   })()}

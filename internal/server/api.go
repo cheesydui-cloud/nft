@@ -2261,6 +2261,10 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 		Proto     string `json:"proto"`
 		Exit      string `json:"exit"`
+		// ExitType/ExitURI: "direct" (default) or "socks5" with socks5:// proxy URI.
+		// For socks5, Exit is the CONNECT target host:port.
+		ExitType  string `json:"exit_type"`
+		ExitURI   string `json:"exit_uri"`
 		EntryPort int    `json:"entry_port"`
 		Comment   string `json:"comment"`
 		// ExitMode is the exit-segment forwarding mode: the only hop of a
@@ -2291,10 +2295,22 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
 		return
 	}
-	exitHost, exitPort, err := parseExit(body.Exit)
+	pe, err := parseExitFull(body.Exit, body.ExitType, body.ExitURI)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if pe.Type == "socks5" {
+		body.ExitMode = exitMode
+		// Legacy mode alias for single-node rules must also be userspace.
+		if body.Mode == "" || body.Mode == "kernel" {
+			body.Mode = exitMode
+		}
 	}
 	entryFamily, err := normalizeEntryFamily(body.EntryFamily)
 	if err != nil {
@@ -2315,7 +2331,11 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		// even on this path.
 		hops = make([]db.HopInput, len(body.Hops))
 		for i, h := range body.Hops {
-			hops[i] = db.HopInput{NodeID: h.NodeID, Mode: h.Mode, ViaNodeID: h.NodeID}
+			mode := h.Mode
+			if pe.Type == "socks5" && i == len(body.Hops)-1 {
+				mode = "userspace"
+			}
+			hops[i] = db.HopInput{NodeID: h.NodeID, Mode: mode, ViaNodeID: h.NodeID}
 		}
 		if name, bad := s.exitHopForbidsDirect(hops); bad {
 			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("节点 %s 禁止直接转发，必须在其后选择线路层", name))
@@ -2374,8 +2394,10 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		OwnerID:     ownerID,
 		Name:        name,
 		Proto:       proto,
-		ExitHost:    exitHost,
-		ExitPort:    exitPort,
+		ExitHost:    pe.Host,
+		ExitPort:    pe.Port,
+		ExitType:    pe.Type,
+		ExitURI:     pe.URI,
 		Comment:     strings.TrimSpace(body.Comment),
 		EntryFamily: entryFamily,
 		ViaNodeIDs:  vias,
@@ -2586,126 +2608,165 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "规则不存在")
 		return
 	}
-	var body struct {
-		NodeID    int64  `json:"node_id"`
-		OwnerID   *int64 `json:"owner_id,omitempty"`
-		Name      string `json:"name"`
-		Proto     string `json:"proto"`
-		Exit      string `json:"exit"`
-		EntryPort int    `json:"entry_port"`
-		Comment   string `json:"comment"`
-		// ExitMode is the exit-segment forwarding mode (single hop or a
-		// chain's last hop); empty keeps the current mode so clients that
-		// don't send it can't silently reset a userspace exit back to kernel.
-		// Mode is its legacy alias honored for single-node rules only — see
-		// hopsForChain.
-		Mode     string `json:"mode"`
-		ExitMode string `json:"exit_mode"`
-		Hops     []struct {
-			NodeID int64  `json:"node_id"`
-			Mode   string `json:"mode"`
-		} `json:"hops"`
-		// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
-		// sent" (keep the stored path — old clients must not silently strip
-		// layers) apart from an explicit empty list (clear the layers).
-		ViaNodeIDs *[]int64 `json:"via_node_ids"`
-		// EntryFamily selects the entry endpoint's IP family: "v4" (default),
-		// "v6", or "both". Empty defaults to "v4".
-		EntryFamily string `json:"entry_family"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		jsonErr(w, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-	name := strings.TrimSpace(body.Name)
-	proto := strings.ToLower(strings.TrimSpace(body.Proto))
-	if name == "" || !validRuleProto(proto) {
-		jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
-		return
-	}
-	exitHost, exitPort, err := parseExit(body.Exit)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	entryFamily, err := normalizeEntryFamily(body.EntryFamily)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	// Three ways to resolve the chain, in priority order:
-	//   node_id / via_node_ids -> re-derive from the selected entry node and
-	//               middle-layer path (single/composite); this is how the entry
-	//               node or the via path gets switched. A sent via_node_ids
-	//               field alone (even with node_id absent) re-derives so an
-	//               explicit empty list can clear the layers.
-	//   hops     -> explicit chain (reorder/mode edits).
-	//   neither  -> keep the existing chain; RegenerateRule reuses each node's
-	//               current listen port so a header-only edit doesn't churn the
-	//               entry endpoint or installed ports.
-	var hops []db.HopInput
-	switch {
-	case body.NodeID > 0 || body.ViaNodeIDs != nil:
-		entryID := body.NodeID
-		if entryID == 0 {
-			entryID = rl.NodeID
+		var body struct {
+			NodeID    int64  `json:"node_id"`
+			OwnerID   *int64 `json:"owner_id,omitempty"`
+			Name      string `json:"name"`
+			Proto     string `json:"proto"`
+			Exit      string `json:"exit"`
+			ExitType  string `json:"exit_type"`
+			ExitURI   string `json:"exit_uri"`
+			EntryPort int    `json:"entry_port"`
+			Comment   string `json:"comment"`
+			// ExitMode is the exit-segment forwarding mode (single hop or a
+			// chain's last hop); empty keeps the current mode so clients that
+			// don't send it can't silently reset a userspace exit back to kernel.
+			// Mode is its legacy alias honored for single-node rules only — see
+			// hopsForChain.
+			Mode     string `json:"mode"`
+			ExitMode string `json:"exit_mode"`
+			Hops     []struct {
+				NodeID int64  `json:"node_id"`
+				Mode   string `json:"mode"`
+			} `json:"hops"`
+			// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
+			// sent" (keep the stored path — old clients must not silently strip
+			// layers) apart from an explicit empty list (clear the layers).
+			ViaNodeIDs *[]int64 `json:"via_node_ids"`
+			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
+			// "v6", or "both". Empty defaults to "v4".
+			EntryFamily string `json:"entry_family"`
 		}
-		vias := rl.ViaNodeIDs
-		if body.ViaNodeIDs != nil {
-			vias = *body.ViaNodeIDs
-		}
-		derived, composite, derr := s.hopsForChain(entryID, vias, body.Mode, body.ExitMode)
-		if derr != nil {
-			jsonErr(w, http.StatusBadRequest, derr.Error())
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
 			return
 		}
-		hops = derived
-		// A same-entry edit without an explicit exit-segment mode keeps the
-		// exit hop's current mode, so clients that don't send one can't
-		// silently reset a userspace exit back to kernel. Any chain beyond a
-		// bare single node treats only exit_mode as explicit — the legacy mode
-		// field never was an exit-segment request for them.
-		explicit := body.ExitMode != "" || (!composite && body.Mode != "")
-		if !explicit && entryID == rl.NodeID {
-			if existing, _ := db.ListRuleHops(s.DB, id); len(existing) > 0 {
-				hops[len(hops)-1].Mode = existing[len(existing)-1].Mode
+		name := strings.TrimSpace(body.Name)
+		proto := strings.ToLower(strings.TrimSpace(body.Proto))
+		if name == "" || !validRuleProto(proto) {
+			jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
+			return
+		}
+		// Absent exit_type/exit_uri keeps the stored socks settings when the
+		// client only sends exit host:port (legacy). Explicit exit_type=direct
+		// clears socks. A redacted exit_uri from list/detail must not overwrite
+		// the stored secret.
+		exitType := body.ExitType
+		exitURI := body.ExitURI
+		if exitType == "" && body.ExitURI == "" {
+			exitType = rl.ExitType
+			exitURI = rl.ExitURI
+		} else if isRedactedExitURI(exitURI) && rl.ExitType == "socks5" && rl.ExitURI != "" {
+			exitURI = rl.ExitURI
+			if exitType == "" {
+				exitType = "socks5"
 			}
 		}
-		rl.NodeID = entryID
-		rl.ViaNodeIDs = vias
-	case len(body.Hops) == 0:
-		existing, err := db.ListRuleHops(s.DB, id)
+		pe, err := parseExitFull(body.Exit, exitType, exitURI)
 		if err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
+			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if len(existing) == 0 {
-			jsonErr(w, http.StatusBadRequest, "至少添加一个节点")
+		exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		hops = make([]db.HopInput, len(existing))
-		for i, h := range existing {
-			hops[i] = db.HopInput{NodeID: h.NodeID, Mode: h.Mode, ViaNodeID: h.ViaNodeID}
+		if pe.Type == "socks5" {
+			body.ExitMode = exitMode
+			if body.Mode == "" || body.Mode == "kernel" {
+				body.Mode = exitMode
+			}
 		}
-		// A header-only edit still owns the exit segment: an explicit
-		// exit_mode (or the single-node legacy mode) applies to the last hop
-		// instead of being silently dropped with a 200.
-		if body.ExitMode != "" {
-			hops[len(hops)-1].Mode = body.ExitMode
-		} else if body.Mode != "" && len(hops) == 1 {
-			hops[0].Mode = body.Mode
+		entryFamily, err := normalizeEntryFamily(body.EntryFamily)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
 		}
-	default:
-		hops = make([]db.HopInput, len(body.Hops))
-		for i, h := range body.Hops {
-			hops[i] = db.HopInput{NodeID: h.NodeID, Mode: h.Mode, ViaNodeID: h.NodeID}
+		// Three ways to resolve the chain, in priority order:
+		//   node_id / via_node_ids -> re-derive from the selected entry node and
+		//               middle-layer path (single/composite); this is how the entry
+		//               node or the via path gets switched. A sent via_node_ids
+		//               field alone (even with node_id absent) re-derives so an
+		//               explicit empty list can clear the layers.
+		//   hops     -> explicit chain (reorder/mode edits).
+		//   neither  -> keep the existing chain; RegenerateRule reuses each node's
+		//               current listen port so a header-only edit doesn't churn the
+		//               entry endpoint or installed ports.
+		var hops []db.HopInput
+		switch {
+		case body.NodeID > 0 || body.ViaNodeIDs != nil:
+			entryID := body.NodeID
+			if entryID == 0 {
+				entryID = rl.NodeID
+			}
+			vias := rl.ViaNodeIDs
+			if body.ViaNodeIDs != nil {
+				vias = *body.ViaNodeIDs
+			}
+			derived, composite, derr := s.hopsForChain(entryID, vias, body.Mode, body.ExitMode)
+			if derr != nil {
+				jsonErr(w, http.StatusBadRequest, derr.Error())
+				return
+			}
+			hops = derived
+			// A same-entry edit without an explicit exit-segment mode keeps the
+			// exit hop's current mode, so clients that don't send one can't
+			// silently reset a userspace exit back to kernel. Any chain beyond a
+			// bare single node treats only exit_mode as explicit — the legacy mode
+			// field never was an exit-segment request for them.
+			explicit := body.ExitMode != "" || (!composite && body.Mode != "")
+			if !explicit && entryID == rl.NodeID {
+				if existing, _ := db.ListRuleHops(s.DB, id); len(existing) > 0 {
+					hops[len(hops)-1].Mode = existing[len(existing)-1].Mode
+				}
+			}
+			if pe.Type == "socks5" && len(hops) > 0 {
+				hops[len(hops)-1].Mode = "userspace"
+			}
+			rl.NodeID = entryID
+			rl.ViaNodeIDs = vias
+		case len(body.Hops) == 0:
+			existing, err := db.ListRuleHops(s.DB, id)
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if len(existing) == 0 {
+				jsonErr(w, http.StatusBadRequest, "至少添加一个节点")
+				return
+			}
+			hops = make([]db.HopInput, len(existing))
+			for i, h := range existing {
+				hops[i] = db.HopInput{NodeID: h.NodeID, Mode: h.Mode, ViaNodeID: h.ViaNodeID}
+			}
+			// A header-only edit still owns the exit segment: an explicit
+			// exit_mode (or the single-node legacy mode) applies to the last hop
+			// instead of being silently dropped with a 200.
+			if body.ExitMode != "" {
+				hops[len(hops)-1].Mode = body.ExitMode
+			} else if body.Mode != "" && len(hops) == 1 {
+				hops[0].Mode = body.Mode
+			}
+			if pe.Type == "socks5" {
+				hops[len(hops)-1].Mode = "userspace"
+			}
+		default:
+			hops = make([]db.HopInput, len(body.Hops))
+			for i, h := range body.Hops {
+				mode := h.Mode
+				if pe.Type == "socks5" && i == len(body.Hops)-1 {
+					mode = "userspace"
+				}
+				hops[i] = db.HopInput{NodeID: h.NodeID, Mode: mode, ViaNodeID: h.NodeID}
+			}
 		}
-	}
-	if body.EntryPort > 0 && len(hops) > 0 {
-		hops[0].DesiredPort = body.EntryPort
-	}
-	rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, exitHost, exitPort
-	rl.Comment = strings.TrimSpace(body.Comment)
+		if body.EntryPort > 0 && len(hops) > 0 {
+			hops[0].DesiredPort = body.EntryPort
+		}
+		rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, pe.Host, pe.Port
+		rl.ExitType, rl.ExitURI = pe.Type, pe.URI
+		rl.Comment = strings.TrimSpace(body.Comment)
 	// Absent entry_family keeps the stored family — only an explicit value
 	// changes it, mirroring how an empty mode keeps the exit segment.
 	if entryFamily != "" {
@@ -3535,114 +3596,129 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "用户已过期")
 		return
 	}
-	var body struct {
-		NodeID    int64  `json:"node_id"`
-		Name      string `json:"name"`
-		Proto     string `json:"proto"`
-		Exit      string `json:"exit"`
-		EntryPort int    `json:"entry_port"`
-		Comment   string `json:"comment"`
-		// ExitMode is the exit-segment forwarding mode: the only hop of a
-		// single-node rule, or the last hop of a composite chain (whose
-		// inter-node hops take their modes from the node config). Mode is its
-		// legacy alias honored for single-node rules only — see hopsForChain.
-		Mode     string `json:"mode"`
-		ExitMode string `json:"exit_mode"`
-		// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
-		// sent" apart from an explicit empty list; each via is authorized on
-		// its own grant just like the entry node.
-		ViaNodeIDs *[]int64 `json:"via_node_ids"`
-		// EntryFamily selects the entry endpoint's IP family: "v4" (default),
-		// "v6", or "both". Empty defaults to "v4".
-		EntryFamily string `json:"entry_family"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		jsonErr(w, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-	name := strings.TrimSpace(body.Name)
-	proto := strings.ToLower(strings.TrimSpace(body.Proto))
-	if name == "" || !validRuleProto(proto) {
-		jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
-		return
-	}
-	exitHost, exitPort, err := parseExit(body.Exit)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	entryFamily, err := normalizeEntryFamily(body.EntryFamily)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if body.NodeID == 0 {
-		jsonErr(w, http.StatusBadRequest, "node_id 不能为空")
-		return
-	}
-
-	// The grant on the selected node both authorizes the request and carries
-	// the per-node forward cap. A composite node is the unit of authorization:
-	// granting it authorizes the whole chain, so the check is on the composite
-	// itself, not its sub-nodes.
-	grant, gerr := db.GetNodeGrant(s.DB, u.ID, body.NodeID)
-	if gerr != nil {
-		jsonErr(w, http.StatusForbidden, "无权使用该节点")
-		return
-	}
-
-	// Each middle-layer node is authorized on its own grant before the chain
-	// is validated, so a revoked via is rejected as forbidden rather than
-	// falling through to the role/binding checks.
-	vias := viasOf(body.ViaNodeIDs)
-	for _, viaID := range vias {
-		if _, gerr := db.GetNodeGrant(s.DB, u.ID, viaID); gerr != nil {
-			jsonErr(w, http.StatusForbidden, "无权使用中间层节点")
+		var body struct {
+			NodeID    int64  `json:"node_id"`
+			Name      string `json:"name"`
+			Proto     string `json:"proto"`
+			Exit      string `json:"exit"`
+			ExitType  string `json:"exit_type"`
+			ExitURI   string `json:"exit_uri"`
+			EntryPort int    `json:"entry_port"`
+			Comment   string `json:"comment"`
+			// ExitMode is the exit-segment forwarding mode: the only hop of a
+			// single-node rule, or the last hop of a composite chain (whose
+			// inter-node hops take their modes from the node config). Mode is its
+			// legacy alias honored for single-node rules only — see hopsForChain.
+			Mode     string `json:"mode"`
+			ExitMode string `json:"exit_mode"`
+			// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
+			// sent" apart from an explicit empty list; each via is authorized on
+			// its own grant just like the entry node.
+			ViaNodeIDs *[]int64 `json:"via_node_ids"`
+			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
+			// "v6", or "both". Empty defaults to "v4".
+			EntryFamily string `json:"entry_family"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
 			return
 		}
-	}
+		name := strings.TrimSpace(body.Name)
+		proto := strings.ToLower(strings.TrimSpace(body.Proto))
+		if name == "" || !validRuleProto(proto) {
+			jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
+			return
+		}
+		pe, err := parseExitFull(body.Exit, body.ExitType, body.ExitURI)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if pe.Type == "socks5" {
+			body.ExitMode = exitMode
+			if body.Mode == "" || body.Mode == "kernel" {
+				body.Mode = exitMode
+			}
+		}
+		entryFamily, err := normalizeEntryFamily(body.EntryFamily)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.NodeID == 0 {
+			jsonErr(w, http.StatusBadRequest, "node_id 不能为空")
+			return
+		}
 
-	hops, _, derr := s.hopsForChain(body.NodeID, vias, body.Mode, body.ExitMode)
-	if derr != nil {
-		jsonErr(w, http.StatusBadRequest, derr.Error())
-		return
-	}
+		// The grant on the selected node both authorizes the request and carries
+		// the per-node forward cap. A composite node is the unit of authorization:
+		// granting it authorizes the whole chain, so the check is on the composite
+		// itself, not its sub-nodes.
+		grant, gerr := db.GetNodeGrant(s.DB, u.ID, body.NodeID)
+		if gerr != nil {
+			jsonErr(w, http.StatusForbidden, "无权使用该节点")
+			return
+		}
 
-	if body.EntryPort > 0 {
-		hops[0].DesiredPort = body.EntryPort
-	}
+		// Each middle-layer node is authorized on its own grant before the chain
+		// is validated, so a revoked via is rejected as forbidden rather than
+		// falling through to the role/binding checks.
+		vias := viasOf(body.ViaNodeIDs)
+		for _, viaID := range vias {
+			if _, gerr := db.GetNodeGrant(s.DB, u.ID, viaID); gerr != nil {
+				jsonErr(w, http.StatusForbidden, "无权使用中间层节点")
+				return
+			}
+		}
 
-	// Per-node cap: counted by rule, so a composite rule counts once against
-	// the composite node's grant.
-	if cnt, _ := db.CountRulesForUserNode(s.DB, u.ID, body.NodeID); cnt+1 > grant.MaxForwards {
-		jsonErr(w, http.StatusConflict, fmt.Sprintf("超出该节点的转发上限（%d）", grant.MaxForwards))
-		return
-	}
+		hops, _, derr := s.hopsForChain(body.NodeID, vias, body.Mode, body.ExitMode)
+		if derr != nil {
+			jsonErr(w, http.StatusBadRequest, derr.Error())
+			return
+		}
 
-	// Global per-user quota.
-	if err := s.checkUserRuleQuota(u, len(hops), 0); err != nil {
-		jsonErr(w, http.StatusConflict, err.Error())
-		return
-	}
+		if body.EntryPort > 0 {
+			hops[0].DesiredPort = body.EntryPort
+		}
 
-	tx, err := s.DB.Begin()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer tx.Rollback()
+		// Per-node cap: counted by rule, so a composite rule counts once against
+		// the composite node's grant.
+		if cnt, _ := db.CountRulesForUserNode(s.DB, u.ID, body.NodeID); cnt+1 > grant.MaxForwards {
+			jsonErr(w, http.StatusConflict, fmt.Sprintf("超出该节点的转发上限（%d）", grant.MaxForwards))
+			return
+		}
 
-	rl := &db.Rule{
-		NodeID:      body.NodeID,
-		OwnerID:     nullInt64(u.ID),
-		Name:        name,
-		Proto:       proto,
-		ExitHost:    exitHost,
-		ExitPort:    exitPort,
-		Comment:     strings.TrimSpace(body.Comment),
-		EntryFamily: entryFamily,
-		ViaNodeIDs:  vias,
-	}
+		// Global per-user quota.
+		if err := s.checkUserRuleQuota(u, len(hops), 0); err != nil {
+			jsonErr(w, http.StatusConflict, err.Error())
+			return
+		}
+
+		tx, err := s.DB.Begin()
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer tx.Rollback()
+
+		rl := &db.Rule{
+			NodeID:      body.NodeID,
+			OwnerID:     nullInt64(u.ID),
+			Name:        name,
+			Proto:       proto,
+			ExitHost:    pe.Host,
+			ExitPort:    pe.Port,
+			ExitType:    pe.Type,
+			ExitURI:     pe.URI,
+			Comment:     strings.TrimSpace(body.Comment),
+			EntryFamily: entryFamily,
+			ViaNodeIDs:  vias,
+		}
 	id, err := db.CreateRule(tx, rl)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -3693,114 +3769,142 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "无权操作该规则")
 		return
 	}
-	var body struct {
-		NodeID    int64  `json:"node_id"`
-		Name      string `json:"name"`
-		Proto     string `json:"proto"`
-		Exit      string `json:"exit"`
-		EntryPort int    `json:"entry_port"`
-		Comment   string `json:"comment"`
-		// ExitMode is the exit-segment forwarding mode (single hop or a
-		// chain's last hop); empty keeps the current mode so clients that
-		// don't send it can't silently reset a userspace exit back to kernel.
-		// Mode is its legacy alias honored for single-node rules only — see
-		// hopsForChain.
-		Mode     string `json:"mode"`
-		ExitMode string `json:"exit_mode"`
-		// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
-		// sent" (keep the stored path — old clients must not silently strip
-		// layers) apart from an explicit empty list (clear the layers).
-		ViaNodeIDs *[]int64 `json:"via_node_ids"`
-		// EntryFamily selects the entry endpoint's IP family: "v4" (default),
-		// "v6", or "both". Empty defaults to "v4".
-		EntryFamily string `json:"entry_family"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		jsonErr(w, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-	name := strings.TrimSpace(body.Name)
-	proto := strings.ToLower(strings.TrimSpace(body.Proto))
-	if name == "" || !validRuleProto(proto) {
-		jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
-		return
-	}
-	exitHost, exitPort, err := parseExit(body.Exit)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	entryFamily, err := normalizeEntryFamily(body.EntryFamily)
-	if err != nil {
-		jsonErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	entryID := rl.NodeID
-	if body.NodeID > 0 {
-		entryID = body.NodeID
-	}
-	// Absent via_node_ids keeps the stored path so a header-only edit can't
-	// silently strip the middle layers; an explicit list (empty included)
-	// replaces it.
-	vias := rl.ViaNodeIDs
-	if body.ViaNodeIDs != nil {
-		vias = *body.ViaNodeIDs
-	}
-	// The grant on the target node authorizes the rule and carries the per-node
-	// cap; a composite is the unit of authorization (granting it covers the
-	// whole chain), so the check is on the selected node itself.
-	grant, gerr := db.GetNodeGrant(s.DB, u.ID, entryID)
-	if gerr != nil {
-		jsonErr(w, http.StatusForbidden, "无权使用该节点")
-		return
-	}
-	// Each middle-layer node is authorized on its own grant before the chain
-	// is validated, so a revoked via is rejected as forbidden rather than
-	// falling through to the role/binding checks.
-	for _, viaID := range vias {
-		if _, gerr := db.GetNodeGrant(s.DB, u.ID, viaID); gerr != nil {
-			jsonErr(w, http.StatusForbidden, "无权使用中间层节点")
+		var body struct {
+			NodeID    int64  `json:"node_id"`
+			Name      string `json:"name"`
+			Proto     string `json:"proto"`
+			Exit      string `json:"exit"`
+			ExitType  string `json:"exit_type"`
+			ExitURI   string `json:"exit_uri"`
+			EntryPort int    `json:"entry_port"`
+			Comment   string `json:"comment"`
+			// ExitMode is the exit-segment forwarding mode (single hop or a
+			// chain's last hop); empty keeps the current mode so clients that
+			// don't send it can't silently reset a userspace exit back to kernel.
+			// Mode is its legacy alias honored for single-node rules only — see
+			// hopsForChain.
+			Mode     string `json:"mode"`
+			ExitMode string `json:"exit_mode"`
+			// ViaNodeIDs is the ordered middle-layer path. A pointer tells "not
+			// sent" (keep the stored path — old clients must not silently strip
+			// layers) apart from an explicit empty list (clear the layers).
+			ViaNodeIDs *[]int64 `json:"via_node_ids"`
+			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
+			// "v6", or "both". Empty defaults to "v4".
+			EntryFamily string `json:"entry_family"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
 			return
 		}
-	}
-	hops, composite, derr := s.hopsForChain(entryID, vias, body.Mode, body.ExitMode)
-	if derr != nil {
-		jsonErr(w, http.StatusBadRequest, derr.Error())
-		return
-	}
-	// Same-entry edits without an explicit exit-segment mode keep the exit
-	// hop's current mode (see the admin update handler for the rationale).
-	explicit := body.ExitMode != "" || (!composite && body.Mode != "")
-	if !explicit && entryID == rl.NodeID {
-		if existing, _ := db.ListRuleHops(s.DB, id); len(existing) > 0 {
-			hops[len(hops)-1].Mode = existing[len(existing)-1].Mode
-		}
-	}
-	if body.EntryPort > 0 && len(hops) > 0 {
-		hops[0].DesiredPort = body.EntryPort
-	}
-	oldHops, err := db.ListRuleHops(s.DB, id)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Per-node cap only when moving to a different node — the rule already
-	// counts against its current node, so a same-node edit can't exceed it.
-	if entryID != rl.NodeID {
-		if cnt, _ := db.CountRulesForUserNode(s.DB, u.ID, entryID); cnt+1 > grant.MaxForwards {
-			jsonErr(w, http.StatusConflict, fmt.Sprintf("超出该节点的转发上限（%d）", grant.MaxForwards))
+		name := strings.TrimSpace(body.Name)
+		proto := strings.ToLower(strings.TrimSpace(body.Proto))
+		if name == "" || !validRuleProto(proto) {
+			jsonErr(w, http.StatusBadRequest, "名称必填，协议须为 tcp、udp 或 tcp+udp")
 			return
 		}
-	}
-	// Global per-user quota, adjusted for this rule's existing hop count.
-	if err := s.checkUserRuleQuota(u, len(hops), len(oldHops)); err != nil {
-		jsonErr(w, http.StatusConflict, err.Error())
-		return
-	}
-	rl.NodeID = entryID
-	rl.ViaNodeIDs = vias
-	rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, exitHost, exitPort
-	rl.Comment = strings.TrimSpace(body.Comment)
+		exitType := body.ExitType
+		exitURI := body.ExitURI
+		if exitType == "" && body.ExitURI == "" {
+			exitType = rl.ExitType
+			exitURI = rl.ExitURI
+		} else if isRedactedExitURI(exitURI) && rl.ExitType == "socks5" && rl.ExitURI != "" {
+			exitURI = rl.ExitURI
+			if exitType == "" {
+				exitType = "socks5"
+			}
+		}
+		pe, err := parseExitFull(body.Exit, exitType, exitURI)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if pe.Type == "socks5" {
+			body.ExitMode = exitMode
+			if body.Mode == "" || body.Mode == "kernel" {
+				body.Mode = exitMode
+			}
+		}
+		entryFamily, err := normalizeEntryFamily(body.EntryFamily)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		entryID := rl.NodeID
+		if body.NodeID > 0 {
+			entryID = body.NodeID
+		}
+		// Absent via_node_ids keeps the stored path so a header-only edit can't
+		// silently strip the middle layers; an explicit list (empty included)
+		// replaces it.
+		vias := rl.ViaNodeIDs
+		if body.ViaNodeIDs != nil {
+			vias = *body.ViaNodeIDs
+		}
+		// The grant on the target node authorizes the rule and carries the per-node
+		// cap; a composite is the unit of authorization (granting it covers the
+		// whole chain), so the check is on the selected node itself.
+		grant, gerr := db.GetNodeGrant(s.DB, u.ID, entryID)
+		if gerr != nil {
+			jsonErr(w, http.StatusForbidden, "无权使用该节点")
+			return
+		}
+		// Each middle-layer node is authorized on its own grant before the chain
+		// is validated, so a revoked via is rejected as forbidden rather than
+		// falling through to the role/binding checks.
+		for _, viaID := range vias {
+			if _, gerr := db.GetNodeGrant(s.DB, u.ID, viaID); gerr != nil {
+				jsonErr(w, http.StatusForbidden, "无权使用中间层节点")
+				return
+			}
+		}
+		hops, composite, derr := s.hopsForChain(entryID, vias, body.Mode, body.ExitMode)
+		if derr != nil {
+			jsonErr(w, http.StatusBadRequest, derr.Error())
+			return
+		}
+		// Same-entry edits without an explicit exit-segment mode keep the exit
+		// hop's current mode (see the admin update handler for the rationale).
+		explicit := body.ExitMode != "" || (!composite && body.Mode != "")
+		if !explicit && entryID == rl.NodeID {
+			if existing, _ := db.ListRuleHops(s.DB, id); len(existing) > 0 {
+				hops[len(hops)-1].Mode = existing[len(existing)-1].Mode
+			}
+		}
+		if pe.Type == "socks5" && len(hops) > 0 {
+			hops[len(hops)-1].Mode = "userspace"
+		}
+		if body.EntryPort > 0 && len(hops) > 0 {
+			hops[0].DesiredPort = body.EntryPort
+		}
+		oldHops, err := db.ListRuleHops(s.DB, id)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Per-node cap only when moving to a different node — the rule already
+		// counts against its current node, so a same-node edit can't exceed it.
+		if entryID != rl.NodeID {
+			if cnt, _ := db.CountRulesForUserNode(s.DB, u.ID, entryID); cnt+1 > grant.MaxForwards {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("超出该节点的转发上限（%d）", grant.MaxForwards))
+				return
+			}
+		}
+		// Global per-user quota, adjusted for this rule's existing hop count.
+		if err := s.checkUserRuleQuota(u, len(hops), len(oldHops)); err != nil {
+			jsonErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		rl.NodeID = entryID
+		rl.ViaNodeIDs = vias
+		rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, pe.Host, pe.Port
+		rl.ExitType, rl.ExitURI = pe.Type, pe.URI
+		rl.Comment = strings.TrimSpace(body.Comment)
 	// Absent entry_family keeps the stored family — only an explicit value
 	// changes it, mirroring how an empty mode keeps the exit segment.
 	if entryFamily != "" {

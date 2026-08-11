@@ -203,7 +203,7 @@ export function Layout({ children }) {
                 </NavGroup>
                 <NavGroup label="资源">
                   <SideLink to="/node-repo" icon={<IconRepo />}>落地仓库</SideLink>
-                  <SideLink to="/rules" icon={<IconForwards />}>转发规则</SideLink>
+                  <SideLink to="/rules" icon={<IconForwards />}>代理转发</SideLink>
                   <SideLink to="/users" icon={<IconUserGroup />}>用户管理</SideLink>
                   {hasLocalProxies(user.username) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
                 </NavGroup>
@@ -220,7 +220,7 @@ export function Layout({ children }) {
                   <SideLink to="/my/docs" icon={<IconBook />}>使用文档</SideLink>
                 </NavGroup>
                 <NavGroup label="转发">
-                  <SideLink to="/my/rules" icon={<IconForwards />}>我的规则</SideLink>
+                  <SideLink to="/my/rules" icon={<IconForwards />}>代理转发</SideLink>
                   <SideLink to="/my/subscription" icon={<IconSub />}>规则订阅</SideLink>
                   {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>}
                   {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}

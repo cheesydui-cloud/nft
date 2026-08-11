@@ -64,3 +64,57 @@ func TestParseExit(t *testing.T) {
 		}
 	}
 }
+
+func TestParseExitFullSOCKS5(t *testing.T) {
+	pe, err := parseExitFull("1.2.3.4:443", "socks5", "socks5://user:pass@10.0.0.1:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pe.Type != "socks5" || pe.Host != "1.2.3.4" || pe.Port != 443 {
+		t.Fatalf("got %+v", pe)
+	}
+	if pe.URI != "socks5://user:pass@10.0.0.1:1080" {
+		t.Fatalf("uri=%q", pe.URI)
+	}
+	// socks:// normalizes to socks5://
+	pe, err = parseExitFull("example.com:80", "socks", "socks://10.0.0.2:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pe.URI != "socks5://10.0.0.2:1080" {
+		t.Fatalf("uri=%q", pe.URI)
+	}
+	// Missing URI.
+	if _, err := parseExitFull("1.2.3.4:80", "socks5", ""); err == nil {
+		t.Fatal("expected error for missing exit_uri")
+	}
+	// Single socks URI in exit without split fields.
+	if _, err := parseExitFull("socks5://u:p@h:1", "", ""); err == nil {
+		t.Fatal("expected guidance error")
+	}
+}
+
+func TestApplyExitConstraints(t *testing.T) {
+	mode, err := applyExitConstraints("socks5", "tcp", "kernel")
+	if err != nil || mode != "userspace" {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+	if _, err := applyExitConstraints("socks5", "udp", "userspace"); err == nil {
+		t.Fatal("expected udp rejection")
+	}
+	mode, err = applyExitConstraints("direct", "tcp+udp", "kernel")
+	if err != nil || mode != "kernel" {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+}
+
+func TestRedactedExitURI(t *testing.T) {
+	got := redactedExitURI("socks5://alice:secret@1.2.3.4:1080")
+	if got != "socks5://alice:***@1.2.3.4:1080" {
+		t.Fatalf("got %q", got)
+	}
+	got = redactedExitURI("socks5://1.2.3.4:1080")
+	if got != "socks5://1.2.3.4:1080" {
+		t.Fatalf("got %q", got)
+	}
+}

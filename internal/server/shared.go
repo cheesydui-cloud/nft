@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -42,6 +43,17 @@ type ruleView struct {
 func (s *Server) buildRuleView(r *db.Rule) ruleView {
 	hops, _ := db.ListRuleHops(s.DB, r.ID)
 	exit := net.JoinHostPort(r.ExitHost, strconv.Itoa(r.ExitPort))
+	// Never leak SOCKS credentials in list/detail JSON — redact userinfo.
+	if r.ExitURI != "" {
+		cp := *r
+		cp.ExitURI = redactedExitURI(r.ExitURI)
+		r = &cp
+	}
+	if r.ExitType == "" {
+		cp := *r
+		cp.ExitType = "direct"
+		r = &cp
+	}
 	entry, entryV6 := "—", ""
 	var entryNodeID int64
 	entryMode, exitMode := "", ""
@@ -218,7 +230,72 @@ func normalizeEntryFamily(v string) (string, error) {
 	}
 }
 
+// parsedExit is the resolved exit of a rule: direct L4 host:port, or SOCKS5
+// proxy URI plus CONNECT target host:port.
+type parsedExit struct {
+	Type string // "direct" | "socks5"
+	Host string // CONNECT target (and direct dial host)
+	Port int
+	URI  string // socks5://... when Type==socks5; empty otherwise
+}
+
 func parseExit(raw string) (string, int, error) {
+	pe, err := parseExitFull(raw, "", "")
+	if err != nil {
+		return "", 0, err
+	}
+	return pe.Host, pe.Port, nil
+}
+
+// parseExitFull resolves exit fields from the create/update body.
+//
+// Direct mode (default):
+//   - exit = host:port (or [ipv6]:port)
+//
+// SOCKS5 mode (chain rules):
+//   - exit_type=socks5 + exit_uri=socks5://user:pass@proxy:port + exit=target host:port
+//   - or a single socks5:// URI in exit when exit is the proxy and target is
+//     supplied via exit_target (less common; prefer explicit fields)
+//
+// exitType/exitURI come from the JSON body; empty type defaults to direct.
+func parseExitFull(exit, exitType, exitURI string) (parsedExit, error) {
+	exit = strings.TrimSpace(exit)
+	exitType = strings.ToLower(strings.TrimSpace(exitType))
+	exitURI = strings.TrimSpace(exitURI)
+
+	// Infer socks5 when the exit string itself is a socks URI and no type was set.
+	if exitType == "" && (strings.HasPrefix(strings.ToLower(exit), "socks5://") || strings.HasPrefix(strings.ToLower(exit), "socks://")) {
+		return parsedExit{}, fmt.Errorf("SOCKS5 出口请分别填写：exit 为 CONNECT 目标 host:port，exit_uri 为 socks5://user:pass@代理:端口，exit_type=socks5")
+	}
+	if exitType == "" {
+		exitType = "direct"
+	}
+	switch exitType {
+	case "direct":
+		host, port, err := parseHostPort(exit)
+		if err != nil {
+			return parsedExit{}, err
+		}
+		return parsedExit{Type: "direct", Host: host, Port: port}, nil
+	case "socks5", "socks":
+		uri := exitURI
+		if uri == "" {
+			return parsedExit{}, fmt.Errorf("SOCKS5 出口需提供 exit_uri（socks5://user:pass@host:port）")
+		}
+		if err := validateSocks5URI(uri); err != nil {
+			return parsedExit{}, err
+		}
+		host, port, err := parseHostPort(exit)
+		if err != nil {
+			return parsedExit{}, fmt.Errorf("SOCKS5 CONNECT 目标：%w", err)
+		}
+		return parsedExit{Type: "socks5", Host: host, Port: port, URI: normalizeSocks5URI(uri)}, nil
+	default:
+		return parsedExit{}, fmt.Errorf("exit_type 须为 direct 或 socks5")
+	}
+}
+
+func parseHostPort(raw string) (string, int, error) {
 	raw = strings.TrimSpace(raw)
 	host, portStr, err := net.SplitHostPort(raw)
 	if err != nil {
@@ -238,6 +315,109 @@ func parseExit(raw string) (string, int, error) {
 		return "", 0, fmt.Errorf("出口地址非法：%q 不是合法 IP 或域名", host)
 	}
 	return host, port, nil
+}
+
+// validateSocks5URI accepts socks5:// and socks:// with host:port authority.
+func validateSocks5URI(raw string) error {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	if !strings.HasPrefix(lower, "socks5://") && !strings.HasPrefix(lower, "socks://") {
+		return fmt.Errorf("exit_uri 须为 socks5:// 或 socks:// 形式")
+	}
+	// net/url handles userinfo; SplitHostPort needs host:port after authority.
+	u, err := parseSocksURL(raw)
+	if err != nil {
+		return err
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	if host == "" || portStr == "" {
+		return fmt.Errorf("exit_uri 须包含 host:port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("exit_uri 端口非法")
+	}
+	if net.ParseIP(host) == nil && !resolver.PlausibleHostname(host) {
+		return fmt.Errorf("exit_uri 地址非法：%q", host)
+	}
+	return nil
+}
+
+func normalizeSocks5URI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	// Prefer socks5:// scheme on the wire for the agent dialer.
+	if strings.HasPrefix(strings.ToLower(raw), "socks://") {
+		return "socks5://" + raw[len("socks://"):]
+	}
+	return raw
+}
+
+// redactedExitURI masks userinfo in a socks URI for API responses.
+func redactedExitURI(uri string) string {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return ""
+	}
+	u, err := parseSocksURL(uri)
+	if err != nil {
+		return "socks5://***"
+	}
+	hostport := u.Host
+	if u.User != nil {
+		user := u.User.Username()
+		if user == "" {
+			user = "***"
+		}
+		return "socks5://" + user + ":***@" + hostport
+	}
+	return "socks5://" + hostport
+}
+
+// isRedactedExitURI reports whether the client re-submitted a list/detail
+// redacted socks URI (password replaced with ***). Such values must not be
+// persisted; the stored secret should be kept instead.
+func isRedactedExitURI(uri string) bool {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return false
+	}
+	if strings.Contains(uri, ":***@") || strings.Contains(uri, "://***") {
+		return true
+	}
+	u, err := parseSocksURL(uri)
+	if err != nil {
+		return false
+	}
+	if u.User == nil {
+		return false
+	}
+	pass, ok := u.User.Password()
+	return ok && pass == "***"
+}
+
+// applyExitConstraints enforces SK5 product rules: TCP-only + userspace exit hop.
+// Returns adjusted exitMode (forced userspace for socks5) or an error.
+func applyExitConstraints(exitType, proto, exitMode string) (string, error) {
+	if exitType != "socks5" {
+		return exitMode, nil
+	}
+	if proto != "tcp" {
+		return "", fmt.Errorf("SOCKS5 出口仅支持 TCP 协议")
+	}
+	return "userspace", nil
+}
+
+func parseSocksURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("exit_uri 格式错误：%v", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "socks5" && scheme != "socks" {
+		return nil, fmt.Errorf("exit_uri 须为 socks5:// 或 socks:// 形式")
+	}
+	return u, nil
 }
 
 // looksLikeBareIPv6 reports whether raw is very likely an IPv6 literal

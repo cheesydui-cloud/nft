@@ -87,11 +87,13 @@ func openListener(r nft.Rule, poolSize int) (*listener, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	addr := targetAddr(r)
+	tgt := targetOf(r)
 	l := &listener{port: r.SrcPort, ln: ln, ctx: ctx, cancel: cancel, sem: make(chan struct{}, maxConnsPerPort), poolSize: poolSize}
-	l.tgt.Store(&target{addr: addr})
-	if poolSize > 0 {
-		l.pool.Store(newConnPool(addr, poolSize))
+	l.tgt.Store(tgt)
+	// Pre-dial pools only for plain TCP; SOCKS CONNECT cannot be pooled safely
+	// (each CONNECT is bound to a target and auth handshake).
+	if poolSize > 0 && tgt.exitProxy == "" {
+		l.pool.Store(newConnPool(tgt.addr, poolSize))
 	}
 	l.wg.Add(1)
 	go l.acceptLoop()
@@ -153,13 +155,15 @@ func (l *listener) handle(client net.Conn) {
 	if tgt == nil {
 		return
 	}
-	var upstream net.Conn
-	var err error
-	if p := l.pool.Load(); p != nil {
-		upstream, err = p.Get()
-	} else {
-		upstream, err = dialUpstream(tgt.addr)
-	}
+		var upstream net.Conn
+		var err error
+		if tgt.exitProxy != "" {
+			upstream, err = dialUpstream(tgt.addr, tgt.exitProxy)
+		} else if p := l.pool.Load(); p != nil {
+			upstream, err = p.Get()
+		} else {
+			upstream, err = dialUpstream(tgt.addr)
+		}
 	if err != nil {
 		return
 	}
@@ -283,19 +287,25 @@ func (b *userspaceBackend) Reconcile(rules []nft.Rule) error {
 		return fmt.Errorf("bind errors: %s", strings.Join(bindErrors, "; "))
 	}
 
-	for port, r := range desired {
-		l := b.listeners[port]
-		newAddr := targetAddr(r)
-		oldTgt := l.tgt.Load()
-		l.tgt.Store(&target{addr: newAddr})
-		b.setLimits(l, r)
-		if oldTgt != nil && oldTgt.addr != newAddr && b.poolSize > 0 {
-			if p := l.pool.Load(); p != nil {
-				p.Close()
+		for port, r := range desired {
+			l := b.listeners[port]
+			newTgt := targetOf(r)
+			oldTgt := l.tgt.Load()
+			l.tgt.Store(newTgt)
+			b.setLimits(l, r)
+			// Rebuild pool when the plain dial target changes; drop pool when
+			// switching to SOCKS5 (or keep empty for socks).
+			changed := oldTgt == nil || oldTgt.addr != newTgt.addr || oldTgt.exitProxy != newTgt.exitProxy
+			if changed {
+				if p := l.pool.Load(); p != nil {
+					p.Close()
+					l.pool.Store(nil)
+				}
+				if b.poolSize > 0 && newTgt.exitProxy == "" {
+					l.pool.Store(newConnPool(newTgt.addr, b.poolSize))
+				}
 			}
-			l.pool.Store(newConnPool(newAddr, b.poolSize))
 		}
-	}
 
 	for port, l := range b.listeners {
 		if _, ok := desired[port]; !ok {

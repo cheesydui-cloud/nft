@@ -4,7 +4,11 @@ import { useToast } from './Layout'
 import { tryParseURI } from '../lib/landing'
 import { fmtDate } from '../lib/fmt'
 
-const EMPTY = { node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit_kind: 'custom', entry_port: '', comment: '', mode: 'kernel', via_node_ids: [] }
+const EMPTY = {
+  node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit_kind: 'custom',
+  exit_type: 'direct', exit_uri: '',
+  entry_port: '', comment: '', mode: 'kernel', via_node_ids: [],
+}
 
 /* Shared create/edit form for forwarding rules, used by both the admin
    (`/rules`) and user (`/my/rules`) pages so create, edit and copy share one
@@ -13,6 +17,11 @@ const EMPTY = { node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit
    state, the single/composite node grouping and validation. `initial` seeds the
    fields for edit/copy prefills and is re-applied every time the modal opens.
 
+   variant: 'port' | 'chain' | undefined
+     - port: single-hop only (no composite entry, no via cascade, no SK5)
+     - chain: via/composite allowed; exit may be direct host:port or SOCKS5
+     - undefined: legacy full form (both)
+
    When `landingNodes` is provided (the user side passes the merged landing-node
    list — admin-assigned plus the user's own browser-local URIs, even when
    empty), the exit gains a custom/landing toggle: a landing exit picks a node's
@@ -20,7 +29,7 @@ const EMPTY = { node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
   const toast = useToast()
@@ -74,14 +83,44 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     toast(`已识别 ${node.protocol} 代理并保存`)
   }
 
+  const isPort = variant === 'port'
+  const isChain = variant === 'chain'
+  const isSocks = isChain && form.exit_type === 'socks5'
+
   const submit = async (e) => {
     e.preventDefault()
     if (!form.node_id) { toast('请选择节点', 'error'); return }
+    if (isPort) {
+      const n = nodes.find(x => String(x.id) === String(form.node_id))
+      if (n?.node_type === 'composite') {
+        toast('端口转发请选择单点入口；组合节点请到「链式转发」创建', 'error')
+        return
+      }
+      if ((form.via_node_ids || []).length > 0) {
+        toast('端口转发不支持线路层；请使用「链式转发」', 'error')
+        return
+      }
+    }
+    if (isSocks) {
+      if (!form.exit_uri?.trim()) { toast('请填写 SOCKS5 代理 URI', 'error'); return }
+      if (!form.exit?.trim()) { toast('请填写 CONNECT 目标 host:port', 'error'); return }
+      if (form.proto !== 'tcp') { toast('SOCKS5 出口仅支持 TCP', 'error'); return }
+    }
     if (tailNoDirect) { toast(`节点 ${tailNode.name} 禁止直接转发，必须在其后选择线路层`, 'error'); return }
-    if (landingEnabled && form.exit_kind === 'landing' && !form.exit) { toast('请选择出口节点', 'error'); return }
+    if (landingEnabled && form.exit_kind === 'landing' && !form.exit && !isSocks) { toast('请选择出口节点', 'error'); return }
     setLoading(true)
     try {
-      await onSubmit(form)
+      const payload = { ...form }
+      if (isSocks) {
+        payload.proto = 'tcp'
+        payload.mode = 'userspace'
+        payload.exit_type = 'socks5'
+      } else if (isPort || form.exit_type !== 'socks5') {
+        payload.exit_type = 'direct'
+        payload.exit_uri = ''
+      }
+      if (isPort) payload.via_node_ids = []
+      await onSubmit(payload)
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
   }
 
@@ -115,9 +154,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // reported by a server that predates the roles column) default to entry,
   // so old deployments keep working until an admin explicitly narrows roles.
   const entryNodes = nodes.filter(n => ((n.roles ?? 1) & 1) !== 0)
+  // Port variant: only single (non-composite) entry nodes.
+  const entryPool = isPort
+    ? entryNodes.filter(n => n.node_type !== 'composite')
+    : entryNodes
   // Admin: tabbed single/composite groups. User: one flat list of all lines.
-  const entryOptions = entryNodes.map(nodeOption)
-  const groups = showStack === false
+  // Port variant never shows the composite tab.
+  const entryOptions = entryPool.map(nodeOption)
+  const groups = (showStack === false || isPort)
     ? null
     : [
         { label: '单点', options: entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption) },
@@ -218,14 +262,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             groups={groups || undefined}
             options={groups ? undefined : entryOptions}
           />
-          {viaLevels.map(({ level, cands, chosen, mustVia }) => (
+          {!isPort && viaLevels.map(({ level, cands, chosen, mustVia }) => (
             <Fragment key={level}>
               <label className="fl">{level === 0 ? '线路层' : `线路层 ${level + 1}`}</label>
               <Select value={chosen ?? ''} onChange={v => pickVia(level, v)} placeholder={mustVia ? '-- 选择线路层 --' : '直接转发'}
                 options={[...(mustVia ? [] : [{ value: '', label: '直接转发' }]), ...cands.map(nodeOption)]} />
             </Fragment>
           ))}
-          {tailNoDirect && (
+          {!isPort && tailNoDirect && (
             <>
               <label className="fl"></label>
               <div className="text-xs text-red-600">
@@ -235,7 +279,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               </div>
             </>
           )}
-          {viaChain.length > 0 && (
+          {!isPort && viaChain.length > 0 && (
             <>
               <label className="fl"></label>
               <div className="text-xs text-ink-mut">
@@ -256,8 +300,13 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
           <label className="fl">名称</label>
           <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="规则名称" />
           <label className="fl">协议</label>
-          <Select value={form.proto} onChange={v => set('proto', v)} style={{ maxWidth: 200 }}
-            options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }, { value: 'tcp+udp', label: 'TCP+UDP' }]} />
+          <Select
+            value={isSocks ? 'tcp' : form.proto}
+            onChange={v => set('proto', v)}
+            style={{ maxWidth: 200 }}
+            disabled={isSocks}
+            options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }, { value: 'tcp+udp', label: 'TCP+UDP' }]}
+          />
           {/* 模式作用于出口段（最后一跳 → 目标）：单点规则即唯一一跳；
               组合链路的节点间各跳模式由组合节点配置决定，这里只管出口段 */}
           {(() => {
@@ -268,6 +317,18 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             // chain extends it the same way, so either makes this the
             // "出口段" (vs. the whole rule) regardless of the entry's own type.
             const composite = tailNode?.node_type === 'composite' || viaChain.length > 0
+            if (isSocks) {
+              return (
+                <>
+                  <label className="fl">{composite ? '出口段模式' : '转发模式'}</label>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <Select value="userspace" disabled style={{ width: 160 }}
+                      options={[{ value: 'userspace', label: '用户态' }]} />
+                    <span className="text-xs text-ink-mut">SOCKS5 出口强制用户态 TCP（末跳经 SK5 CONNECT 到目标）</span>
+                  </div>
+                </>
+              )
+            }
             return (
               <>
                 <label className="fl">{composite ? '出口段模式' : '转发模式'}</label>
@@ -287,7 +348,59 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
           <input className="input-field font-mono" type="number" min="1" max="65535" value={form.entry_port} onChange={e => set('entry_port', e.target.value)}
             placeholder="留空自动分配" style={{ maxWidth: 200 }} />
 
-          {landingEnabled ? (
+          {isChain && (
+            <>
+              <label className="fl">出口类型</label>
+              <Select
+                value={form.exit_type || 'direct'}
+                onChange={v => setForm(f => ({
+                  ...f,
+                  exit_type: v,
+                  proto: v === 'socks5' ? 'tcp' : f.proto,
+                  mode: v === 'socks5' ? 'userspace' : f.mode,
+                  exit_kind: v === 'socks5' ? 'custom' : f.exit_kind,
+                }))}
+                style={{ maxWidth: 220 }}
+                options={[
+                  { value: 'direct', label: '直连 host:port' },
+                  { value: 'socks5', label: 'SOCKS5 代理' },
+                ]}
+              />
+            </>
+          )}
+
+          {isSocks ? (
+            <>
+              <label className="fl">SK5 代理</label>
+              <input
+                className="input-field font-mono"
+                value={form.exit_uri || ''}
+                onChange={e => set('exit_uri', e.target.value)}
+                required
+                placeholder="socks5://user:pass@proxy:1080"
+              />
+              <label className="fl">CONNECT 目标</label>
+              <div className="flex items-center gap-3">
+                <input
+                  className="input-field font-mono flex-1"
+                  value={form.exit}
+                  onChange={e => set('exit', e.target.value)}
+                  required
+                  placeholder="host:port（业务目标）"
+                />
+                <ProbeButton
+                  target={form.exit}
+                  nodeId={tailNode?.id ?? form.node_id}
+                  disabled={!form.node_id || !form.exit}
+                  disabledTitle={!form.node_id ? '请先选择线路' : '请先填写目标 host:port'}
+                />
+              </div>
+              <label className="fl"></label>
+              <div className="text-xs text-ink-mut">
+                末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP；面板与 agent 需同升。
+              </div>
+            </>
+          ) : landingEnabled ? (
             <>
               <label className="fl">落地IP</label>
               <div className="flex items-center gap-3">
@@ -338,6 +451,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
 export function ruleToForm(rule) {
   const exit = rule.exit != null ? rule.exit
     : (rule.exit_host && rule.exit_port ? `${rule.exit_host}:${rule.exit_port}` : '')
+  const exitType = rule.exit_type === 'socks5' ? 'socks5' : 'direct'
   return {
     node_id: rule.node_id,
     owner_id: rule.owner_id?.Valid ? rule.owner_id.Int64 : (rule.owner_id || 0),
@@ -345,6 +459,9 @@ export function ruleToForm(rule) {
     proto: rule.proto,
     exit,
     exit_kind: rule.exit_kind === 'landing' ? 'landing' : 'custom',
+    exit_type: exitType,
+    // List API redacts password; edit may need re-paste of full URI.
+    exit_uri: rule.exit_uri || '',
     entry_port: rule.entry_listen_port > 0 ? String(rule.entry_listen_port) : '',
     comment: rule.comment || '',
     // 模式字段的语义是出口段（尾跳）；entry_mode 兜底兼容旧列表载荷，
@@ -369,12 +486,32 @@ export function copyInitial(rule) {
    array means "clear the chain", not "leave it untouched". entry_family is not
    sent: the server derives it from the entry node's relay addresses. */
 export function ruleFormToPayload(form) {
-  return {
+  const exitType = form.exit_type === 'socks5' ? 'socks5' : 'direct'
+  const payload = {
     node_id: Number(form.node_id), name: form.name, proto: form.proto,
     mode: form.mode || undefined, exit_mode: form.mode || undefined,
     exit: form.exit, entry_port: form.entry_port ? Number(form.entry_port) : undefined,
     comment: form.comment || undefined,
     via_node_ids: (form.via_node_ids || []).map(Number),
     owner_id: form.owner_id ? Number(form.owner_id) : undefined,
+    exit_type: exitType,
   }
+  if (exitType === 'socks5') {
+    payload.exit_uri = form.exit_uri || ''
+    payload.proto = 'tcp'
+    payload.mode = 'userspace'
+    payload.exit_mode = 'userspace'
+  } else {
+    // Explicit direct clears a previous socks exit on update.
+    payload.exit_uri = ''
+  }
+  return payload
+}
+
+/** Port vs chain classification for list tabs. */
+export function isChainRule(rule, nodeMap = {}) {
+  if (rule?.via_node_ids?.length) return true
+  if (rule?.exit_type === 'socks5') return true
+  const n = nodeMap[rule?.node_id]
+  return n?.node_type === 'composite'
 }

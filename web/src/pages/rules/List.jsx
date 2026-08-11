@@ -5,7 +5,7 @@ import { Layout, useToast, useBlur, useUser, useCopyFmt } from '../../components
 import { Loading, Empty, useConfirm } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
 import { RulesTable } from '../../components/RulesTable'
-import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
+import { RuleFormModal, ruleToForm, ruleFormToPayload, isChainRule } from '../../components/RuleFormModal'
 import { parseURIs, mergeLanding, landingIndex, rewriteEndpoint, splitEndpoint, loadLocalURIs, saveLocalURIs, loadSubCache, fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
 import { copyToClipboard } from '../../lib/clipboard'
 import { formatRuleCopyText } from '../../lib/relayCopy'
@@ -15,6 +15,7 @@ export default function RulesList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
+  const [createVariant, setCreateVariant] = useState('port') // port | chain
   const [createInitial, setCreateInitial] = useState(null)
   const [editRule, setEditRule] = useState(null)
   const [users, setUsers] = useState([])
@@ -23,6 +24,7 @@ export default function RulesList() {
   // rule's detail page and back — a plain useState resets on remount.
   const [searchParams, setSearchParams] = useSearchParams()
   const search = searchParams.get('q') || ''
+  const tab = searchParams.get('tab') === 'chain' ? 'chain' : 'port'
   const selectedOwners = useMemo(() => new Set((searchParams.get('owners') || '').split(',').filter(Boolean).map(Number)), [searchParams])
   const selectedNodes = useMemo(() => new Set((searchParams.get('nodes') || '').split(',').filter(Boolean).map(Number)), [searchParams])
   const updateParams = (patch) => {
@@ -35,6 +37,7 @@ export default function RulesList() {
     }, { replace: true })
   }
   const setSearch = (v) => updateParams({ q: v })
+  const setTab = (t) => updateParams({ tab: t === 'chain' ? 'chain' : '' })
   const setSelectedOwners = (next) => updateParams({ owners: next.size ? [...next].join(',') : '' })
   const setSelectedNodes = (next) => updateParams({ nodes: next.size ? [...next].join(',') : '' })
   const toast = useToast()
@@ -110,7 +113,11 @@ export default function RulesList() {
     if (!(await confirm({ title: '删除规则', message: `确认删除规则「${rule.name}」？`, confirmText: '删除', danger: true }))) return
     try { await api.del(`/rules/${rule.id}`); toast('已删除'); load() } catch (err) { toast(err.message, 'error') }
   }
-  const openCreate = () => { setCreateInitial(null); setCreateOpen(true) }
+  const openCreate = (variant = tab) => {
+    setCreateVariant(variant)
+    setCreateInitial(null)
+    setCreateOpen(true)
+  }
   // Menu "复制" must put the rule's client-facing link on the clipboard.
   // Prefer renamed relay URI (`用户名-到期` / `用户名-规则名`); fall back to entry.
   const copyRule = async (rule) => {
@@ -132,6 +139,10 @@ export default function RulesList() {
 
   const q = search.trim().toLowerCase()
   let filtered = rules
+  // Port / chain tabs split the list; chain = via layers, composite entry, or SK5.
+  const portRules = rules.filter(r => !isChainRule(r, nodeMap))
+  const chainRules = rules.filter(r => isChainRule(r, nodeMap))
+  filtered = tab === 'chain' ? chainRules : portRules
   // Owner and node filters are both applied client-side: the initial load
   // already fetched every rule, so re-requesting a subset per filter change was
   // pure waste.
@@ -140,7 +151,7 @@ export default function RulesList() {
   if (q) filtered = filtered.filter(r => {
     const node = nodeMap[r.node_id]
     const exit = r.exit_host && r.exit_port ? `${r.exit_host}:${r.exit_port}` : ''
-    return [r.name, node?.name, r.entry, exit, r.owner_name].some(v => (v || '').toLowerCase().includes(q))
+    return [r.name, node?.name, r.entry, exit, r.owner_name, r.exit_uri].some(v => (v || '').toLowerCase().includes(q))
   })
 
   const filterActive = selectedOwners.size > 0 || selectedNodes.size > 0
@@ -159,13 +170,35 @@ export default function RulesList() {
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="转发规则" count={rules.length} />
+      <PageHeader title="代理转发" count={rules.length} />
 
       <Panel fill>
+        <div className="flex items-center gap-1 px-[22px] pt-3 border-b border-line-soft">
+          {[
+            { id: 'port', label: '端口转发', count: portRules.length },
+            { id: 'chain', label: '链式转发', count: chainRules.length },
+          ].map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`px-3.5 py-2 text-[13.5px] font-medium border-b-2 -mb-px transition-colors cursor-pointer bg-transparent ${
+                tab === t.id
+                  ? 'border-emerald-600 text-ink'
+                  : 'border-transparent text-ink-mut hover:text-ink'
+              }`}
+            >
+              {t.label}
+              <span className="ml-1.5 text-[11px] text-ink-mut">{t.count}</span>
+            </button>
+          ))}
+        </div>
         <PanelToolbar>
           <SearchInput value={search} onChange={setSearch} placeholder="搜索规则名称、节点、目标…" />
           <ToolbarActions className="hidden md:flex">
-            <ToolbarButton onClick={openCreate}>＋ 创建规则</ToolbarButton>
+            <ToolbarButton onClick={() => openCreate(tab)}>
+              {tab === 'chain' ? '＋ 链式转发' : '＋ 端口转发'}
+            </ToolbarButton>
           </ToolbarActions>
         </PanelToolbar>
 
@@ -199,9 +232,9 @@ export default function RulesList() {
         )}
 
         {rules.length === 0 ? (
-          <Empty title="暂无规则" desc="点击右上角「创建规则」添加。" />
+          <Empty title="暂无规则" desc={tab === 'chain' ? '点击右上角「链式转发」添加。' : '点击右上角「端口转发」添加。'} />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配规则" desc="试试别的关键词。" />
+          <Empty title="无匹配规则" desc={tab === 'chain' ? '当前没有链式转发，或筛选无结果。' : '当前没有端口转发，或筛选无结果。'} />
         ) : (
           <TableScroll>
             <RulesTable variant="admin" rules={filtered} nodeMap={nodeMap} blurred={blurred}
@@ -213,7 +246,10 @@ export default function RulesList() {
       </div>
 
       <RuleFormModal
-        open={createOpen} onClose={() => setCreateOpen(false)} title="创建规则" submitLabel="创建规则"
+        open={createOpen} onClose={() => setCreateOpen(false)}
+        title={createVariant === 'chain' ? '创建链式转发' : '创建端口转发'}
+        submitLabel="创建"
+        variant={createVariant}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} users={users}
         onSubmit={async (form) => {
           const res = await api.post('/rules', ruleFormToPayload(form))
@@ -223,6 +259,7 @@ export default function RulesList() {
 
       <RuleFormModal
         open={!!editRule} onClose={() => setEditRule(null)} title="编辑规则" submitLabel="保存并重下发"
+        variant={editRule && isChainRule(editRule, nodeMap) ? 'chain' : 'port'}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={editRule ? ruleToForm(editRule) : null} onAddProxyURI={addProxyURI} users={users}
         onSubmit={async (form) => {
           await api.put(`/rules/${editRule.id}`, ruleFormToPayload(form))
