@@ -22,15 +22,17 @@ import (
 
 // proxyStats tracks cumulative up/down per instance for delta samples.
 type proxyStatsState struct {
-	mu       sync.Mutex
-	last     map[int64][2]int64 // instanceID → {up, down} cumulative
-	lastAt   time.Time
-	pending  map[int64][2]int64 // reAdd park
+	mu        sync.Mutex
+	last      map[int64][2]int64 // instanceID → {up, down} cumulative
+	baselined map[int64]bool     // first sample only arms the cursor (no delta)
+	lastAt    time.Time
+	pending   map[int64][2]int64 // reAdd park
 }
 
 var globalProxyStats = &proxyStatsState{
-	last:    map[int64][2]int64{},
-	pending: map[int64][2]int64{},
+	last:      map[int64][2]int64{},
+	baselined: map[int64]bool{},
+	pending:   map[int64][2]int64{},
 }
 
 // statsPortPath returns the file that stores the loopback stats/API port for
@@ -53,6 +55,27 @@ func readStatsPort(coreDir string, instanceID int64) int {
 		return 0
 	}
 	return p
+}
+
+// statsUserPath stores the mieru/mita username used to match `mita get users`.
+func statsUserPath(coreDir string, instanceID int64) string {
+	return filepath.Join(coreDir, fmt.Sprintf("instance-%d.statsuser", instanceID))
+}
+
+func writeStatsUser(coreDir string, instanceID int64, user string) error {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return nil
+	}
+	return os.WriteFile(statsUserPath(coreDir, instanceID), []byte(user+"\n"), 0o600)
+}
+
+func readStatsUser(coreDir string, instanceID int64) string {
+	b, err := os.ReadFile(statsUserPath(coreDir, instanceID))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // pickLoopbackPort binds :0 on 127.0.0.1 and returns the assigned port.
@@ -156,23 +179,54 @@ func (s *proxyStatsState) sample() []wsproto.ProxyCounterSample {
 		live[id] = cum{up, down}
 	}
 
-	// mieru/mita: no stable per-instance stats API yet — skip (0).
+	// mieru/mita: `mita get users` 30-day rolling totals (best-effort cumulative).
+	mdir := filepath.Join(coreStateDir(), "mieru")
+	userTotals := queryMitaUserTraffic() // username → {up,down} 30d totals in bytes
+	for _, id := range listMieruInstanceIDs(mdir) {
+		user := readStatsUser(mdir, id)
+		if user == "" {
+			// Fallback: read username from instance JSON written at deploy.
+			user = readMieruUsernameFromConfig(mdir, id)
+		}
+		if user == "" {
+			continue
+		}
+		if c, ok := userTotals[user]; ok {
+			live[id] = c
+		}
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.last == nil {
-		s.last = map[int64][2]int64{}
+	// Convert live cum → [2]int64 for applyLiveDeltas.
+	livePairs := map[int64][2]int64{}
+	for id, c := range live {
+		livePairs[id] = [2]int64{c.up, c.down}
 	}
 	elapsedMs := int64(0)
 	if !s.lastAt.IsZero() {
 		elapsedMs = now.Sub(s.lastAt).Milliseconds()
 	}
-	s.lastAt = now
 	if elapsedMs < 0 {
 		elapsedMs = 0
 	} else if elapsedMs > 30_000 {
 		elapsedMs = 30_000
 	}
+	return s.applyLiveDeltas(livePairs, elapsedMs)
+}
+
+// applyLiveDeltas folds live cumulative counters into per-instance deltas.
+// Caller may hold no lock; this method locks s.mu.
+// First observation of an id only baselines (no delta) so long-running totals
+// (e.g. mita 30-day window) are not dumped on agent restart.
+func (s *proxyStatsState) applyLiveDeltas(live map[int64][2]int64, elapsedMs int64) []wsproto.ProxyCounterSample {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		s.last = map[int64][2]int64{}
+	}
+	if s.baselined == nil {
+		s.baselined = map[int64]bool{}
+	}
+	s.lastAt = time.Now()
 
 	// Merge pending reAdd parks.
 	type accum struct{ up, down int64 }
@@ -187,16 +241,37 @@ func (s *proxyStatsState) sample() []wsproto.ProxyCounterSample {
 	seen := map[int64]bool{}
 	for id, c := range live {
 		seen[id] = true
+		// First observation of an instance only baselines the cursor so a
+		// long-running mita 30-day total is not dumped as a single delta on
+		// agent restart / first poll.
+		if !s.baselined[id] {
+			s.last[id] = c
+			s.baselined[id] = true
+			continue
+		}
 		last := s.last[id]
-		deltaUp := c.up - last[0]
-		if c.up < last[0] {
-			deltaUp = c.up // process restart / counter reset
+		deltaUp := c[0] - last[0]
+		deltaDown := c[1] - last[1]
+		// Decreases: xray/sing-box process restart → treat as reset (delta=cur).
+		// mieru 30-day window slide → only take non-negative delta (no re-bill).
+		// Heuristic: if new totals are large relative to the drop, prefer
+		// "window slide" (zero delta); if counters go to near-zero, prefer
+		// "reset" (full re-count of current).
+		if c[0] < last[0] {
+			if c[0] == 0 || c[0]*2 < last[0] {
+				deltaUp = c[0] // hard reset
+			} else {
+				deltaUp = 0 // rolling window slide
+			}
 		}
-		deltaDown := c.down - last[1]
-		if c.down < last[1] {
-			deltaDown = c.down
+		if c[1] < last[1] {
+			if c[1] == 0 || c[1]*2 < last[1] {
+				deltaDown = c[1]
+			} else {
+				deltaDown = 0
+			}
 		}
-		s.last[id] = [2]int64{c.up, c.down}
+		s.last[id] = c
 		if deltaUp > 0 || deltaDown > 0 {
 			a := merged[id]
 			if a == nil {
@@ -214,6 +289,7 @@ func (s *proxyStatsState) sample() []wsproto.ProxyCounterSample {
 				// keep pending-only ids in merged; drop last for dead instances
 				if merged[id] == nil {
 					delete(s.last, id)
+					delete(s.baselined, id)
 				}
 			}
 		}
@@ -258,6 +334,172 @@ func listInstanceIDs(coreDir string) []int64 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// listMieruInstanceIDs lists mieru instances by config/json or statsuser files.
+// mita is a single shared daemon (no per-instance pid), so we key off deploy
+// artifacts written by deployMieru.
+func listMieruInstanceIDs(coreDir string) []int64 {
+	ents, err := os.ReadDir(coreDir)
+	if err != nil {
+		return nil
+	}
+	seen := map[int64]bool{}
+	var ids []int64
+	for _, e := range ents {
+		name := e.Name()
+		var mid string
+		switch {
+		case strings.HasPrefix(name, "instance-") && strings.HasSuffix(name, ".json"):
+			mid = strings.TrimSuffix(strings.TrimPrefix(name, "instance-"), ".json")
+		case strings.HasPrefix(name, "instance-") && strings.HasSuffix(name, ".statsuser"):
+			mid = strings.TrimSuffix(strings.TrimPrefix(name, "instance-"), ".statsuser")
+		default:
+			continue
+		}
+		id, err := strconv.ParseInt(mid, 10, 64)
+		if err != nil || id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func readMieruUsernameFromConfig(coreDir string, instanceID int64) string {
+	path := filepath.Join(coreDir, fmt.Sprintf("instance-%d.json", instanceID))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Users []struct {
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return ""
+	}
+	if len(doc.Users) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(doc.Users[0].Name)
+}
+
+// queryMitaUserTraffic runs `mita get users` and returns 30-day upload/download
+// totals per username in bytes. Soft-fails to empty map when mita is absent.
+func queryMitaUserTraffic() map[string]struct{ up, down int64 } {
+	out := map[string]struct{ up, down int64 }{}
+	mitaPath := resolveMitaBinary()
+	if mitaPath == "" {
+		return out
+	}
+	type result struct {
+		raw string
+		ok  bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		cmd := exec.Command(mitaPath, "get", "users")
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			ch <- result{}
+			return
+		}
+		ch <- result{raw: string(b), ok: true}
+	}()
+	select {
+	case r := <-ch:
+		if !r.ok {
+			return out
+		}
+		return parseMitaUsersTable(r.raw)
+	case <-time.After(2 * time.Second):
+		return out
+	}
+}
+
+// parseMitaUsersTable parses `mita get users` text table:
+//
+//	User  LastActive  1DayDownload  1DayUpload  30DaysDownload  30DaysUpload
+//	abcd  2025-…      938.1MiB      12.9MiB     4.0GiB          31.8MiB
+//
+// Panel "up" = client upload ≈ server 30DaysUpload; "down" = 30DaysDownload.
+func parseMitaUsersTable(raw string) map[string]struct{ up, down int64 } {
+	out := map[string]struct{ up, down int64 }{}
+	sc := bufio.NewScanner(strings.NewReader(raw))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		// Skip header.
+		if strings.HasPrefix(strings.ToLower(line), "user") && strings.Contains(strings.ToLower(line), "download") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// Expect: User LastActive 1DayDl 1DayUl 30DayDl 30DayUl  (≥6 cols)
+		if len(fields) < 6 {
+			continue
+		}
+		user := fields[0]
+		// Last field = 30DaysUpload, second-to-last = 30DaysDownload.
+		dl, ok1 := parseHumanBytes(fields[len(fields)-2])
+		ul, ok2 := parseHumanBytes(fields[len(fields)-1])
+		if !ok1 && !ok2 {
+			continue
+		}
+		out[user] = struct{ up, down int64 }{up: ul, down: dl}
+	}
+	return out
+}
+
+// parseHumanBytes accepts 12.9MiB / 4.0GiB / 938.1KiB / 1024 / 1.5MB / 2GB.
+func parseHumanBytes(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "-" {
+		return 0, false
+	}
+	// Split numeric prefix and unit.
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if (c >= '0' && c <= '9') || c == '.' {
+			i++
+			continue
+		}
+		break
+	}
+	if i == 0 {
+		return 0, false
+	}
+	numStr := s[:i]
+	unit := strings.ToLower(strings.TrimSpace(s[i:]))
+	f, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, false
+	}
+	mult := float64(1)
+	switch unit {
+	case "", "b", "byte", "bytes":
+		mult = 1
+	case "k", "kb", "kib":
+		mult = 1024
+	case "m", "mb", "mib":
+		mult = 1024 * 1024
+	case "g", "gb", "gib":
+		mult = 1024 * 1024 * 1024
+	case "t", "tb", "tib":
+		mult = 1024 * 1024 * 1024 * 1024
+	default:
+		return 0, false
+	}
+	v := int64(f*mult + 0.5)
+	if v < 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 func pidFileAlive(pidPath string) bool {
