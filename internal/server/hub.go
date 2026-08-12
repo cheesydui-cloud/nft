@@ -354,9 +354,48 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 			var co wsproto.Counters
 			if err := json.Unmarshal(env.Payload, &co); err != nil {
 				log.Printf("hub: node %d malformed counters: %v", ac.nodeID, err)
+				// Explicit NACK when the agent asked for an ack (ID set) so it
+				// retransmits instead of silently dropping the batch.
+				if env.ID != "" {
+					ackP, _ := json.Marshal(wsproto.CountersAck{OK: false, Error: "malformed payload"})
+					ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeCountersAck, ID: env.ID, Payload: ackP})
+				}
 				continue
 			}
-			h.applyCounters(ac.nodeID, co.Samples)
+			ok, errMsg := h.applyCounters(ac.nodeID, co.Samples)
+			if env.ID != "" {
+				ack := wsproto.CountersAck{OK: ok}
+				if !ok {
+					ack.Error = errMsg
+					if ack.Error == "" {
+						ack.Error = "persist failed"
+					}
+				}
+				ackP, _ := json.Marshal(ack)
+				ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeCountersAck, ID: env.ID, Payload: ackP})
+			}
+		case wsproto.TypeProxyCounters:
+			var pc wsproto.ProxyCounters
+			if err := json.Unmarshal(env.Payload, &pc); err != nil {
+				log.Printf("hub: node %d malformed proxy_counters: %v", ac.nodeID, err)
+				if env.ID != "" {
+					ackP, _ := json.Marshal(wsproto.ProxyCountersAck{OK: false, Error: "malformed payload"})
+					ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeProxyCountersAck, ID: env.ID, Payload: ackP})
+				}
+				continue
+			}
+			ok, errMsg := h.applyProxyCounters(ac.nodeID, pc.Samples)
+			if env.ID != "" {
+				ack := wsproto.ProxyCountersAck{OK: ok}
+				if !ok {
+					ack.Error = errMsg
+					if ack.Error == "" {
+						ack.Error = "persist failed"
+					}
+				}
+				ackP, _ := json.Marshal(ack)
+				ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeProxyCountersAck, ID: env.ID, Payload: ackP})
+			}
 		case wsproto.TypeRuleCreate:
 			h.handleRuleCreate(ac, env)
 		case wsproto.TypeRuleUpdate:
@@ -1225,18 +1264,22 @@ func writeError(ctx context.Context, ws *websocket.Conn, code, msg string) {
 // charges raw bytes once per logical segment, at that segment's first hop, onto
 // the segment's logical node grant. Quota suppression keys on the same logical
 // node end to end.
-func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
+// applyCounters folds agent counter samples into ledgers and the speed cache.
+// Returns (true, "") on success — including empty heartbeats. Returns
+// (false, reason) when the batch could not be fully persisted so the agent
+// can retransmit via CountersReadd (counters_ack NACK).
+func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) (ok bool, errMsg string) {
 	// Empty heartbeat: agent is alive with zero deltas this tick. Only refresh
 	// the speed cache (zero sticky rates); skip hop/traffic DB work.
 	if len(samples) == 0 {
 		h.speedCache.update(nodeID, nil)
-		return
+		return true, ""
 	}
 
 	hopMap, err := db.RuleHopMapByNode(h.DB, nodeID)
 	if err != nil {
 		log.Printf("hub: node %d load rule hop map for counters: %v", nodeID, err)
-		return
+		return false, "load hop map: " + err.Error()
 	}
 	// Only the rules referenced by this node's hops are ever looked up, so load
 	// just those instead of scanning the whole rules table every counters batch.
@@ -1294,7 +1337,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 	node, err := db.GetNode(h.DB, nodeID)
 	if err != nil {
 		log.Printf("hub: node %d load for billing direction: %v", nodeID, err)
-		return
+		return false, "load node: " + err.Error()
 	}
 
 	type userNode struct{ userID, nodeID int64 }
@@ -1437,20 +1480,29 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 
 	// Flush every accumulated mutation in a single transaction: one commit (one
 	// fsync) for the whole batch instead of 3-5 auto-commits per sample.
+	// persistOK tracks whether the agent may drop this batch (true) or must
+	// retransmit (false — DB begin/commit/row errors).
+	persistOK := true
+	persistErr := ""
 	if len(hopWrites) > 0 || len(userNodeAdds) > 0 || len(userAdds) > 0 || len(totalUserAdds) > 0 || len(ruleExitAdds) > 0 || len(exitAdds) > 0 || rawAdd > 0 {
-		if tx, err := h.DB.Begin(); err != nil {
+		tx, err := h.DB.Begin()
+		if err != nil {
 			log.Printf("hub: node %d counters tx begin: %v", nodeID, err)
+			persistOK = false
+			persistErr = "tx begin: " + err.Error()
 		} else {
 			ok := true
 			if rawAdd > 0 {
 				if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
 					log.Printf("hub: node %d raw traffic add: %v", nodeID, err)
 					ok = false
+					persistErr = "raw traffic: " + err.Error()
 				}
 				if ok {
 					if err := db.AddNodeDailyRawTraffic(tx, nodeID, rawAdd); err != nil {
 						log.Printf("hub: node %d daily raw traffic add: %v", nodeID, err)
 						ok = false
+						persistErr = "daily raw: " + err.Error()
 					}
 				}
 			}
@@ -1462,6 +1514,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 					w.lastBytes, w.lastUp, w.lastDown, w.addTotal, w.addBilled, id); err != nil {
 					log.Printf("hub: node %d counters rule_hop update: %v", nodeID, err)
 					ok = false
+					persistErr = "hop update: " + err.Error()
 					break
 				}
 			}
@@ -1472,6 +1525,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if _, err := tx.Exec(`UPDATE user_nodes SET traffic_used_bytes = traffic_used_bytes + ? WHERE user_id=? AND node_id=?`, delta, un.userID, un.nodeID); err != nil {
 					log.Printf("hub: user %d node %d per-node traffic add: %v", un.userID, un.nodeID, err)
 					ok = false
+					persistErr = "user_node: " + err.Error()
 					break
 				}
 			}
@@ -1482,6 +1536,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
 					log.Printf("hub: user %d traffic add: %v", uid, err)
 					ok = false
+					persistErr = "user traffic: " + err.Error()
 					break
 				}
 				// Same raw final-hop delta into today's per-user day bucket
@@ -1489,6 +1544,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if err := db.AddUserDailyTraffic(tx, uid, delta); err != nil {
 					log.Printf("hub: user %d daily traffic add: %v", uid, err)
 					ok = false
+					persistErr = "daily traffic: " + err.Error()
 					break
 				}
 			}
@@ -1499,6 +1555,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if _, err := tx.Exec(`UPDATE users SET total_traffic_used_bytes = total_traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
 					log.Printf("hub: user %d total traffic add: %v", uid, err)
 					ok = false
+					persistErr = "total traffic: " + err.Error()
 					break
 				}
 			}
@@ -1509,6 +1566,7 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 				if _, err := tx.Exec(`UPDATE rules SET exit_bytes = exit_bytes + ? WHERE id=?`, delta, ruleID); err != nil {
 					log.Printf("hub: rule %d exit bytes add: %v", ruleID, err)
 					ok = false
+					persistErr = "exit_bytes: " + err.Error()
 					break
 				}
 			}
@@ -1523,15 +1581,19 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 					delta, time.Now().Unix(), k.UserID, k.Host, k.Port); err != nil {
 					log.Printf("hub: user %d exit %s:%d ledger add: %v", k.UserID, k.Host, k.Port, err)
 					ok = false
+					persistErr = "landing exit: " + err.Error()
 					break
 				}
 			}
 			if ok {
 				if err := tx.Commit(); err != nil {
 					log.Printf("hub: node %d counters tx commit: %v", nodeID, err)
+					persistOK = false
+					persistErr = "tx commit: " + err.Error()
 				}
 			} else {
 				_ = tx.Rollback()
+				persistOK = false
 			}
 		}
 	}
@@ -1596,7 +1658,66 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) {
 			}
 		}()
 	}
+	return persistOK, persistErr
 }
+
+// applyProxyCounters folds agent proxy_counters samples into per-instance
+// traffic ledgers. Returns (true,"") on success so the agent can drop the
+// batch; (false, reason) triggers retransmit via proxy_counters_ack NACK.
+func (h *Hub) applyProxyCounters(nodeID int64, samples []wsproto.ProxyCounterSample) (bool, string) {
+	if len(samples) == 0 {
+		return true, ""
+	}
+	tx, err := h.DB.Begin()
+	if err != nil {
+		log.Printf("hub: node %d proxy_counters tx begin: %v", nodeID, err)
+		return false, "tx begin: " + err.Error()
+	}
+	ok := true
+	errMsg := ""
+	for _, s := range samples {
+		if s.InstanceID <= 0 || (s.BytesUp == 0 && s.BytesDown == 0) {
+			continue
+		}
+		if err := db.AddProxyInstanceTraffic(tx, s.InstanceID, nodeID, s.BytesUp, s.BytesDown); err != nil {
+			// Unknown instance (deleted) is non-fatal for the rest of the batch.
+			if strings.Contains(err.Error(), "not on node") {
+				log.Printf("hub: node %d proxy_counters skip instance %d: %v", nodeID, s.InstanceID, err)
+				continue
+			}
+			log.Printf("hub: node %d proxy_counters instance %d: %v", nodeID, s.InstanceID, err)
+			ok = false
+			errMsg = err.Error()
+			break
+		}
+		// Count proxy raw bytes toward the node's raw ledger (same as forward).
+		raw := s.BytesUp + s.BytesDown
+		if raw > 0 {
+			if err := db.AddNodeRawTraffic(tx, nodeID, raw); err != nil {
+				log.Printf("hub: node %d proxy raw traffic: %v", nodeID, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+			if err := db.AddNodeDailyRawTraffic(tx, nodeID, raw); err != nil {
+				log.Printf("hub: node %d proxy daily raw: %v", nodeID, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+		}
+	}
+	if ok {
+		if err := tx.Commit(); err != nil {
+			log.Printf("hub: node %d proxy_counters commit: %v", nodeID, err)
+			return false, "tx commit: " + err.Error()
+		}
+		return true, ""
+	}
+	_ = tx.Rollback()
+	return false, errMsg
+}
+
 
 // applyRuleHopEdit folds a node-reported edit to its hop in ruleID back
 // into the rule skeleton and re-dispatches every node the regeneration

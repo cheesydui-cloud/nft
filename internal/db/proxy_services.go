@@ -58,8 +58,12 @@ type ProxyServiceInstance struct {
 	LastError    string `json:"last_error"`
 	CoreVersion  string `json:"core_version"`
 	SyncedRepoID int64  `json:"synced_repo_id"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
+	// TrafficUp/DownBytes are cumulative raw bytes from agent proxy_counters.
+	TrafficUpBytes   int64 `json:"traffic_up_bytes"`
+	TrafficDownBytes int64 `json:"traffic_down_bytes"`
+	TrafficUpdatedAt int64 `json:"traffic_updated_at"`
+	CreatedAt        int64 `json:"created_at"`
+	UpdatedAt        int64 `json:"updated_at"`
 	// Optional join fields for API views.
 	NodeName   string `json:"node_name,omitempty"`
 	NodeOnline int    `json:"node_online,omitempty"`
@@ -73,7 +77,7 @@ type NodeCore struct {
 }
 
 const proxyServiceCols = `id, name, protocol, core, config_json, sub_visible, status, created_at, updated_at`
-const proxyInstanceCols = `id, service_id, node_id, listen_port, share_host, uri, deploy_status, last_error, core_version, synced_repo_id, created_at, updated_at`
+const proxyInstanceCols = `id, service_id, node_id, listen_port, share_host, uri, deploy_status, last_error, core_version, synced_repo_id, COALESCE(traffic_up_bytes,0), COALESCE(traffic_down_bytes,0), COALESCE(traffic_updated_at,0), created_at, updated_at`
 
 func scanProxyService(r rowScanner) (*ProxyService, error) {
 	s := &ProxyService{}
@@ -95,11 +99,43 @@ func scanProxyInstance(r rowScanner) (*ProxyServiceInstance, error) {
 	if err := r.Scan(
 		&inst.ID, &inst.ServiceID, &inst.NodeID, &inst.ListenPort, &inst.ShareHost, &inst.URI,
 		&inst.DeployStatus, &inst.LastError, &inst.CoreVersion, &inst.SyncedRepoID,
+		&inst.TrafficUpBytes, &inst.TrafficDownBytes, &inst.TrafficUpdatedAt,
 		&inst.CreatedAt, &inst.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	return inst, nil
+}
+
+// AddProxyInstanceTraffic folds a raw up/down delta into one instance ledger.
+// instance must belong to nodeID so a misrouted sample cannot bill another node.
+func AddProxyInstanceTraffic(d DBTX, instanceID, nodeID, up, down int64) error {
+	if up == 0 && down == 0 {
+		return nil
+	}
+	now := time.Now().Unix()
+	res, err := d.Exec(`UPDATE proxy_service_instances
+		SET traffic_up_bytes = traffic_up_bytes + ?,
+		    traffic_down_bytes = traffic_down_bytes + ?,
+		    traffic_updated_at = ?
+		WHERE id=? AND node_id=?`,
+		up, down, now, instanceID, nodeID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("proxy instance %d not on node %d", instanceID, nodeID)
+	}
+	return nil
+}
+
+// ResetProxyInstanceTraffic zeroes one instance's traffic counters (admin).
+func ResetProxyInstanceTraffic(d *sql.DB, instanceID int64) error {
+	_, err := d.Exec(`UPDATE proxy_service_instances
+		SET traffic_up_bytes=0, traffic_down_bytes=0, traffic_updated_at=? WHERE id=?`,
+		time.Now().Unix(), instanceID)
+	return err
 }
 
 // DefaultCoreForProtocol returns the recommended core for a protocol template.

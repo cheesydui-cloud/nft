@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../lib/api'
+import { fmtBytes } from '../../lib/fmt'
 import { Layout, useToast } from '../../components/Layout'
 import { Loading, Empty, Badge, CopyText } from '../../components/ui'
 import { PageHeader, Panel } from '../../components/page'
@@ -664,6 +665,7 @@ export default function ProxyServiceDetail() {
                     <th>监听端口</th>
                     <th>分享地址</th>
                     <th>状态</th>
+                    <th>流量</th>
                     <th>延迟</th>
                     <th>链接</th>
                     <th className="text-right">操作</th>
@@ -703,6 +705,11 @@ export default function ProxyServiceDetail() {
                               {i.last_error}
                             </div>
                           ) : null}
+                        </td>
+                        <td className="text-[12px] font-mono whitespace-nowrap" title={
+                          `↑ ${fmtBytes(i.traffic_up_bytes || 0)} / ↓ ${fmtBytes(i.traffic_down_bytes || 0)}`
+                        }>
+                          {fmtBytes((i.traffic_up_bytes || 0) + (i.traffic_down_bytes || 0))}
                         </td>
                         <td className="text-[12px] font-mono whitespace-nowrap">
                           {probing && !latR ? (

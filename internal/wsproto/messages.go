@@ -19,6 +19,9 @@ const (
 	TypeApplyRuleset         = "apply_ruleset"
 	TypeApplyAck             = "apply_ack"
 	TypeCounters             = "counters"
+	TypeCountersAck          = "counters_ack"
+	TypeProxyCounters        = "proxy_counters"
+	TypeProxyCountersAck     = "proxy_counters_ack"
 	TypeRuleHopEdit          = "rule_hop_edit"
 	TypeRuleDelete           = "rule_delete"
 	TypeRuleCmdAck           = "rule_cmd_ack"
@@ -205,6 +208,36 @@ type ApplyAck struct {
 
 type Counters struct {
 	Samples []CounterSample `json:"samples"`
+}
+
+// CountersAck is the panel's reply to a counters frame. OK=false means the
+// batch was not persisted (DB error); the agent must retransmit via
+// CountersReadd. Frames without Envelope.ID (legacy agents) get no ack;
+// panels that never send counters_ack are treated as OK by the agent so
+// old/new versions stay compatible.
+type CountersAck struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// ProxyCounterSample is per-instance traffic delta for a published proxy
+// service (VLESS/SS/mieru/…). Matched by InstanceID on the panel.
+type ProxyCounterSample struct {
+	InstanceID int64 `json:"instance_id"`
+	BytesUp    int64 `json:"up"`
+	BytesDown  int64 `json:"down"`
+	ElapsedMs  int64 `json:"elapsed_ms,omitempty"`
+}
+
+// ProxyCounters is the agent → panel frame for proxy-service traffic.
+type ProxyCounters struct {
+	Samples []ProxyCounterSample `json:"samples"`
+}
+
+// ProxyCountersAck mirrors CountersAck for the proxy path.
+type ProxyCountersAck struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // RuleHopEdit carries a node's edit to its single hop in a relay rule.

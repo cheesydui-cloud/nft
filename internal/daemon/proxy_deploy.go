@@ -93,6 +93,15 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 	if err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
 	}
+	// Stats API on loopback so agent can poll inbound traffic.
+	if apiPort, perr := pickLoopbackPort(); perr == nil {
+		if injected, ierr := proxysvc.InjectXrayStatsAPI(cfgBytes, apiPort); ierr == nil {
+			cfgBytes = injected
+			_ = writeStatsPort(dir, req.InstanceID, apiPort)
+		} else {
+			logStatsInjectOnce("xray inject: " + ierr.Error())
+		}
+	}
 	// Validate JSON shape early.
 	if !json.Valid(cfgBytes) {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "xray 配置不是合法 JSON"}
@@ -217,6 +226,15 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 		if err != nil {
 			return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
 		}
+		// Clash API on loopback for agent traffic sampling.
+		if apiPort, perr := pickLoopbackPort(); perr == nil {
+			if injected, ierr := proxysvc.InjectSingBoxClashAPI(cfgBytes, apiPort); ierr == nil {
+				cfgBytes = injected
+				_ = writeStatsPort(dir, req.InstanceID, apiPort)
+			} else {
+				logStatsInjectOnce("sing-box inject: " + ierr.Error())
+			}
+		}
 		if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
 			return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 sing-box 配置失败: " + err.Error()}
 		}
@@ -292,6 +310,7 @@ func stopPIDFile(pidPath string) {
 }
 
 // removeTLSFilesBeside deletes instance-N.crt/.key next to instance-N.pid.
+// Also drops the statsport file so a dead instance is not polled.
 func removeTLSFilesBeside(pidPath string) {
 	base := strings.TrimSuffix(pidPath, ".pid")
 	if base == pidPath {
@@ -299,6 +318,7 @@ func removeTLSFilesBeside(pidPath string) {
 	}
 	_ = os.Remove(base + ".crt")
 	_ = os.Remove(base + ".key")
+	_ = os.Remove(base + ".statsport")
 }
 
 // materializeTLSCerts writes cert_pem/key_pem to certPath/keyPath when security=tls.

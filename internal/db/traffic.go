@@ -20,19 +20,40 @@ func ResetUserNodeTraffic(d *sql.DB, userID, nodeID int64) error {
 }
 
 // ResetAllUserTraffic zeroes the global traffic counter, all per-node counters,
-// the landing-exit ledger and the displayed per-rule hop totals for a user —
-// an admin reset promises a clean slate, so every number shown for the user
-// must drop to zero together. rule_hops.last_bytes* are deliberately kept:
-// they snapshot the agent's cumulative counters for delta computation, and
-// zeroing them would re-bill the full counter value on the next sample.
+// the landing-exit ledger, displayed per-rule hop totals and rules.exit_bytes
+// for a user — an admin reset promises a clean slate, so every number shown
+// for the user must drop to zero together. rule_hops.last_bytes* are
+// deliberately kept: they snapshot the agent's cumulative counters for delta
+// computation, and zeroing them would re-bill the full counter value on the
+// next sample.
 func ResetAllUserTraffic(d *sql.DB, userID int64) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0, total_traffic_used_bytes = 0 WHERE id=?`, userID); err != nil {
+	if err := zeroUserTrafficLedgers(tx, userID, 0); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// zeroUserTrafficLedgers clears every user-visible traffic ledger for userID.
+// When lastResetAt > 0, users.last_traffic_reset_at is stamped (cycle reset);
+// pass 0 for a plain admin reset that leaves the cycle clock alone.
+//
+// Cleared: users.traffic_used_bytes + total_traffic_used_bytes, user_nodes,
+// user_landing_exits, rule_hops.total/billed_bytes, rules.exit_bytes.
+// Kept: rule_hops.last_bytes* (agent counter snapshots for delta math).
+func zeroUserTrafficLedgers(tx *sql.Tx, userID, lastResetAt int64) error {
+	if lastResetAt > 0 {
+		if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0, total_traffic_used_bytes = 0, last_traffic_reset_at = ? WHERE id=?`, lastResetAt, userID); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0, total_traffic_used_bytes = 0 WHERE id=?`, userID); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(`UPDATE user_nodes SET traffic_used_bytes = 0 WHERE user_id=?`, userID); err != nil {
 		return err
@@ -43,7 +64,10 @@ func ResetAllUserTraffic(d *sql.DB, userID int64) error {
 	if _, err := tx.Exec(`UPDATE rule_hops SET total_bytes = 0, billed_bytes = 0 WHERE rule_id IN (SELECT id FROM rules WHERE owner_id = ?)`, userID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if _, err := tx.Exec(`UPDATE rules SET exit_bytes = 0 WHERE owner_id = ?`, userID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // NodeTrafficSums returns total traffic_used_bytes per node across all users.
@@ -275,13 +299,9 @@ func CheckAndResetTrafficCycle(d *sql.DB, u *User) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = 0, last_traffic_reset_at = ? WHERE id=?`, nowTs, u.ID); err != nil {
-		return false, err
-	}
-	if _, err := tx.Exec(`UPDATE user_nodes SET traffic_used_bytes = 0 WHERE user_id=?`, u.ID); err != nil {
-		return false, err
-	}
-	if _, err := tx.Exec(`UPDATE user_landing_exits SET used_bytes = 0 WHERE user_id=?`, u.ID); err != nil {
+	// Same ledger wipe as ResetAllUserTraffic so cycle and admin reset never
+	// leave display counters (total_*, hop totals, exit_bytes) half-stale.
+	if err := zeroUserTrafficLedgers(tx, u.ID, nowTs); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

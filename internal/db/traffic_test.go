@@ -86,6 +86,14 @@ func TestResetAllUserTrafficClearsRuleCounters(t *testing.T) {
 	mine := seedRuleWithTraffic(t, d, uid, n1, 20001, 5000)
 	theirs := seedRuleWithTraffic(t, d, other, n1, 20002, 6000)
 
+	// Seed rules.exit_bytes so admin reset is verified to clear it too.
+	var mineRule, theirsRule int64
+	_ = d.QueryRow(`SELECT rule_id FROM rule_hops WHERE id=?`, mine).Scan(&mineRule)
+	_ = d.QueryRow(`SELECT rule_id FROM rule_hops WHERE id=?`, theirs).Scan(&theirsRule)
+	_, _ = d.Exec(`UPDATE rules SET exit_bytes=9000 WHERE id=?`, mineRule)
+	_, _ = d.Exec(`UPDATE rules SET exit_bytes=8000 WHERE id=?`, theirsRule)
+	_, _ = d.Exec(`UPDATE users SET total_traffic_used_bytes=12345 WHERE id=?`, uid)
+
 	if err := ResetAllUserTraffic(d, uid); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +113,23 @@ func TestResetAllUserTrafficClearsRuleCounters(t *testing.T) {
 	}
 	if total != 6000 {
 		t.Fatalf("another user's rule counter must be untouched, got %d", total)
+	}
+	var exitBytes int64
+	if err := d.QueryRow(`SELECT exit_bytes FROM rules WHERE id=?`, mineRule).Scan(&exitBytes); err != nil {
+		t.Fatal(err)
+	}
+	if exitBytes != 0 {
+		t.Fatalf("rules.exit_bytes should reset, got %d", exitBytes)
+	}
+	if err := d.QueryRow(`SELECT exit_bytes FROM rules WHERE id=?`, theirsRule).Scan(&exitBytes); err != nil {
+		t.Fatal(err)
+	}
+	if exitBytes != 8000 {
+		t.Fatalf("other user's exit_bytes must be untouched, got %d", exitBytes)
+	}
+	u, _ := GetUserByID(d, uid)
+	if u.TotalTrafficUsedBytes != 0 {
+		t.Fatalf("total_traffic_used_bytes should reset, got %d", u.TotalTrafficUsedBytes)
 	}
 }
 
@@ -157,11 +182,15 @@ func TestCheckAndResetTrafficCycle(t *testing.T) {
 		t.Fatal("reset_days=0 should not trigger reset")
 	}
 
-	// set reset_days=30, created_at=31 days ago, add traffic
+	// set reset_days=30, created_at=31 days ago, add traffic + hop/exit totals
 	past := now() - 31*86400
-	d.Exec(`UPDATE users SET traffic_reset_days=30, created_at=? WHERE id=?`, past, uid)
+	d.Exec(`UPDATE users SET traffic_reset_days=30, created_at=?, total_traffic_used_bytes=5000 WHERE id=?`, past, uid)
 	_ = AddUserTraffic(d, uid, 9999)
 	_ = AddUserNodeTraffic(d, uid, nid, 8888)
+	hopID := seedRuleWithTraffic(t, d, uid, nid, 21001, 4000)
+	var ruleID int64
+	_ = d.QueryRow(`SELECT rule_id FROM rule_hops WHERE id=?`, hopID).Scan(&ruleID)
+	_, _ = d.Exec(`UPDATE rules SET exit_bytes=7000 WHERE id=?`, ruleID)
 
 	u, _ = GetUserByID(d, uid)
 	reset, _ = CheckAndResetTrafficCycle(d, u)
@@ -172,9 +201,28 @@ func TestCheckAndResetTrafficCycle(t *testing.T) {
 	if u.TrafficUsedBytes != 0 {
 		t.Fatalf("global not reset: %d", u.TrafficUsedBytes)
 	}
+	if u.TotalTrafficUsedBytes != 0 {
+		t.Fatalf("total_traffic_used_bytes not reset: %d", u.TotalTrafficUsedBytes)
+	}
 	g, _ := GetNodeGrant(d, uid, nid)
 	if g.TrafficUsedBytes != 0 {
 		t.Fatalf("per-node not reset: %d", g.TrafficUsedBytes)
+	}
+	var hopTotal, exitBytes, lastBytes int64
+	if err := d.QueryRow(`SELECT total_bytes, last_bytes FROM rule_hops WHERE id=?`, hopID).Scan(&hopTotal, &lastBytes); err != nil {
+		t.Fatal(err)
+	}
+	if hopTotal != 0 {
+		t.Fatalf("cycle reset must clear hop total_bytes, got %d", hopTotal)
+	}
+	if lastBytes != 777 {
+		t.Fatalf("last_bytes must survive cycle reset, got %d", lastBytes)
+	}
+	if err := d.QueryRow(`SELECT exit_bytes FROM rules WHERE id=?`, ruleID).Scan(&exitBytes); err != nil {
+		t.Fatal(err)
+	}
+	if exitBytes != 0 {
+		t.Fatalf("cycle reset must clear rules.exit_bytes, got %d", exitBytes)
 	}
 
 	// calling again in the same cycle should not reset

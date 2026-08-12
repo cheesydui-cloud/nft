@@ -35,3 +35,40 @@ func TestCounterSamplesRollbackOnFailedSend(t *testing.T) {
 		t.Fatalf("after commit with no new bytes, want no samples, got %+v", got)
 	}
 }
+
+// foldCountersBeforeFlush must preserve bytes that would otherwise be zeroed by
+// nft.Apply's delete+recreate table. After fold, a kernel counter drop to 0
+// must still surface the pre-flush delta on the next counterSamples call.
+func TestFoldCountersBeforeFlushPreservesBytes(t *testing.T) {
+	fake := &fakeDataplane{}
+	d := newTestDaemon(t)
+	d.dp = fake
+
+	fake.counters = []forward.Counter{{Proto: "tcp", ListenPort: 13000, BytesUp: 500, BytesDown: 200}}
+	// Establish a baseline (first sample advances cursor, reports 500/200).
+	if s := d.counterSamples(); len(s) != 1 || s[0].BytesUp != 500 {
+		t.Fatalf("baseline sample = %+v", s)
+	}
+
+	// More traffic then a reconcile-style flush.
+	fake.counters = []forward.Counter{{Proto: "tcp", ListenPort: 13000, BytesUp: 800, BytesDown: 350}}
+	d.foldCountersBeforeFlush()
+	// Kernel table recreated → counters reset to 0.
+	fake.counters = []forward.Counter{{Proto: "tcp", ListenPort: 13000, BytesUp: 0, BytesDown: 0}}
+
+	samples := d.counterSamples()
+	if len(samples) != 1 {
+		t.Fatalf("want 1 sample after fold+flush, got %+v", samples)
+	}
+	if samples[0].BytesUp != 300 || samples[0].BytesDown != 150 {
+		t.Fatalf("fold must park pre-flush delta 300/150, got up=%d down=%d", samples[0].BytesUp, samples[0].BytesDown)
+	}
+
+	// NACK after fold-originated sample: reAdd must still retransmit (cursor
+	// may be 0 post-flush, so remainder is parked).
+	d.reAddCounters(samples)
+	samples2 := d.counterSamples()
+	if len(samples2) != 1 || samples2[0].BytesUp != 300 || samples2[0].BytesDown != 150 {
+		t.Fatalf("reAdd after flush must retransmit parked delta, got %+v", samples2)
+	}
+}

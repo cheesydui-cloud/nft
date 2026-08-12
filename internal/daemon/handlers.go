@@ -31,11 +31,14 @@ type Daemon struct {
 	countersFn  func() ([]forward.Counter, error)
 	resolveFn   resolveFunc
 
-	// countersMu guards lastCounters, the per-rule byte total observed on the
-	// previous counterSamples call. The sampler computes deltas against it.
-	countersMu    sync.Mutex
-	lastCounters  map[string][2]int64
-	lastCounterAt time.Time // agent clock for ElapsedMs on CounterSample
+	// countersMu guards lastCounters / pendingFlushDeltas, the per-rule byte
+	// totals observed on the previous counterSamples call and any deltas
+	// folded just before a kernel table flush. The sampler computes deltas
+	// against lastCounters and merges pendingFlushDeltas into the next push.
+	countersMu         sync.Mutex
+	lastCounters       map[string][2]int64
+	pendingFlushDeltas map[string][2]int64 // proto/port → {up,down} parked pre-flush
+	lastCounterAt      time.Time           // agent clock for ElapsedMs on CounterSample
 
 	// connectURL/connectTok configure the outbound WebSocket dialer to
 	// the panel. Empty connectURL = tui/server-local mode (no dialer).
@@ -71,9 +74,17 @@ type Daemon struct {
 // mutate the data plane at the same time. Callers may or may not hold d.mu;
 // this method never takes d.mu, so the d.mu -> reconcileMu lock order is
 // preserved.
+//
+// Before the kernel flush, we fold current nft/userspace counters into
+// lastCounters as if counterSamples() had polled them. nft.Apply deletes and
+// recreates the table (zeroing counters); without this fold, bytes that
+// accumulated since the last dialer tick would be lost forever. The fold only
+// advances the cursor — the next counterSamples() call still reports the
+// delta correctly (or zero if nothing more arrived).
 func (d *Daemon) applySerialized(ctx context.Context, resolved []nft.Rule) error {
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
+	d.foldCountersBeforeFlush()
 	return d.dp.Reconcile(ctx, resolved)
 }
 

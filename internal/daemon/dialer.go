@@ -95,15 +95,21 @@ type DialerConfig struct {
 	// CountersFn returns deltas since the last call. nil = skip counters.
 	CountersFn func() []wsproto.CounterSample
 
-	// CountersReadd rolls a batch of deltas back into the sampler's cursor after
-	// a failed send, so the bytes are re-reported next tick instead of being
-	// silently lost (which would systematically undercount quota/billing).
-	CountersReadd func([]wsproto.CounterSample)
+		// CountersReadd rolls a batch of deltas back into the sampler's cursor after
+		// a failed send or counters_ack NACK, so the bytes are re-reported next tick
+		// instead of being silently lost (which would systematically undercount
+		// quota/billing).
+		CountersReadd func([]wsproto.CounterSample)
 
-	// OnConfigUpdate is called when the panel pushes a pool_size change,
-	// either via HelloAck on connect or via a config_update frame at runtime.
-	OnConfigUpdate func(poolSize int)
-}
+		// ProxyCountersFn / ProxyCountersReadd mirror the forward-rule path for
+		// published proxy services (VLESS/SS/…). nil = skip proxy counters.
+		ProxyCountersFn    func() []wsproto.ProxyCounterSample
+		ProxyCountersReadd func([]wsproto.ProxyCounterSample)
+
+		// OnConfigUpdate is called when the panel pushes a pool_size change,
+		// either via HelloAck on connect or via a config_update frame at runtime.
+		OnConfigUpdate func(poolSize int)
+	}
 
 type upgradeResult struct {
 	id  string
@@ -118,45 +124,132 @@ type redirectResult struct {
 	dropSession bool
 }
 
-type Dialer struct {
-	cfg DialerConfig
+	type Dialer struct {
+		cfg DialerConfig
 
-	// urlMu guards cfg.URL for panel_redirect hot-swap.
-	urlMu sync.RWMutex
+		// urlMu guards cfg.URL for panel_redirect hot-swap.
+		urlMu sync.RWMutex
 
-	upgradeCh  chan upgradeResult
-	redirectCh chan redirectResult
+		upgradeCh  chan upgradeResult
+		redirectCh chan redirectResult
 
-	cmdCh     chan wsproto.Envelope
-	pendMu    sync.Mutex
-	pending   map[string]chan wsproto.RuleCmdAck
-	idSeq     atomic.Uint64
-	connected atomic.Bool
+		cmdCh     chan wsproto.Envelope
+		pendMu    sync.Mutex
+		pending   map[string]chan wsproto.RuleCmdAck
+		// pendingCounters holds samples awaiting counters_ack so a panel NACK
+		// can retransmit. Keyed by Envelope.ID. Bounded by the 1s tick rate;
+		// orphaned entries (panel never acks — old panel) are dropped after
+		// pendingCountersTTL via a best-effort sweep on each new send.
+		pendingCounters      map[string]pendingCounterBatch
+		pendingProxyCounters map[string]pendingProxyCounterBatch
+		idSeq                atomic.Uint64
+		connected            atomic.Bool
 
-	// nodeMu guards nodeID/nodeName set on successful hello_ack.
-	nodeMu   sync.Mutex
-	nodeID   int64
-	nodeName string
+		// nodeMu guards nodeID/nodeName set on successful hello_ack.
+		nodeMu   sync.Mutex
+		nodeID   int64
+		nodeName string
 
-	stopOnce sync.Once
-	stop     chan struct{}
-	done     chan struct{} // closed when Run() returns
-}
-
-func NewDialer(cfg DialerConfig) *Dialer {
-	if cfg.ConnectFile == "" {
-		cfg.ConnectFile = DefaultConnectFile
+		stopOnce sync.Once
+		stop     chan struct{}
+		done     chan struct{} // closed when Run() returns
 	}
-	return &Dialer{
-		cfg:        cfg,
-		upgradeCh:  make(chan upgradeResult, 1),
-		redirectCh: make(chan redirectResult, 1),
-		cmdCh:      make(chan wsproto.Envelope, 16),
-		pending:    make(map[string]chan wsproto.RuleCmdAck),
-		stop:       make(chan struct{}),
-		done:       make(chan struct{}),
+
+	type pendingCounterBatch struct {
+		samples []wsproto.CounterSample
+		at      time.Time
 	}
-}
+
+	type pendingProxyCounterBatch struct {
+		samples []wsproto.ProxyCounterSample
+		at      time.Time
+	}
+
+	// pendingCountersTTL: if the panel never answers (pre-ack firmware), drop
+	// the pending batch so memory does not grow. Slightly longer than a few
+	// counter intervals — after this the next tick already has fresher deltas
+	// and rewinding a stale batch would risk double-count with wrap detection.
+	const pendingCountersTTL = 8 * time.Second
+
+	func NewDialer(cfg DialerConfig) *Dialer {
+		if cfg.ConnectFile == "" {
+			cfg.ConnectFile = DefaultConnectFile
+		}
+		return &Dialer{
+			cfg:                  cfg,
+			upgradeCh:            make(chan upgradeResult, 1),
+			redirectCh:           make(chan redirectResult, 1),
+			cmdCh:                make(chan wsproto.Envelope, 16),
+			pending:              make(map[string]chan wsproto.RuleCmdAck),
+			pendingCounters:      make(map[string]pendingCounterBatch),
+			pendingProxyCounters: make(map[string]pendingProxyCounterBatch),
+			stop:                 make(chan struct{}),
+			done:                 make(chan struct{}),
+		}
+	}
+
+	func (d *Dialer) trackPendingCounters(id string, samples []wsproto.CounterSample) {
+		d.pendMu.Lock()
+		defer d.pendMu.Unlock()
+		now := time.Now()
+		for k, v := range d.pendingCounters {
+			if now.Sub(v.at) > pendingCountersTTL {
+				delete(d.pendingCounters, k)
+			}
+		}
+		// Cap: if still huge (panel silent), drop oldest by clearing map.
+		if len(d.pendingCounters) > 32 {
+			d.pendingCounters = make(map[string]pendingCounterBatch)
+		}
+		cp := make([]wsproto.CounterSample, len(samples))
+		copy(cp, samples)
+		d.pendingCounters[id] = pendingCounterBatch{samples: cp, at: now}
+	}
+
+	func (d *Dialer) forgetPendingCounters(id string) {
+		d.pendMu.Lock()
+		delete(d.pendingCounters, id)
+		d.pendMu.Unlock()
+	}
+
+	func (d *Dialer) takePendingCounters(id string) []wsproto.CounterSample {
+		d.pendMu.Lock()
+		defer d.pendMu.Unlock()
+		b, ok := d.pendingCounters[id]
+		if !ok {
+			return nil
+		}
+		delete(d.pendingCounters, id)
+		return b.samples
+	}
+
+	func (d *Dialer) trackPendingProxyCounters(id string, samples []wsproto.ProxyCounterSample) {
+		d.pendMu.Lock()
+		defer d.pendMu.Unlock()
+		now := time.Now()
+		for k, v := range d.pendingProxyCounters {
+			if now.Sub(v.at) > pendingCountersTTL {
+				delete(d.pendingProxyCounters, k)
+			}
+		}
+		if len(d.pendingProxyCounters) > 32 {
+			d.pendingProxyCounters = make(map[string]pendingProxyCounterBatch)
+		}
+		cp := make([]wsproto.ProxyCounterSample, len(samples))
+		copy(cp, samples)
+		d.pendingProxyCounters[id] = pendingProxyCounterBatch{samples: cp, at: now}
+	}
+
+	func (d *Dialer) takePendingProxyCounters(id string) []wsproto.ProxyCounterSample {
+		d.pendMu.Lock()
+		defer d.pendMu.Unlock()
+		b, ok := d.pendingProxyCounters[id]
+		if !ok {
+			return nil
+		}
+		delete(d.pendingProxyCounters, id)
+		return b.samples
+	}
 
 func (d *Dialer) connectURL() string {
 	d.urlMu.RLock()
@@ -721,6 +814,28 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					}
 				}
 				d.pendMu.Unlock()
+			case wsproto.TypeCountersAck:
+				var ack wsproto.CountersAck
+				if err := json.Unmarshal(env.Payload, &ack); err != nil {
+					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+					continue
+				}
+				samples := d.takePendingCounters(env.ID)
+				if !ack.OK && len(samples) > 0 && d.cfg.CountersReadd != nil {
+					log.Printf("dialer: counters_ack NACK id=%s err=%s — retransmit next tick", env.ID, ack.Error)
+					d.cfg.CountersReadd(samples)
+				}
+			case wsproto.TypeProxyCountersAck:
+				var ack wsproto.ProxyCountersAck
+				if err := json.Unmarshal(env.Payload, &ack); err != nil {
+					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+					continue
+				}
+				samples := d.takePendingProxyCounters(env.ID)
+				if !ack.OK && len(samples) > 0 && d.cfg.ProxyCountersReadd != nil {
+					log.Printf("dialer: proxy_counters_ack NACK id=%s err=%s — retransmit next tick", env.ID, ack.Error)
+					d.cfg.ProxyCountersReadd(samples)
+				}
 			}
 		case <-watchdogT.C:
 			// Half-open / silent-dead links: no frame for dialerWatchdogStale.
@@ -750,6 +865,9 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				// panel can zero idle hops immediately. Skipping empty batches left
 				// the last non-zero rate sticky for hopIdleTTL while the router
 				// already showed near-zero.
+				//
+				// Envelope.ID enables counters_ack: on NACK or write failure we
+				// reAddCounters so the next tick retransmits the deltas.
 				samples := d.cfg.CountersFn()
 				if samples == nil {
 					samples = []wsproto.CounterSample{}
@@ -759,15 +877,45 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					log.Printf("dialer: marshal %s: %v", wsproto.TypeCounters, err)
 					continue
 				}
-				if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeCounters, Payload: cp}); err != nil {
+				id := "ctr-" + strconv.FormatUint(d.idSeq.Add(1), 36)
+				if len(samples) > 0 {
+					d.trackPendingCounters(id, samples)
+				}
+				if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeCounters, ID: id, Payload: cp}); err != nil {
 					log.Printf("dialer: write %s: %v", wsproto.TypeCounters, err)
-					if d.cfg.CountersReadd != nil && len(samples) > 0 {
-						d.cfg.CountersReadd(samples)
+					if len(samples) > 0 {
+						d.forgetPendingCounters(id)
+						if d.cfg.CountersReadd != nil {
+							d.cfg.CountersReadd(samples)
+						}
 					}
 					// Counters are best-effort periodic telemetry; a single failed
 					// write on a flaky link should not tear the whole control
 					// channel down. The reader will still detect a truly dead conn.
 					continue
+				}
+				// Proxy-service traffic on the same tick (VLESS/SS/… cores).
+				if d.cfg.ProxyCountersFn != nil {
+					ps := d.cfg.ProxyCountersFn()
+					if ps == nil {
+						ps = []wsproto.ProxyCounterSample{}
+					}
+					if len(ps) > 0 {
+						pp, err := json.Marshal(wsproto.ProxyCounters{Samples: ps})
+						if err != nil {
+							log.Printf("dialer: marshal %s: %v", wsproto.TypeProxyCounters, err)
+						} else {
+							pid := "pctr-" + strconv.FormatUint(d.idSeq.Add(1), 36)
+							d.trackPendingProxyCounters(pid, ps)
+							if err := writeOne(ctx, ws, wsproto.Envelope{Type: wsproto.TypeProxyCounters, ID: pid, Payload: pp}); err != nil {
+								log.Printf("dialer: write %s: %v", wsproto.TypeProxyCounters, err)
+								d.takePendingProxyCounters(pid)
+								if d.cfg.ProxyCountersReadd != nil {
+									d.cfg.ProxyCountersReadd(ps)
+								}
+							}
+						}
+					}
 				}
 		case res := <-d.upgradeCh:
 			ap, _ := json.Marshal(res.ack)

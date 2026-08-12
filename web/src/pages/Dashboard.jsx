@@ -297,7 +297,9 @@ function buildAttention(data, users) {
         }
       }
       const quota = u.traffic_quota_bytes || 0
-      const used = u.traffic_used_bytes || 0
+      // Match enforceUserQuota / account UI: billable = raw × billing_rate.
+      const rate = u.billing_rate > 0 ? u.billing_rate : 1
+      const used = Math.round((u.traffic_used_bytes || 0) * rate)
       if (quota > 0) {
         const ratio = used / quota
         if (ratio >= 1) {

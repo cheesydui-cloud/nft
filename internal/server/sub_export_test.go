@@ -122,3 +122,22 @@ func TestPublicSubAndMySubscription(t *testing.T) {
 		t.Fatalf("ungranted user should see 0 nodes, got %+v", body2)
 	}
 }
+
+// Subscription-Userinfo download must report billable used (raw × billing_rate),
+// matching enforceUserQuota and the account UI.
+func TestSubscriptionUserinfoHeaderBillable(t *testing.T) {
+	u := &db.User{TrafficUsedBytes: 1000, TrafficQuotaBytes: 10_000, BillingRate: 2.5}
+	info := subscriptionUserinfoHeader(u)
+	if !strings.Contains(info, "download=2500") {
+		t.Fatalf("want download=2500 (billable), got %q", info)
+	}
+	if !strings.Contains(info, "total=10000") {
+		t.Fatalf("want total=10000, got %q", info)
+	}
+	// rate ≤ 0 falls back to 1 (same as userBillableTraffic)
+	u2 := &db.User{TrafficUsedBytes: 1000, BillingRate: 0}
+	info2 := subscriptionUserinfoHeader(u2)
+	if !strings.Contains(info2, "download=1000") {
+		t.Fatalf("rate=0 should treat as 1, got %q", info2)
+	}
+}

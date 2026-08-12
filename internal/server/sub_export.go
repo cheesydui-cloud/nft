@@ -115,10 +115,12 @@ func subscriptionUserinfoHeader(u *db.User) string {
 	if u == nil {
 		return ""
 	}
-	// upload=0; download=used; total=quota; expire=unix
+	// upload=0; download=billable used (raw × billing_rate); total=quota; expire=unix.
+	// Must match enforceUserQuota / account UI so clients don't show under-quota
+	// while the panel has already disabled the user for 流量超额.
 	parts := []string{
 		"upload=0",
-		"download=" + strconv.FormatInt(u.TrafficUsedBytes, 10),
+		"download=" + strconv.FormatInt(userBillableTraffic(u), 10),
 	}
 	if u.TrafficQuotaBytes > 0 {
 		parts = append(parts, "total="+strconv.FormatInt(u.TrafficQuotaBytes, 10))
