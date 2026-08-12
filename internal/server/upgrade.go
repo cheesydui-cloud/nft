@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,13 +104,15 @@ func fetchAgentBinary(version string) ([]byte, string, error) {
 		return data, hex.EncodeToString(sum[:]), nil
 	}
 	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", agentRepo, version)
+	// Prefer gh-proxy when configured (same as proxy-core cache); fall back to
+	// direct GitHub so panels that cannot reach either still get a clear error.
 	want, err := fetchSumFor(base+"/SHA256SUMS", "nft-agent")
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("拉取 agent SHA256SUMS 失败（面板需能访问 GitHub 或已配置 gh-proxy）: %w", err)
 	}
-	data, err := httpGetBytes(base + "/nft-agent")
+	data, err := httpGetAgent(base + "/nft-agent")
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("下载 nft-agent 失败: %w", err)
 	}
 	sum := sha256.Sum256(data)
 	got := hex.EncodeToString(sum[:])
@@ -126,7 +127,7 @@ func fetchAgentBinary(version string) ([]byte, string, error) {
 
 // fetchSumFor pulls the sha256 for name out of a SHA256SUMS file at url.
 func fetchSumFor(url, name string) (string, error) {
-	body, err := httpGetBytes(url)
+	body, err := httpGetAgent(url)
 	if err != nil {
 		return "", err
 	}
@@ -139,17 +140,38 @@ func fetchSumFor(url, name string) (string, error) {
 	return "", fmt.Errorf("SHA256SUMS 中未找到 %s", name)
 }
 
-func httpGetBytes(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
+// httpGetAgent downloads url with optional gh-proxy prefix and direct fallback.
+// Used for panel→GitHub agent artifact pulls (not agent→panel binary pulls).
+func httpGetAgent(url string) ([]byte, error) {
+	// Try proxied URL first when configured, then direct.
+	candidates := []string{}
+	if pfx := ghProxyPrefix(); pfx != "" {
+		candidates = append(candidates, withGHProxy(url))
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	candidates = append(candidates, url)
+	// Common public mirrors when no explicit proxy is set (CN panels often
+	// cannot reach github.com; mirrors are best-effort).
+	if ghProxyPrefix() == "" {
+		for _, pfx := range []string{
+			"https://gh-proxy.com/",
+			"https://mirror.ghproxy.com/",
+			"https://ghfast.top/",
+		} {
+			candidates = append(candidates, pfx+url)
+		}
 	}
-	return io.ReadAll(resp.Body)
+	var lastErr error
+	for _, u := range candidates {
+		data, err := httpGetBytesLong(u, 120*time.Second)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no download candidates")
+	}
+	return nil, lastErr
 }
 
 // normalizePanelBaseURL turns a stored panel_url into an absolute base the agent

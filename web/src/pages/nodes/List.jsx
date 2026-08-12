@@ -52,8 +52,16 @@ export default function NodeList() {
   }
 
   const upgradeAll = async () => {
-    if (!(await confirm({ title: '升级所有节点', message: '向所有版本不一致的节点推送升级？', confirmText: '升级' }))) return
-    try { await api.post('/nodes/upgrade-all'); toast('已发起升级'); load() } catch (err) { toast(err.message, 'error') }
+    if (!(await confirm({ title: '升级所有节点', message: '向所有在线节点推送 agent 升级（后台执行，可稍后刷新查看版本）？', confirmText: '升级' }))) return
+    try {
+      const res = await api.post('/nodes/upgrade-all')
+      const n = res?.queued ?? res?.upgraded
+      const ver = res?.version ? ` → ${res.version}` : ''
+      toast(typeof n === 'number' ? `已排队升级 ${n} 个节点${ver}` : '已发起升级')
+      // Soft refresh after a few seconds so version labels start moving.
+      setTimeout(load, 4000)
+      load()
+    } catch (err) { toast(err.message, 'error') }
   }
 
   const deleteNode = async (node) => {

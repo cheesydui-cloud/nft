@@ -1787,20 +1787,33 @@ func (s *Server) apiUpgradeNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	err = s.Hub.SendUpgrade(id, upgradeFor(node, art, panelBaseURL(s.DB, r)))
-	// Record the dispatch outcome so the node detail can surface a silent
-	// failure later (an acked upgrade whose version never takes).
-	status, errText := "acked", ""
-	if err != nil {
-		status, errText = "error", err.Error()
-	}
-	db.RecordUpgradeResult(s.DB, id, art.Version, status, errText)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
+	if node.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点无 agent，无法升级")
 		return
 	}
-	db.WriteAudit(s.DB, u.ID, "node.upgrade", strconv.FormatInt(id, 10), art.Version)
-	jsonOK(w, map[string]any{"ok": true})
+	panelURL := panelBaseURL(s.DB, r)
+	// Offline: fail fast and record (detail page surfaces last_upgrade_error).
+	if s.Hub == nil || !s.Hub.IsOnline(id) {
+		db.RecordUpgradeResult(s.DB, id, art.Version, "error", "节点未连接")
+		jsonErr(w, http.StatusInternalServerError, "节点未连接")
+		return
+	}
+	// Online: queue SendUpgrade in background. Holding the HTTP request for
+	// download+replace (up to upgradeAckTimeout) aborts in reverse proxies and
+	// the FE maps that to a generic「网络错误」.
+	db.RecordUpgradeResult(s.DB, id, art.Version, "pending", "")
+	uid := u.ID
+	ver := art.Version
+	safeGo(func() {
+		err := s.Hub.SendUpgrade(id, upgradeFor(node, art, panelURL))
+		status, errText := "acked", ""
+		if err != nil {
+			status, errText = "error", err.Error()
+		}
+		db.RecordUpgradeResult(s.DB, id, ver, status, errText)
+	})
+	db.WriteAudit(s.DB, uid, "node.upgrade", strconv.FormatInt(id, 10), art.Version)
+	jsonOK(w, map[string]any{"ok": true, "queued": true, "version": art.Version})
 }
 
 func (s *Server) apiDeleteNode(w http.ResponseWriter, r *http.Request) {
@@ -1968,6 +1981,8 @@ func (s *Server) apiResyncAllNodes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiUpgradeAllNodes(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
+	// Warm agent artifact before responding so the UI gets a real error when
+	// the panel cannot reach GitHub / gh-proxy (instead of opaque "网络错误").
 	art, err := s.loadAgentArtifact()
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -1979,23 +1994,46 @@ func (s *Server) apiUpgradeAllNodes(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var ok, fail int
+	// Filter targets first so the response can report how many will be tried.
+	var targets []*db.Node
 	for _, n := range nodes {
 		if n.NodeType == "composite" || n.Disabled {
 			continue
 		}
-		err := s.Hub.SendUpgrade(n.ID, upgradeFor(n, art, panelURL))
-		status, errText := "acked", ""
-		if err != nil {
-			status, errText = "error", err.Error()
-			fail++
-		} else {
-			ok++
-		}
-		db.RecordUpgradeResult(s.DB, n.ID, art.Version, status, errText)
+		targets = append(targets, n)
 	}
-	db.WriteAudit(s.DB, u.ID, "node.upgrade_all", "", fmt.Sprintf("ok=%d fail=%d", ok, fail))
-	jsonOK(w, map[string]any{"ok": true, "upgraded": ok, "failed": fail})
+	// Fan-out in background: each SendUpgrade may block up to upgradeAckTimeout
+	// (download+replace). Holding the HTTP request open for N×timeout trips
+	// reverse-proxy/browser limits and the FE maps aborted fetch →「网络错误」.
+	uid := u.ID
+	ver := art.Version
+	for _, n := range targets {
+		db.RecordUpgradeResult(s.DB, n.ID, ver, "pending", "")
+	}
+	safeGo(func() {
+		var ok, fail int
+		for _, n := range targets {
+			err := s.Hub.SendUpgrade(n.ID, upgradeFor(n, art, panelURL))
+			status, errText := "acked", ""
+			if err != nil {
+				status, errText = "error", err.Error()
+				fail++
+			} else {
+				ok++
+			}
+			db.RecordUpgradeResult(s.DB, n.ID, ver, status, errText)
+		}
+		db.WriteAudit(s.DB, uid, "node.upgrade_all", "", fmt.Sprintf("ok=%d fail=%d", ok, fail))
+	})
+	jsonOK(w, map[string]any{
+		"ok":      true,
+		"queued":  len(targets),
+		"version": art.Version,
+		// Keep legacy keys so older UI still shows something sensible.
+		"upgraded": 0,
+		"failed":   0,
+		"async":    true,
+	})
 }
 
 // --- Settings ---
