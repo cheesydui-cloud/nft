@@ -47,6 +47,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
   const [localVariant, setLocalVariant] = useState(variant === 'chain' ? 'chain' : 'port')
   const [proxyServices, setProxyServices] = useState([])
+  const [repoSocksNodes, setRepoSocksNodes] = useState([]) // 落地仓库 socks5 节点（admin）
   const toast = useToast()
 
   const landingEnabled = Array.isArray(landingNodes)
@@ -63,6 +64,24 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     api.get('/proxy-services')
       .then(d => { if (!cancelled) setProxyServices(d?.services || []) })
       .catch(() => { if (!cancelled) setProxyServices([]) })
+    return () => { cancelled = true }
+  }, [open])
+
+  // 链式 SK5：从落地仓库导入 socks5 节点（admin 可读 /node-repo）。
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api.get('/node-repo')
+      .then(d => {
+        if (cancelled) return
+        const list = (d?.nodes || []).filter(n => {
+          const p = String(n.protocol || '').toLowerCase()
+          const uri = String(n.uri || '').toLowerCase()
+          return p === 'socks5' || p === 'socks' || uri.startsWith('socks5://') || uri.startsWith('socks://')
+        })
+        setRepoSocksNodes(list)
+      })
+      .catch(() => { if (!cancelled) setRepoSocksNodes([]) })
     return () => { cancelled = true }
   }, [open])
 
@@ -247,6 +266,23 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     { label: '组合', options: compositeOpts },
     { label: '代理', options: proxyOpts },
   ]
+
+  // 落地仓库 socks5 → SK5 代理 URI（优先用仓库 uri，否则按 host/port 拼无认证）。
+  const buildRepoSocksURI = (n) => {
+    const uri = String(n?.uri || '').trim()
+    if (uri && /^socks5?:\/\//i.test(uri)) return uri
+    const host = String(n?.host || '').trim()
+    const port = Number(n?.port) || 0
+    if (!host || !port) return ''
+    const hostPart = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+    return `socks5://${hostPart}:${port}`
+  }
+  const repoSocksOptions = (repoSocksNodes || []).map(n => {
+    const uri = buildRepoSocksURI(n)
+    const proto = (n.protocol || 'socks5').toLowerCase()
+    const label = `${n.name || '(未命名)'}${n.host ? ` · ${n.host}:${n.port || ''}` : ''}`
+    return { value: uri, label: `[${proto}] ${label}`, _id: n.id }
+  }).filter(o => o.value)
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
@@ -463,13 +499,27 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
           {isSocks ? (
             <>
               <label className="fl">SK5 代理</label>
-              <input
-                className="input-field font-mono"
-                value={form.exit_uri || ''}
-                onChange={e => set('exit_uri', e.target.value)}
-                required
-                placeholder="socks5://user:pass@proxy:1080"
-              />
+              <div className="space-y-2 min-w-0">
+                {repoSocksOptions.length > 0 && (
+                  <Select
+                    value={repoSocksOptions.some(o => o.value === (form.exit_uri || '')) ? (form.exit_uri || '') : ''}
+                    onChange={v => set('exit_uri', v)}
+                    placeholder="-- 从落地仓库导入 --"
+                    searchable
+                    options={repoSocksOptions}
+                  />
+                )}
+                <input
+                  className="input-field font-mono"
+                  value={form.exit_uri || ''}
+                  onChange={e => set('exit_uri', e.target.value)}
+                  required
+                  placeholder="socks5://user:pass@proxy:1080"
+                />
+                {repoSocksOptions.length === 0 && (
+                  <div className="text-[11px] text-ink-mut">落地仓库暂无 SOCKS5 节点，可手动填写 URI 或先在落地仓库添加</div>
+                )}
+              </div>
               <label className="fl">CONNECT 目标</label>
               <div className="flex items-center gap-3">
                 <input
@@ -488,7 +538,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               </div>
               <label className="fl"></label>
               <div className="text-xs text-ink-mut">
-                末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP；面板与 agent 需同升。
+                可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。
               </div>
             </>
           ) : landingEnabled ? (
