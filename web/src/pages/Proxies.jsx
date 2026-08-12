@@ -20,6 +20,8 @@ export default function Proxies() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState('all')
+  // Clash Verge / OpenClash: …/sub/{token}/mihomo.yaml (optionally ?host=&port=)
+  const [subBase, setSubBase] = useState('')
   const { copyFmt } = useCopyFmt()
   const blurred = useBlur()
   const toast = useToast()
@@ -36,8 +38,16 @@ export default function Proxies() {
       ? api.get('/my/landing-nodes').then(d => d?.nodes || []).catch(() => [])
       : Promise.resolve([])
     const rolesP = fetchNodeRoles()
-    Promise.all([rulesP, serverP, rolesP]).then(([r, s, sr]) => {
+    const subP = !isAdmin
+      ? api.get('/my/subscription').then(d => {
+          const base = (d?.base_url || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '')
+          const token = d?.token || ''
+          return d?.urls?.mihomo || (token ? `${base}/sub/${token}/mihomo.yaml` : '')
+        }).catch(() => '')
+      : Promise.resolve('')
+    Promise.all([rulesP, serverP, rolesP, subP]).then(([r, s, sr, sub]) => {
       setRules(r); setServerNodes(s); setRoles({ ...sr, ...loadLocalRoles(user?.username) })
+      setSubBase(sub || '')
     }).finally(() => setLoading(false))
   }, [])
 
@@ -209,6 +219,35 @@ export default function Proxies() {
     toast(`已下载 ${file}（Clash/Mihomo 导入即可使用）`)
   }
 
+  // Clash Verge / OpenClash: full mihomo subscription (authorized proxy services).
+  // Landing/relay rows may not appear in that feed, so we do not host:port-filter here
+  // (empty YAML would break client import). Optional ?host=&port= remains on the API.
+  const copySubLink = async () => {
+    let url = subBase
+    if (!url) {
+      try {
+        const d = await api.get('/my/subscription')
+        const base = (d?.base_url || window.location.origin).replace(/\/$/, '')
+        const token = d?.token || ''
+        const mihomo = d?.urls?.mihomo || (token ? `${base}/sub/${token}/mihomo.yaml` : '')
+        if (mihomo) {
+          setSubBase(mihomo)
+          url = mihomo
+        }
+      } catch { /* ignore */ }
+    }
+    if (!url) {
+      toast('暂无订阅凭证，请稍后重试', 'error')
+      return
+    }
+    try {
+      await copyToClipboard(url)
+      toast('订阅链接已复制（Clash Verge / OpenClash 粘贴导入）')
+    } catch {
+      toast('复制失败', 'error')
+    }
+  }
+
   return (
     <Layout>
       <div className="h-full flex flex-col">
@@ -299,6 +338,14 @@ export default function Proxies() {
                             下载 YAML
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => copySubLink()}
+                          className="text-emerald-600 font-sans text-xs font-semibold hover:underline"
+                          title="复制 Clash Verge / OpenClash 订阅链接（粘贴到客户端「从 URL 导入」）"
+                        >
+                          订阅链接
+                        </button>
                         <QRCodeButton
                           text={qr}
                           toast={toast}

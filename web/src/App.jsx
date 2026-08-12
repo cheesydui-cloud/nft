@@ -26,7 +26,6 @@ import MyRules from './pages/my/Rules'
 import MyRuleDetail from './pages/my/RuleDetail'
 import MyLandingNodes from './pages/my/LandingNodes'
 import MyDocs from './pages/my/Docs'
-import MySubscription from './pages/my/Subscription'
 import Proxies from './pages/Proxies'
 
 // ErrorBoundary: catches render errors in any child component and shows a
@@ -153,7 +152,6 @@ export default function App() {
           <Route path="/my/rules" element={<UserRoute><MyRules /></UserRoute>} />
           <Route path="/my/rules/:id" element={<UserRoute><MyRuleDetail /></UserRoute>} />
           <Route path="/my/landing" element={<UserRoute><MyLandingNodes /></UserRoute>} />
-          <Route path="/my/subscription" element={<UserRoute><MySubscription /></UserRoute>} />
           <Route path="/my/docs" element={<UserRoute><MyDocs /></UserRoute>} />
 
           {/* Shared routes */}

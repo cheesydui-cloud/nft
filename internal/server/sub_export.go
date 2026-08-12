@@ -52,6 +52,9 @@ func (s *Server) servePublicSub(w http.ResponseWriter, r *http.Request, kind str
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Optional single-node filter for per-proxy subscription links
+	// (Clash Verge / OpenClash import one host:port).
+	nodes = filterSubExportNodes(nodes, r)
 	opt := subexport.Options{Username: u.Username, Panel: s.panelBrandName()}
 	body, ctype, filename := renderSubKind(kind, nodes, opt, r.URL.Query().Get("raw") == "1")
 	w.Header().Set("Content-Type", ctype)
@@ -78,9 +81,96 @@ func (s *Server) loadSubExportNodes(userID int64) ([]subexport.Node, error) {
 			Name:     r.Name,
 			Protocol: r.Protocol,
 			URI:      r.URI,
+			Host:     strings.TrimSpace(r.ShareHost),
+			Port:     r.ListenPort,
 		})
 	}
 	return out, nil
+}
+
+// filterSubExportNodes narrows the feed when clients pass host/port(/protocol)
+// query params (used by 我的代理 → 订阅链接 per row).
+func filterSubExportNodes(nodes []subexport.Node, r *http.Request) []subexport.Node {
+	if r == nil || len(nodes) == 0 {
+		return nodes
+	}
+	q := r.URL.Query()
+	host := strings.TrimSpace(q.Get("host"))
+	portStr := strings.TrimSpace(q.Get("port"))
+	proto := strings.ToLower(strings.TrimSpace(q.Get("protocol")))
+	if host == "" && portStr == "" && proto == "" {
+		return nodes
+	}
+	var port int
+	if portStr != "" {
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p <= 0 {
+			return nil
+		}
+		port = p
+	}
+	out := make([]subexport.Node, 0, 1)
+	for _, n := range nodes {
+		if host != "" {
+			nh := strings.TrimSpace(n.Host)
+			if nh == "" {
+				// Fall back to host parsed from share URI when ShareHost empty.
+				if ep := hostPortFromURI(n.URI); ep != "" {
+					nh = strings.Split(ep, ":")[0]
+				}
+			}
+			if !strings.EqualFold(nh, host) {
+				continue
+			}
+		}
+		if port > 0 {
+			np := n.Port
+			if np <= 0 {
+				if ep := hostPortFromURI(n.URI); ep != "" {
+					if i := strings.LastIndex(ep, ":"); i > 0 {
+						if p, err := strconv.Atoi(ep[i+1:]); err == nil {
+							np = p
+						}
+					}
+				}
+			}
+			if np != port {
+				continue
+			}
+		}
+		if proto != "" && strings.ToLower(strings.TrimSpace(n.Protocol)) != proto {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func hostPortFromURI(uri string) string {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return ""
+	}
+	// scheme://...@host:port or scheme://host:port
+	i := strings.Index(uri, "://")
+	if i < 0 {
+		return ""
+	}
+	rest := uri[i+3:]
+	if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		rest = rest[:j]
+	}
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	// IPv6 in brackets
+	if strings.HasPrefix(rest, "[") {
+		if end := strings.Index(rest, "]:"); end > 0 {
+			return rest[:end+1] + rest[end+1:]
+		}
+		return rest
+	}
+	return rest
 }
 
 func (s *Server) panelBrandName() string {
@@ -156,7 +246,7 @@ func (s *Server) apiMyGetSubscription(w http.ResponseWriter, r *http.Request) {
 		"base_url":     base,
 		// Paths relative to base; token filled when plaintext available.
 		"paths": map[string]string{
-			"plain": "/sub/{token}",
+			"plain":  "/sub/{token}",
 			"mihomo": "/sub/{token}/mihomo.yaml",
 			"global": "/sub/{token}/global.yaml",
 			"sr":     "/sub/{token}/shadowrocket.conf",

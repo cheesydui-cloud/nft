@@ -15,6 +15,9 @@ type Node struct {
 	Name     string // display name
 	Protocol string // vless | shadowsocks | mieru
 	URI      string
+	// Host/Port optional: used by public /sub filter (per-node subscription).
+	Host string
+	Port int
 }
 
 // Options control profile metadata.

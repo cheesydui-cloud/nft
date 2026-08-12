@@ -220,7 +220,6 @@ export function Layout({ children }) {
                 </NavGroup>
                 <NavGroup label="转发">
                   <SideLink to="/my/rules" icon={<IconForwards />}>代理转发</SideLink>
-                  <SideLink to="/my/subscription" icon={<IconSub />}>规则订阅</SideLink>
                   {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>}
                   {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
                 </NavGroup>
@@ -415,7 +414,4 @@ function IconRepo() {
 }
 function IconBook() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-}
-function IconSub() {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h16"/><path d="M16 10l4 2-4 2"/></svg>
 }
