@@ -99,7 +99,7 @@ func (s *Server) loadAgentArtifact() (*agentArtifact, error) {
 // SHA256SUMS before caching.
 func fetchAgentBinary(version string) ([]byte, string, error) {
 	cacheBin := filepath.Join(agentCacheRoot, version, "nft-agent")
-	if data, err := os.ReadFile(cacheBin); err == nil {
+	if data, err := os.ReadFile(cacheBin); err == nil && len(data) > 0 {
 		sum := sha256.Sum256(data)
 		return data, hex.EncodeToString(sum[:]), nil
 	}
@@ -110,19 +110,72 @@ func fetchAgentBinary(version string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("拉取 agent SHA256SUMS 失败（面板需能访问 GitHub 或已配置 gh-proxy）: %w", err)
 	}
-	data, err := httpGetAgent(base + "/nft-agent")
-	if err != nil {
-		return nil, "", fmt.Errorf("下载 nft-agent 失败: %w", err)
+	// Walk every download candidate until sha256 matches. Public mirrors often
+	// return HTTP 200 with a truncated/stale body while SHA256SUMS is correct —
+	// failing the first body without trying the next source blocks upgrades.
+	var lastMismatch string
+	var lastErr error
+	for _, u := range agentDownloadCandidates(base + "/nft-agent") {
+		data, err := httpGetBytesLong(u, 120*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		sum := sha256.Sum256(data)
+		got := hex.EncodeToString(sum[:])
+		if want != "" && got != want {
+			lastMismatch = fmt.Sprintf("got %s want %s via %s", got, want, u)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(cacheBin), 0o755); err == nil {
+			_ = os.WriteFile(cacheBin, data, 0o755)
+		}
+		return data, got, nil
 	}
-	sum := sha256.Sum256(data)
-	got := hex.EncodeToString(sum[:])
-	if want != "" && got != want {
-		return nil, "", fmt.Errorf("nft-agent sha256 校验失败: got %s want %s", got, want)
+	if lastMismatch != "" {
+		return nil, "", fmt.Errorf("nft-agent sha256 校验失败（已尝试多源）: %s", lastMismatch)
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheBin), 0o755); err == nil {
-		_ = os.WriteFile(cacheBin, data, 0o755)
+	if lastErr != nil {
+		return nil, "", fmt.Errorf("下载 nft-agent 失败: %w", lastErr)
 	}
-	return data, got, nil
+	return nil, "", fmt.Errorf("下载 nft-agent 失败: no candidates")
+}
+
+// agentDownloadCandidates lists URL order for release assets (proxy → direct → mirrors).
+func agentDownloadCandidates(url string) []string {
+	candidates := []string{}
+	if pfx := ghProxyPrefix(); pfx != "" {
+		candidates = append(candidates, withGHProxy(url))
+	}
+	candidates = append(candidates, url)
+	if ghProxyPrefix() == "" {
+		for _, pfx := range []string{
+			"https://gh-proxy.com/",
+			"https://mirror.ghproxy.com/",
+			"https://ghfast.top/",
+		} {
+			candidates = append(candidates, pfx+url)
+		}
+	} else {
+		// Explicit proxy first already; still try well-known mirrors as last resort.
+		for _, pfx := range []string{
+			"https://gh-proxy.com/",
+			"https://ghfast.top/",
+		} {
+			m := pfx + url
+			dup := false
+			for _, c := range candidates {
+				if c == m {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				candidates = append(candidates, m)
+			}
+		}
+	}
+	return candidates
 }
 
 // fetchSumFor pulls the sha256 for name out of a SHA256SUMS file at url.
@@ -142,26 +195,11 @@ func fetchSumFor(url, name string) (string, error) {
 
 // httpGetAgent downloads url with optional gh-proxy prefix and direct fallback.
 // Used for panel→GitHub agent artifact pulls (not agent→panel binary pulls).
+// Does not checksum — callers that need integrity (nft-agent binary) must
+// verify and retry via agentDownloadCandidates themselves.
 func httpGetAgent(url string) ([]byte, error) {
-	// Try proxied URL first when configured, then direct.
-	candidates := []string{}
-	if pfx := ghProxyPrefix(); pfx != "" {
-		candidates = append(candidates, withGHProxy(url))
-	}
-	candidates = append(candidates, url)
-	// Common public mirrors when no explicit proxy is set (CN panels often
-	// cannot reach github.com; mirrors are best-effort).
-	if ghProxyPrefix() == "" {
-		for _, pfx := range []string{
-			"https://gh-proxy.com/",
-			"https://mirror.ghproxy.com/",
-			"https://ghfast.top/",
-		} {
-			candidates = append(candidates, pfx+url)
-		}
-	}
 	var lastErr error
-	for _, u := range candidates {
+	for _, u := range agentDownloadCandidates(url) {
 		data, err := httpGetBytesLong(u, 120*time.Second)
 		if err == nil {
 			return data, nil

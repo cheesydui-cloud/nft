@@ -534,31 +534,125 @@ release_download_base() {
   echo "$direct"
 }
 
+# want_sha_for_asset prints the expected hex from a SHA256SUMS file, or empty.
+want_sha_for_asset() {
+  local sums="$1" asset="$2"
+  [[ -s "$sums" ]] || return 0
+  # Accept "hash  name" or "hash *name" (binary mode).
+  awk -v a="$asset" '
+    $2 == a || $2 == ("*" a) { print $1; exit }
+  ' "$sums"
+}
+
+# verify_dest_sha returns 0 if dest matches expected hex (or expected empty → skip).
+verify_dest_sha() {
+  local dest="$1" want="$2" asset="$3" got
+  [[ -s "$dest" ]] || return 1
+  got="$(sha256sum "$dest" | awk '{print $1}')"
+  if [[ -z "$want" ]]; then
+    echo "$got"
+    return 0
+  fi
+  if [[ "$got" != "$want" ]]; then
+    echo "    sha256 不匹配 $asset: got ${got:0:12}… want ${want:0:12}…" >&2
+    return 1
+  fi
+  # Mimic sha256sum -c success line for operators watching the log.
+  echo "$asset: OK" >&2
+  echo "$got"
+  return 0
+}
+
+# Collect candidate download roots for a release asset (primary base + alts).
+# Order: configured base → strip/add gh-proxy → well-known public mirrors → direct GitHub.
+release_fetch_bases() {
+  local base="$1" tag="$2"
+  local -a out=()
+  local pfx direct b
+  [[ -n "$base" ]] && out+=("$base")
+  # Toggle proxy on primary base.
+  b="$(alt_download_url "$base/x")"
+  if [[ -n "$b" ]]; then
+    b="${b%/x}"
+    [[ -n "$b" ]] && out+=("$b")
+  fi
+  if [[ -n "$tag" && "$tag" != "latest" ]]; then
+    direct="https://github.com/$REPO/releases/download/$tag"
+  else
+    direct="https://github.com/$REPO/releases/latest/download"
+  fi
+  out+=("$direct")
+  for pfx in "https://gh-proxy.com/" "https://mirror.ghproxy.com/" "https://ghfast.top/"; do
+    out+=("${pfx}${direct}")
+  done
+  # Dedup while preserving order.
+  local -a uniq=()
+  local x seen
+  for x in "${out[@]}"; do
+    [[ -z "$x" ]] && continue
+    seen=0
+    for b in "${uniq[@]}"; do
+      [[ "$b" == "$x" ]] && { seen=1; break; }
+    done
+    [[ "$seen" -eq 0 ]] && uniq+=("$x")
+  done
+  printf '%s\n' "${uniq[@]}"
+}
+
 # Download one release asset and strong-verify against SHA256SUMS.
+# On checksum mismatch, retries alternate mirrors (proxy↔direct) instead of
+# dying on the first dirty CDN/cache response (common with public gh-proxy).
 # Echoes the verified sha256 hex on success.
 #   $1 = base URL (releases/download root), $2 = asset name, $3 = dest path
 #   $4 = "strict" | "soft"
+#   $5 = optional release tag (improves alternate-base construction)
 fetch_and_verify() {
-  local base="$1" asset="$2" dest="$3" strictness="${4:-strict}"
-  local url="$base/$asset" ddir sums_ok=0
-  note "  · $asset"
-  if ! curl_fetch "$url" "$dest"; then
-    die "下载失败: $url"
-  fi
+  local base="$1" asset="$2" dest="$3" strictness="${4:-strict}" tag="${5:-}"
+  local ddir sums_file want="" got="" b url try
   ddir="$(dirname "$dest")"
-  if curl_fetch "$base/SHA256SUMS" "$ddir/SHA256SUMS" 2>/dev/null; then
-    sums_ok=1
+  sums_file="$ddir/SHA256SUMS"
+  note "  · $asset"
+
+  # Prefer SHA256SUMS from the primary base, then walk the same candidate list.
+  rm -f "$sums_file"
+  while IFS= read -r b; do
+    [[ -z "$b" ]] && continue
+    if curl_fetch_one "$b/SHA256SUMS" "$sums_file" 2>/dev/null && [[ -s "$sums_file" ]]; then
+      want="$(want_sha_for_asset "$sums_file" "$asset")"
+      [[ -n "$want" ]] && break
+    fi
+    rm -f "$sums_file"
+  done < <(release_fetch_bases "$base" "$tag")
+
+  if [[ -z "$want" && "$strictness" == "strict" ]]; then
+    die "未取到 SHA256SUMS / 其中无 $asset：必须强校验，拒绝裸跑（检查网络/代理或稍后重试）"
   fi
-  if [[ "$sums_ok" -eq 1 && -s "$ddir/SHA256SUMS" ]]; then
-    # Verification chatter must go to stderr — stdout carries only the hash.
-    (cd "$ddir" && grep -E "  $asset\$" SHA256SUMS | sha256sum -c - >&2) \
-      || die "sha256 校验失败: $asset"
-  elif [[ "$strictness" == "strict" ]]; then
-    die "未取到 SHA256SUMS：必须强校验，拒绝裸跑（检查网络/代理或稍后重试）"
-  else
+  if [[ -z "$want" ]]; then
     echo "    (SHA256SUMS 不可用，跳过校验)" >&2
   fi
-  sha256sum "$dest" | awk '{print $1}'
+
+  try=0
+  while IFS= read -r b; do
+    [[ -z "$b" ]] && continue
+    try=$((try + 1))
+    url="$b/$asset"
+    if [[ "$try" -gt 1 ]]; then
+      warn "校验失败，换源重下 ($try): $(echo "$url" | sed 's#https://##;s#github.com/[^/]*/[^/]*/releases/download/##' | cut -c1-72)…"
+    fi
+    if ! curl_fetch_one "$url" "$dest" 2>/dev/null; then
+      # Also try curl_fetch (proxy↔direct toggle) for this single base.
+      if ! curl_fetch "$url" "$dest" 2>/dev/null; then
+        continue
+      fi
+    fi
+    if got="$(verify_dest_sha "$dest" "$want" "$asset")"; then
+      echo "$got"
+      return 0
+    fi
+    rm -f "$dest"
+  done < <(release_fetch_bases "$base" "$tag")
+
+  die "sha256 校验失败: $asset（已尝试多源下载，请 sudo nft-upgrade update --release $tag --gh-proxy '' 直连 GitHub）"
 }
 
 rollback_update() {
@@ -604,9 +698,9 @@ do_update() {
   fi
   note "[1/5] 下载二进制 ($tag) ..."
   note "  源: $base"
-  agent_sha="$(fetch_and_verify "$base" nft-agent "$_update_tmp/nft-agent" strict)"
+  agent_sha="$(fetch_and_verify "$base" nft-agent "$_update_tmp/nft-agent" strict "$tag")"
   if [[ "$want_server" -eq 1 ]]; then
-    fetch_and_verify "$base" nft-server "$_update_tmp/nft-server" strict >/dev/null
+    fetch_and_verify "$base" nft-server "$_update_tmp/nft-server" strict "$tag" >/dev/null
   fi
 
   # No product-side arch probe here. The host arch is already gated by the
@@ -926,12 +1020,12 @@ release_tag="$(resolve_release_tag)"
 
 # Every role installs nft-agent (the node daemon + TUI); only server adds the
 # panel binary on top.
-note "[1/3] 下载 nft-agent ($RELEASE) ..."
-agent_sha="$(fetch_and_verify "$base" nft-agent "$tmp/nft-agent" strict)"
-if [[ "$mode" == "server" ]]; then
-  note "      下载 nft-server ($RELEASE) ..."
-  fetch_and_verify "$base" nft-server "$tmp/nft-server" strict >/dev/null
-fi
+	note "[1/3] 下载 nft-agent ($RELEASE) ..."
+	agent_sha="$(fetch_and_verify "$base" nft-agent "$tmp/nft-agent" strict "$release_tag")"
+	if [[ "$mode" == "server" ]]; then
+	  note "      下载 nft-server ($RELEASE) ..."
+	  fetch_and_verify "$base" nft-server "$tmp/nft-server" strict "$release_tag" >/dev/null
+	fi
 
 note "[2/3] 安装到 $INSTALL_DIR ..."
 # Some minimal images omit /usr/local/sbin; create before install(1).
