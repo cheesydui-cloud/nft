@@ -131,7 +131,9 @@ func TestClassifyExit(t *testing.T) {
 		}
 	})
 
-	t.Run("proxy service share preferred over socks5 exit rewrite", func(t *testing.T) {
+	t.Run("SK5 exit keeps socks5 relay even when entry was a VLESS proxy service", func(t *testing.T) {
+		// Data plane: L4 entry + last-hop ExitProxy CONNECT. Client link must be
+		// socks5 rewritten to entry — never the VLESS share on the L4 port.
 		it := ruleListItem{
 			Rule: &db.Rule{
 				NodeID: 7, ProxyServiceID: 3,
@@ -144,14 +146,16 @@ func TestClassifyExit(t *testing.T) {
 		}
 		share := "vless://uuid@1.2.3.4:443?security=reality&sni=a.com#测试1"
 		it.classifyExitWithShare(idx, true, "vless", share, "测试1")
-		want := "vless://uuid@relay.example:10001?security=reality&sni=a.com#测试1"
+		want := "socks5://alice:s3cret@relay.example:10001"
 		if it.RelayURI != want {
 			t.Errorf("relay_uri = %q, want %q", it.RelayURI, want)
 		}
-		if it.LandingProtocol != "vless" {
-			t.Errorf("landing_protocol = %q, want vless", it.LandingProtocol)
+		if it.LandingProtocol != "socks5" {
+			t.Errorf("landing_protocol = %q, want socks5 (not entry proxy protocol)", it.LandingProtocol)
 		}
-		// exit_uri still redacted
+		if it.LandingName != "测试1" {
+			t.Errorf("landing_name = %q, want service display name", it.LandingName)
+		}
 		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
 			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
 		}
