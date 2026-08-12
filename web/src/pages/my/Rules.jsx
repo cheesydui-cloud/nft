@@ -78,6 +78,14 @@ export default function MyRules() {
     return m
   }, [serverLanding])
 
+  // 代理页签 = 已授权线路 ∩ 部署了代理服务的节点（接口 proxy_node_ids 是全局部署集合）。
+  // Hooks must stay above the loading early-return.
+  const grantedProxyNodeIds = useMemo(() => {
+    const granted = new Set((data?.nodes || []).map(n => Number(n.id)).filter(id => id > 0))
+    const deployed = data?.proxy_node_ids || []
+    return (Array.isArray(deployed) ? deployed : []).map(Number).filter(id => granted.has(id))
+  }, [data?.nodes, data?.proxy_node_ids])
+
   if (loading) return <Layout><Loading /></Layout>
 
   const { rules = [], nodes = [], node_by_id = {}, show_rate, bindings = [] } = data || {}
@@ -186,7 +194,7 @@ export default function MyRules() {
         submitLabel="创建"
         variant={createVariant}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate} showStack={false}
-        proxyNodeIds={data?.proxy_node_ids || []}
+        proxyNodeIds={grantedProxyNodeIds}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))
           if (res?.warning) toast(res.warning, 'error')

@@ -261,17 +261,31 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // Only entry-role nodes can be the rule's entry — roles missing (nodes
   // reported by a server that predates the roles column) default to entry,
   // so old deployments keep working until an admin explicitly narrows roles.
+  //
+  // `nodes` is already scoped by the parent:
+  //   - 替用户创建 / 用户侧：仅已授权线路
+  //   - 管理员全局规则：全部节点
+  // 代理 tab 必须落在同一集合内，绝不能用全局 proxy-services 展开未授权节点。
   const entryNodes = nodes.filter(n => ((n.roles ?? 1) & 1) !== 0)
+  const allowedNodeIds = useMemo(
+    () => new Set((nodes || []).map(n => Number(n.id)).filter(id => id > 0)),
+    [nodes],
+  )
   // Tabbed groups: 单点 [+ 组合 for chain] + 代理 (proxy-service deployed nodes).
   // Port variant never shows the composite tab; proxy tab still filters composites out for port.
   const singleOpts = entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption)
   const compositeOpts = entryNodes.filter(n => n.node_type === 'composite').map(nodeOption)
   // 代理 tab: 每条覆盖后的代理服务单独一项（同节点多协议并列）；value 仍为 node_id。
+  // 只展示「已在 nodes 里」且（若提供了 proxyNodeIds）确实部署了代理服务的节点。
   const entryById = Object.fromEntries(entryNodes.map(n => [Number(n.id), n]))
   const proxyOptsFromServices = []
   for (const s of proxyServices || []) {
     const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
     for (const nid of nids) {
+      // Hard gate: never list a node outside the parent-provided pool.
+      if (!allowedNodeIds.has(nid)) continue
+      // When proxyNodeIds is supplied, require membership (deployed ∩ allowed).
+      if (proxyIds.size > 0 && !proxyIds.has(nid)) continue
       const n = entryById[nid]
       if (!n) continue
       const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
@@ -294,7 +308,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   }
   const proxyOpts = proxyOptsFromServices.length
     ? proxyOptsFromServices
-    : entryNodes.filter(n => proxyIds.has(Number(n.id))).map(nodeOption)
+    : entryNodes
+      .filter(n => {
+        const id = Number(n.id)
+        if (!allowedNodeIds.has(id)) return false
+        // Fallback when /proxy-services unavailable: only nodes known to host proxy.
+        return proxyIds.size === 0 ? false : proxyIds.has(id)
+      })
+      .map(nodeOption)
   // 端口/链式选线路统一：单点 | 组合 | 代理
   const groups = [
     { label: '单点', options: singleOpts },

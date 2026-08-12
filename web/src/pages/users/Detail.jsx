@@ -57,6 +57,12 @@ export default function UserDetail() {
     () => rawLanding.filter(n => nodeHasRole(nodeRoles, n, ROLE_LANDING)),
     [rawLanding, nodeRoles],
   )
+  // 代理页签 = 已授权线路 ∩ 部署了代理服务的节点（全局 proxy_node_ids 不能直接用）。
+  const grantedProxyNodeIds = useMemo(() => {
+    const granted = new Set((data?.nodes || []).map(n => Number(n.id)).filter(id => id > 0))
+    const deployed = data?.proxy_node_ids || []
+    return (Array.isArray(deployed) ? deployed : []).map(Number).filter(id => granted.has(id))
+  }, [data?.nodes, data?.proxy_node_ids])
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="用户不存在" /></Layout>
@@ -614,7 +620,7 @@ export default function UserDetail() {
         landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={{ owner_id: Number(id) }}
-        proxyNodeIds={data?.proxy_node_ids || []}
+        proxyNodeIds={grantedProxyNodeIds}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.post('/rules', payload)
@@ -634,7 +640,7 @@ export default function UserDetail() {
         landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
-        proxyNodeIds={data?.proxy_node_ids || []}
+        proxyNodeIds={grantedProxyNodeIds}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.put(`/rules/${editRule.id}`, payload)

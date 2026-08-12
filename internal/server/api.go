@@ -2457,13 +2457,33 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	// subject (this route group is admin-only). When owner_id is explicitly
 	// set to a user's ID, the rule is bound to that user — e.g. for speed
 	// limit shaping which keys on the rule owner's grant.
+	// Acting for a regular user: entry (and via) must be in that user's grants
+	// so 代理 tab cannot be used to attach ungranted nodes server-side either.
 	ownerID := sql.NullInt64{Int64: u.ID, Valid: true}
 	if body.OwnerID != nil && *body.OwnerID > 0 {
-		if _, err := db.GetUserByID(s.DB, *body.OwnerID); err != nil {
+		target, err := db.GetUserByID(s.DB, *body.OwnerID)
+		if err != nil || target == nil {
 			jsonErr(w, http.StatusBadRequest, "指定的用户不存在")
 			return
 		}
 		ownerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
+		if target.Role == "user" {
+			if ruleNodeID > 0 {
+				if _, gerr := db.GetNodeGrant(s.DB, target.ID, ruleNodeID); gerr != nil {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选线路节点，请先在「授权线路」中授权")
+					return
+				}
+			}
+			for _, viaID := range vias {
+				if viaID <= 0 {
+					continue
+				}
+				if _, gerr := db.GetNodeGrant(s.DB, target.ID, viaID); gerr != nil {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选中间层节点，请先在「授权线路」中授权")
+					return
+				}
+			}
+		}
 	}
 	rl := &db.Rule{
 		NodeID:         ruleNodeID,
@@ -2880,6 +2900,30 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 			rl.OwnerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
 		} else {
 			rl.OwnerID = sql.NullInt64{}
+		}
+	}
+	// Acting for a regular user: entry/via must stay within their grants.
+	if rl.OwnerID.Valid && rl.OwnerID.Int64 > 0 {
+		if owner, err := db.GetUserByID(s.DB, rl.OwnerID.Int64); err == nil && owner != nil && owner.Role == "user" {
+			entryID := rl.NodeID
+			if entryID <= 0 && len(hops) > 0 {
+				entryID = hops[0].NodeID
+			}
+			if entryID > 0 {
+				if _, gerr := db.GetNodeGrant(s.DB, owner.ID, entryID); gerr != nil {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选线路节点，请先在「授权线路」中授权")
+					return
+				}
+			}
+			for _, viaID := range rl.ViaNodeIDs {
+				if viaID <= 0 {
+					continue
+				}
+				if _, gerr := db.GetNodeGrant(s.DB, owner.ID, viaID); gerr != nil {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选中间层节点，请先在「授权线路」中授权")
+					return
+				}
+			}
 		}
 	}
 	tx, err := s.DB.Begin()
