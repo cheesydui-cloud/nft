@@ -2747,10 +2747,13 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 		if exitType == "" && body.ExitURI == "" {
 			exitType = rl.ExitType
 			exitURI = rl.ExitURI
-		} else if isRedactedExitURI(exitURI) && rl.ExitType == "socks5" && rl.ExitURI != "" {
+		} else if isRedactedExitURI(exitURI) && rl.ExitURI != "" {
 			exitURI = rl.ExitURI
 			if exitType == "" {
-				exitType = "socks5"
+				exitType = rl.ExitType
+				if exitType == "" {
+					exitType = "direct"
+				}
 			}
 		}
 		pe, err := parseExitFull(body.Exit, exitType, exitURI)
@@ -3940,10 +3943,13 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 		if exitType == "" && body.ExitURI == "" {
 			exitType = rl.ExitType
 			exitURI = rl.ExitURI
-		} else if isRedactedExitURI(exitURI) && rl.ExitType == "socks5" && rl.ExitURI != "" {
+		} else if isRedactedExitURI(exitURI) && rl.ExitURI != "" {
 			exitURI = rl.ExitURI
 			if exitType == "" {
-				exitType = "socks5"
+				exitType = rl.ExitType
+				if exitType == "" {
+					exitType = "direct"
+				}
 			}
 		}
 		pe, err := parseExitFull(body.Exit, exitType, exitURI)

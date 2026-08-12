@@ -14,11 +14,13 @@ import (
 // OutboundSOCKS configures the core egress for a rule-scoped protocol plane
 // (3x-ui-style: inbound protocol + outbound chain).
 //
+//	ShareURI set          → full proxy outbound from share link (ss/vless/socks/trojan)
 //	URI set, no redirect  → open SOCKS (client destinations pass through)
 //	URI + Redirect*       → freedom redirect via SOCKS dialerProxy (fixed tunnel through SK5)
 //	Redirect* only        → freedom redirect (fixed tunnel, no intermediate proxy)
 type OutboundSOCKS struct {
 	URI          string // socks5://[user:pass@]host:port; empty = direct freedom/redirect
+	ShareURI     string // landing share link (ss:// / vless:// / …) → protocol outbound
 	RedirectHost string
 	RedirectPort int
 }
@@ -231,8 +233,9 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 			},
 			"outbounds": outbounds,
 		}
-		// Pin inbound → sk5 when we built a non-default egress (open SOCKS or redirect).
-		if socks != nil && (strings.TrimSpace(socks.URI) != "" ||
+		// Pin inbound → sk5 when we built a non-default egress.
+		if socks != nil && (strings.TrimSpace(socks.ShareURI) != "" ||
+			strings.TrimSpace(socks.URI) != "" ||
 			(strings.TrimSpace(socks.RedirectHost) != "" && socks.RedirectPort > 0)) {
 			cfg["routing"] = map[string]any{
 				"domainStrategy": "AsIs",
@@ -248,8 +251,8 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 		return json.MarshalIndent(cfg, "", "  ")
 	}
 
-// buildXrayOutbounds returns freedom/blackhole, open SOCKS, or fixed redirect
-// (optionally via SOCKS dialerProxy). Used by protocol-entry rule planes.
+// buildXrayOutbounds returns freedom/blackhole, open SOCKS, share-protocol
+// outbound, or fixed redirect. Used by protocol-entry rule planes.
 func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
 	if socks == nil {
 		return []any{
@@ -257,11 +260,19 @@ func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
 			map[string]any{"protocol": "blackhole", "tag": "block"},
 		}, nil
 	}
+	// Landing / warehouse share link: real protocol outbound (3x-ui style).
+	if share := strings.TrimSpace(socks.ShareURI); share != "" {
+		ob, err := BuildXrayOutboundFromShareURI(share, "sk5")
+		if err != nil {
+			return nil, err
+		}
+		return []any{ob, map[string]any{"protocol": "blackhole", "tag": "block"}}, nil
+	}
 	rh := strings.TrimSpace(socks.RedirectHost)
 	hasRedirect := rh != "" && socks.RedirectPort > 0
 	uri := strings.TrimSpace(socks.URI)
 
-	// Freedom redirect only (protocol entry + direct exit host:port).
+	// Freedom redirect only (protocol entry + bare host:port exit).
 	if uri == "" {
 		if !hasRedirect {
 			return []any{

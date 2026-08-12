@@ -402,7 +402,13 @@ func parseExitFull(exit, exitType, exitURI string) (parsedExit, error) {
 		if err != nil {
 			return parsedExit{}, err
 		}
-		return parsedExit{Type: "direct", Host: host, Port: port}, nil
+		// Optional landing share (ss:// / vless:// …) for protocol-entry egress.
+		// Bare host:port alone cannot speak SS/VLESS — credentials live in exit_uri.
+		pe := parsedExit{Type: "direct", Host: host, Port: port}
+		if exitURI != "" && proxysvc.IsProxyShareURI(exitURI) {
+			pe.URI = strings.TrimSpace(exitURI)
+		}
+		return pe, nil
 	case "socks5", "socks":
 		uri := exitURI
 		if uri == "" {
@@ -479,25 +485,55 @@ func normalizeSocks5URI(raw string) string {
 	return raw
 }
 
-// redactedExitURI masks userinfo in a socks URI for API responses.
+// redactedExitURI masks secrets in exit_uri for API responses.
+// socks5:// → mask password; ss:// / vless:// → keep host:port shape, drop credentials.
 func redactedExitURI(uri string) string {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return ""
 	}
-	u, err := parseSocksURL(uri)
-	if err != nil {
-		return "socks5://***"
-	}
-	hostport := u.Host
-	if u.User != nil {
-		user := u.User.Username()
-		if user == "" {
-			user = "***"
+	lower := strings.ToLower(uri)
+	if strings.HasPrefix(lower, "socks5://") || strings.HasPrefix(lower, "socks://") {
+		u, err := parseSocksURL(uri)
+		if err != nil {
+			return "socks5://***"
 		}
-		return "socks5://" + user + ":***@" + hostport
+		hostport := u.Host
+		if u.User != nil {
+			user := u.User.Username()
+			if user == "" {
+				user = "***"
+			}
+			return "socks5://" + user + ":***@" + hostport
+		}
+		return "socks5://" + hostport
 	}
-	return "socks5://" + hostport
+	// Share links: do not leak method:password / uuid in list JSON.
+	if proxysvc.IsProxyShareURI(uri) {
+		// Keep scheme + host:port only when parseable.
+		if i := strings.Index(uri, "://"); i > 0 {
+			scheme := uri[:i]
+			rest := uri[i+3:]
+			if h := strings.Index(rest, "#"); h >= 0 {
+				rest = rest[:h]
+			}
+			if q := strings.Index(rest, "?"); q >= 0 {
+				// keep query for vless (non-secret params) but strip userinfo
+				// simpler: authority only
+			}
+			if at := strings.LastIndex(rest, "@"); at >= 0 {
+				rest = rest[at+1:]
+			}
+			// rest may still have ?query for vless without user in authority after strip
+			if q := strings.Index(rest, "?"); q >= 0 {
+				// drop query secrets-ish; show host:port only
+				rest = rest[:q]
+			}
+			return scheme + "://***@" + rest
+		}
+		return "***"
+	}
+	return "***"
 }
 
 // isRedactedExitURI reports whether the client re-submitted a list/detail
@@ -508,7 +544,7 @@ func isRedactedExitURI(uri string) bool {
 	if uri == "" {
 		return false
 	}
-	if strings.Contains(uri, ":***@") || strings.Contains(uri, "://***") {
+	if strings.Contains(uri, ":***@") || strings.Contains(uri, "://***@") || strings.Contains(uri, "://***") {
 		return true
 	}
 	u, err := parseSocksURL(uri)

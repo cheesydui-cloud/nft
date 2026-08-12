@@ -224,3 +224,14 @@ func ListNodeRepoByIDs(d *sql.DB, ids []int64) ([]NodeRepoEntry, error) {
 	}
 	return out, nil
 }
+
+
+// FindNodeRepoByHostPort returns the first node_repo row matching host:port (URI for protocol egress).
+func FindNodeRepoByHostPort(d *sql.DB, host string, port int) (NodeRepoEntry, error) {
+	host = strings.TrimSpace(host)
+	if host == "" || port < 1 || port > 65535 {
+		return NodeRepoEntry{}, sql.ErrNoRows
+	}
+	row := d.QueryRow(`SELECT `+nodeRepoCols+` FROM node_repo WHERE host=? AND port=? ORDER BY id DESC LIMIT 1`, host, port)
+	return scanNodeRepoRow(row)
+}

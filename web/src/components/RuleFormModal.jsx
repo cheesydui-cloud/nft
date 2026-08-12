@@ -653,7 +653,16 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               <label className="fl">落地IP</label>
               <div className="flex items-center gap-3">
                 {landingOptions.length ? (
-                  <Select value={form.exit} onChange={v => set('exit', v)} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1" />
+                  <Select value={form.exit} onChange={v => {
+                    const node = (landingNodes || []).find(n => `${n.host}:${n.port}` === v)
+                    setForm(f => ({
+                      ...f,
+                      exit: v,
+                      exit_kind: 'landing',
+                      // 落地分享链写入 exit_uri，协议入口出站用（VLESS→SS 等）
+                      exit_uri: node?.uri || f.exit_uri || '',
+                    }))
+                  }} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1" />
                 ) : (
                   <div className="text-xs text-ink-mut flex-1">尚无可用落地IP，请联系管理员分配落地节点或订阅来源。</div>
                 )}
@@ -664,6 +673,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                   disabledTitle={!form.node_id ? '请先选择线路' : '请先选择落地IP'}
                 />
               </div>
+              {Number(form.proxy_service_id) > 0 && (
+                <>
+                  <label className="fl"></label>
+                  <div className="text-xs text-ink-mut">
+                    已选「代理」入口：出站按落地协议（SS/VLESS…）转发（对齐 3x-ui），不是裸 TCP 隧道。
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -753,8 +770,14 @@ export function ruleFormToPayload(form) {
     payload.mode = 'userspace'
     payload.exit_mode = 'userspace'
   } else {
-    // Explicit direct clears a previous socks exit on update.
-    payload.exit_uri = ''
+    // Direct + landing share (ss:// / vless:// …) for protocol-entry egress.
+    // Bare host:port alone cannot speak SS — credentials go in exit_uri.
+    const eu = String(form.exit_uri || '').trim()
+    if (eu && /^(ss|shadowsocks|vless|vmess|trojan|socks5?|hy2|hysteria2):\/\//i.test(eu)) {
+      payload.exit_uri = eu
+    } else {
+      payload.exit_uri = ''
+    }
   }
   return payload
 }

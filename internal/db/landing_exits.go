@@ -804,3 +804,19 @@ func ListRepoExitUsers(d *sql.DB, host string, port int) ([]RepoExitUser, error)
 	}
 	return out, rows.Err()
 }
+
+
+// FindAnyLandingURIByHostPort returns a present landing-exit URI for host:port
+// from any user (admin rule pickers often use warehouse/repo URIs mirrored here).
+func FindAnyLandingURIByHostPort(d *sql.DB, host string, port int) (uri, protocol, name string, err error) {
+	host = strings.TrimSpace(host)
+	if host == "" || port < 1 {
+		return "", "", "", sql.ErrNoRows
+	}
+	row := d.QueryRow(`
+		SELECT uri, protocol, name FROM user_landing_exits
+		WHERE host=? AND port=? AND present=1 AND TRIM(uri) != ''
+		ORDER BY updated_at DESC LIMIT 1`, host, port)
+	err = row.Scan(&uri, &protocol, &name)
+	return
+}

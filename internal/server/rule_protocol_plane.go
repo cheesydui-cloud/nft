@@ -138,7 +138,8 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 
 	// 3x-ui-style outbound selection:
 	//   socks5 → open SOCKS (client destinations pass through exit_uri)
-	//   direct → freedom redirect to CONNECT target (fixed tunnel)
+	//   direct + landing share (ss/vless/…) → real protocol outbound
+	//   direct + bare host:port only → freedom redirect (L4-like tunnel)
 	apply := wsproto.ProxyServiceApply{
 		InstanceID: instID,
 		ServiceID:  svc.ID,
@@ -159,14 +160,34 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 		// single host and caused "测通但没网").
 		apply.OutboundSocks = uri
 	} else {
-		// Fixed tunnel: freedom redirect to exit_host:exit_port (no intermediate proxy).
-		// Still a real protocol inbound so copy/QR stay on the entry protocol.
 		host := strings.TrimSpace(r.ExitHost)
 		if host == "" || r.ExitPort <= 0 {
 			return fmt.Errorf("协议入口 + 直连出口需要填写落地 host:port")
 		}
-		apply.OutboundRedirectHost = host
-		apply.OutboundRedirectPort = r.ExitPort
+		// Prefer stored exit_uri when it is a proxy share (ss:// / vless:// …).
+		// Else resolve from node_repo / user landing ledger by host:port.
+		shareURI := strings.TrimSpace(r.ExitURI)
+		if shareURI != "" && !proxysvc.IsProxyShareURI(shareURI) {
+			// leftover socks uri on a direct rule — ignore
+			shareURI = ""
+		}
+		if shareURI == "" {
+			shareURI = s.resolveLandingShareURI(r)
+		}
+		if shareURI != "" {
+			// Real protocol outbound (VLESS entry → SS exit, etc.).
+			if _, err := proxysvc.BuildXrayOutboundFromShareURI(shareURI, "sk5"); err != nil {
+				// Still try sing-box path for ss/socks; validate loosely.
+				if _, err2 := proxysvc.BuildSingBoxOutboundFromShareURI(shareURI, "share-out"); err2 != nil {
+					return fmt.Errorf("落地分享链无法作为出站: %v", err)
+				}
+			}
+			apply.OutboundShareURI = shareURI
+		} else {
+			// No share credentials: bare TCP tunnel (only works if exit speaks raw TCP).
+			apply.OutboundRedirectHost = host
+			apply.OutboundRedirectPort = r.ExitPort
+		}
 	}
 
 	ack, err := s.Hub.SendProxyServiceApply(r.NodeID, apply)
@@ -268,4 +289,36 @@ func (s *Server) resyncProtocolPlanesOnNode(nodeID int64) {
 			log.Printf("resync protocol plane rule=%d node=%d: %v", r.ID, nodeID, err)
 		}
 	}
+}
+
+// resolveLandingShareURI looks up ss:// / vless:// credentials for the rule's
+// exit host:port from node_repo, then any user's landing ledger, then the
+// rule owner's landing index.
+func (s *Server) resolveLandingShareURI(r *db.Rule) string {
+	if s == nil || r == nil {
+		return ""
+	}
+	host := strings.TrimSpace(r.ExitHost)
+	if host == "" || r.ExitPort <= 0 {
+		return ""
+	}
+	if e, err := db.FindNodeRepoByHostPort(s.DB, host, r.ExitPort); err == nil {
+		if u := strings.TrimSpace(e.URI); proxysvc.IsProxyShareURI(u) {
+			return u
+		}
+	}
+	if uri, _, _, err := db.FindAnyLandingURIByHostPort(s.DB, host, r.ExitPort); err == nil {
+		if proxysvc.IsProxyShareURI(uri) {
+			return uri
+		}
+	}
+	if r.OwnerID.Valid && r.OwnerID.Int64 > 0 {
+		idx := s.landingIndexFromDB(r.OwnerID.Int64)
+		for _, n := range idx {
+			if n.Host == host && n.Port == r.ExitPort && proxysvc.IsProxyShareURI(n.URI) {
+				return n.URI
+			}
+		}
+	}
+	return ""
 }

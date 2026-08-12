@@ -128,14 +128,19 @@ type ProxyServiceApply struct {
 	ShareHost  string          `json:"share_host"`
 	Name       string          `json:"name"`
 	Config     json.RawMessage `json:"config"`
-	// OutboundSocks, when set, makes the core route inbound traffic through
-	// this SOCKS5 proxy (rule-scoped VLESS entry + SK5 exit). Empty = freedom.
-	OutboundSocks string `json:"outbound_socks,omitempty"`
-	// OutboundRedirectHost/Port force a fixed CONNECT target through the SOCKS
-	// (rule exit_host:exit_port). Empty host = open proxy via SOCKS.
-	OutboundRedirectHost string `json:"outbound_redirect_host,omitempty"`
-	OutboundRedirectPort int    `json:"outbound_redirect_port,omitempty"`
-}
+		// OutboundSocks, when set, makes the core route inbound traffic through
+		// this SOCKS5 proxy (rule-scoped VLESS entry + SK5 exit). Empty = freedom.
+		OutboundSocks string `json:"outbound_socks,omitempty"`
+		// OutboundShareURI is a landing share link (ss:// / vless:// / trojan:// …).
+		// When set, the core builds a real protocol outbound (3x-ui style chain).
+		// Takes precedence over OutboundRedirect* for protocol-entry planes.
+		OutboundShareURI string `json:"outbound_share_uri,omitempty"`
+		// OutboundRedirectHost/Port force a fixed CONNECT target through the SOCKS
+		// (rule exit_host:exit_port). Empty host = open proxy via SOCKS.
+		// Used only when no OutboundShareURI / OutboundSocks open proxy.
+		OutboundRedirectHost string `json:"outbound_redirect_host,omitempty"`
+		OutboundRedirectPort int    `json:"outbound_redirect_port,omitempty"`
+	}
 
 // ProxyServiceApplyAck is the agent response after attempting deploy.
 type ProxyServiceApplyAck struct {

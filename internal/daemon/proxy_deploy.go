@@ -89,13 +89,15 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 		_ = os.Remove(keyPath)
 	}
 
-		// 3x-ui-style egress: open SOCKS and/or freedom redirect to fixed host:port.
+		// 3x-ui-style egress: share-protocol outbound, open SOCKS, and/or freedom redirect.
 		var socks *proxysvc.OutboundSOCKS
 		uri := strings.TrimSpace(req.OutboundSocks)
+		share := strings.TrimSpace(req.OutboundShareURI)
 		rh := strings.TrimSpace(req.OutboundRedirectHost)
-		if uri != "" || (rh != "" && req.OutboundRedirectPort > 0) {
+		if share != "" || uri != "" || (rh != "" && req.OutboundRedirectPort > 0) {
 			socks = &proxysvc.OutboundSOCKS{
 				URI:          uri,
+				ShareURI:     share,
 				RedirectHost: rh,
 				RedirectPort: req.OutboundRedirectPort,
 			}
@@ -238,11 +240,19 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 			return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
 		}
 		// Rule-scoped egress (3x-ui style):
-		//   OutboundSocks set → open SOCKS (client destinations pass through)
-		//   OutboundRedirect* only → freedom-like fixed dial to exit host:port
+		//   OutboundShareURI → real protocol outbound (ss/socks)
+		//   OutboundSocks → open SOCKS
+		//   OutboundRedirect* → fixed dial to exit host:port
+		share := strings.TrimSpace(req.OutboundShareURI)
 		uri := strings.TrimSpace(req.OutboundSocks)
 		rh := strings.TrimSpace(req.OutboundRedirectHost)
-		if uri != "" {
+		if share != "" {
+			patched, perr := proxysvc.InjectSingBoxShareOutbound(cfgBytes, share)
+			if perr != nil {
+				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入落地协议出站失败: " + perr.Error()}
+			}
+			cfgBytes = patched
+		} else if uri != "" {
 			patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
 			if perr != nil {
 				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
