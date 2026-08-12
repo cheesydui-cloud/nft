@@ -212,32 +212,32 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, proxyServ
     return new Set((proxyNodeIds || []).map(Number))
   }, [proxyNodeIds])
 
-  // 代理 tab = 代理服务列表视角（与「代理服务」页一致）；选中后展开为 node_id 授权。
+  // 代理 tab = 每条覆盖服务一项（同节点多协议并列始终可见）；选中后按 node_id 授权。
   const { proxyOpts, svcNodeMap } = useMemo(() => {
     const nodeById = Object.fromEntries((allNodes || []).map(n => [Number(n.id), n]))
     const opts = []
-    const map = {} // svc:<id> -> node_ids[]
+    const map = {} // svc:<id> -> node_ids to grant (ungranted only)
     for (const s of proxyServices || []) {
       const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0 && nodeById[id])
       if (!nids.length) continue
       const ungranted = nids.filter(id => !grantedIds.has(id))
-      if (!ungranted.length) continue
       const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
       const key = `svc:${s.id}`
-      map[key] = ungranted
-      // 展示服务名（对齐代理服务列表）；多节点时补节点名
+      map[key] = ungranted // may be empty if already granted
       let label = s.name || '(未命名服务)'
-      if (ungranted.length === 1) {
-        const node = nodeById[ungranted[0]]
+      // Prefer first covering node for · 节点名 (show even when already granted)
+      const showNid = (ungranted[0] ?? nids[0])
+      const node = nodeById[showNid]
+      if (nids.length === 1) {
         if (node?.name && node.name !== s.name) label = `${label} · ${node.name}`
       } else {
-        label = `${label} · ${ungranted.length} 节点`
+        label = `${label} · ${nids.length} 节点`
       }
       if (proto) label = `[${proto}] ${label}`
+      if (!ungranted.length) label = `${label} · 已授权`
       opts.push({ value: key, label })
     }
     if (opts.length) return { proxyOpts: opts, svcNodeMap: map }
-    // Soft fallback: physical nodes hosting any proxy instance
     const fallback = available
       .filter(n => proxyIds.has(Number(n.id)))
       .map(n => ({ value: String(n.id), label: n.name }))
@@ -267,8 +267,12 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, proxyServ
 
   const submit = async (e) => {
     e.preventDefault()
+    if (!selected.length) { toast('请选择节点', 'error'); return }
     const nodeIds = resolveNodeIds(selected)
-    if (!nodeIds.length) { toast('请选择节点', 'error'); return }
+    if (!nodeIds.length) {
+      toast('所选代理对应节点均已授权（同节点多协议共享授权）', 'error')
+      return
+    }
     setLoading(true)
     try {
       await api.post(`/users/${userId}/grants`, { node_ids: nodeIds, max_forwards: Number(max) })
@@ -423,6 +427,19 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
                 <td><input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} /></td>
                 <td className="font-semibold">
                   <Link to={`/nodes/${n.id}`} className="text-emerald-600 hover:underline">{n.name}</Link>
+                  {tab === 'proxy' && (() => {
+                    const covers = (proxyServices || []).filter(s =>
+                      (s.deployed_node_ids || []).map(Number).includes(Number(n.id)))
+                    if (!covers.length) return null
+                    return (
+                      <div className="text-[11px] text-ink-mut font-normal mt-0.5">
+                        {covers.map(s => {
+                          const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
+                          return proto ? `[${proto}] ${s.name}` : s.name
+                        }).join(' · ')}
+                      </div>
+                    )
+                  })()}
                 </td>
                 <td><NodeTypeBadge type={n.node_type} /></td>
                 <td>

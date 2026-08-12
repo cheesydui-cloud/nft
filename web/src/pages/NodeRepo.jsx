@@ -488,8 +488,28 @@ function ChangeIPModal({ node, onClose, onDone, notifyCF }) {
   )
 }
 
+function encodeSocksUserInfo(user, pass) {
+  const enc = (s) => encodeURIComponent(s).replace(/[!'()*]/g, c =>
+    `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)
+  if (!user && !pass) return ''
+  if (user && pass) return `${enc(user)}:${enc(pass)}@`
+  if (user) return `${enc(user)}@`
+  return `:${enc(pass)}@`
+}
+
+function buildSocks5URI(host, port, user, pass) {
+  const h = String(host || '').trim()
+  const p = Number(port)
+  const auth = encodeSocksUserInfo(String(user || '').trim(), String(pass || ''))
+  // IPv6 host needs brackets in URI
+  const hostPart = h.includes(':') && !h.startsWith('[') ? `[${h}]` : h
+  return `socks5://${auth}${hostPart}:${p}`
+}
+
 function NodeRepoForm({ node, folders = [], onClose, onDone }) {
   const isEdit = !!node
+  // Create: URI 粘贴 | SOCKS5 快捷；编辑保持 URI 模式字段全集。
+  const [mode, setMode] = useState('uri') // 'uri' | 'socks5'
   const [form, setForm] = useState({
     name: node?.name || '',
     protocol: node?.protocol || '',
@@ -503,11 +523,14 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
     cf_sync: !!node?.cf_sync,
     cf_zone_id: node?.cf_zone_id || '',
     cf_record_name: node?.cf_record_name || '',
+    socks_user: '',
+    socks_pass: '',
   })
   const [submitting, setSubmitting] = useState(false)
   const toast = useToast()
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const isSocksMode = !isEdit && mode === 'socks5'
 
   // Auto-parse URI: when user pastes a proxy URI into the URI field,
   // extract protocol, host, port, and name automatically.
@@ -532,25 +555,42 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!form.name.trim() || !form.host.trim() || !form.port) { toast('名称、地址、端口不能为空', 'error'); return }
+    let name = form.name.trim()
+    let protocol = form.protocol.trim()
+    let host = form.host.trim()
+    let port = form.port
+    let uri = form.uri.trim()
+
+    if (isSocksMode) {
+      if (!host || !port) { toast('请填写 IP 和端口', 'error'); return }
+      const p = Number(port)
+      if (!Number.isFinite(p) || p < 1 || p > 65535) { toast('端口须为 1–65535', 'error'); return }
+      protocol = 'socks5'
+      uri = buildSocks5URI(host, p, form.socks_user, form.socks_pass)
+      if (!name) name = `socks5-${host}`
+      port = p
+    } else {
+      if (!name || !host || !port) { toast('名称、IP、端口不能为空', 'error'); return }
+    }
+
     if (form.cf_sync && !form.backend_ip.trim()) { toast('开启 CF 同步时须填写当前 IPv4', 'error'); return }
     setSubmitting(true)
     try {
       const gid = Number(form.group_id) || 0
       const body = {
-        name: form.name.trim(),
-        protocol: form.protocol.trim(),
-        host: form.host.trim(),
-        port: Number(form.port),
-        uri: form.uri.trim(),
+        name,
+        protocol,
+        host,
+        port: Number(port),
+        uri,
         remark: form.remark.trim(),
         group_id: gid,
         group_name: '',
         expires_at: form.expires_at ? Math.floor(new Date(form.expires_at).getTime() / 1000) : 0,
-        backend_ip: form.backend_ip.trim(),
-        cf_sync: !!form.cf_sync,
-        cf_zone_id: form.cf_zone_id.trim(),
-        cf_record_name: form.cf_record_name.trim(),
+        backend_ip: isSocksMode ? '' : form.backend_ip.trim(),
+        cf_sync: isSocksMode ? false : !!form.cf_sync,
+        cf_zone_id: isSocksMode ? '' : form.cf_zone_id.trim(),
+        cf_record_name: isSocksMode ? '' : form.cf_record_name.trim(),
       }
       let cf
       if (isEdit) {
@@ -577,95 +617,152 @@ function NodeRepoForm({ node, folders = [], onClose, onDone }) {
   return (
     <Modal open onClose={onClose} title={isEdit ? '编辑节点' : '添加节点'} wide>
       <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">URI <span className="text-ink-mut font-normal text-xs">(粘贴后自动识别)</span></label>
-            <input className="input-field font-mono text-xs" value={form.uri} onChange={e => set('uri', e.target.value)} onBlur={handleURIBlur} placeholder="粘贴代理 URI，自动填充下方字段" />
-          </div>
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">名称</label>
-            <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="自定义节点名称" autoFocus />
-          </div>
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组</label>
-            <select className="input-field" value={form.group_id} onChange={e => set('group_id', e.target.value)}>
-              <option value="0">未分组</option>
-              {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">协议</label>
-            <input className="input-field" value={form.protocol} onChange={e => set('protocol', e.target.value)} placeholder="如 ss, vmess, trojan" />
-          </div>
-          <div className="pt-1 border-t border-line-soft">
-            <div className="text-[12px] font-bold text-ink-soft tracking-wide mb-2">转发目标</div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">目标地址</label>
-              <input className="input-field font-mono" value={form.host} onChange={e => set('host', e.target.value)} placeholder="域名（推荐）或 IP" />
-              <p className="text-[11px] text-ink-mut mt-1 m-0">规则认这个地址；填域名后换 IP 用户不用改链接</p>
+          {!isEdit && (
+            <div className="flex items-center gap-1.5">
+              {[['uri', 'URI 粘贴'], ['socks5', 'SOCKS5 快捷']].map(([key, label]) => (
+                <button key={key} type="button" onClick={() => setMode(key)}
+                  className={`chip-btn ${mode === key ? 'is-active' : ''}`}>{label}</button>
+              ))}
             </div>
-            <div>
-              <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">端口</label>
-              <input className="input-field font-mono" type="number" min="1" max="65535" value={form.port} onChange={e => set('port', e.target.value)} placeholder="端口" />
-            </div>
-          </div>
-          {form.uri && form.host && form.uri.includes(form.host) === false && /@\d+\.\d+\.\d+\.\d+/.test(form.uri) && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-300 m-0 -mt-1">
-              URI 里仍是 IP，规则已走上方域名；URI 仅作展示/复制，不影响用户入口链接。
-            </p>
           )}
 
-          <div className="rounded-xl border border-line-soft bg-raised/40 p-3 space-y-3">
-            <div className="flex items-center justify-between gap-2">
+          {isSocksMode ? (
+            <>
               <div>
-                <div className="text-[13px] font-bold text-ink">Cloudflare DNS</div>
-                <div className="text-[11px] text-ink-mut">可选。保存时把当前 IP 写入 CF A 记录（灰云）</div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">名称 <span className="text-ink-mut font-normal text-xs">(可选，留空自动生成)</span></label>
+                <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="socks5-IP" autoFocus />
               </div>
-              <button type="button" role="switch" aria-checked={form.cf_sync}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${form.cf_sync ? 'bg-emerald-600' : 'bg-gray-500'}`}
-                onClick={() => set('cf_sync', !form.cf_sync)}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.cf_sync ? 'translate-x-6' : 'translate-x-1'}`} />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-[12px] font-semibold text-ink-soft mb-1">当前 IP {form.cf_sync && <span className="text-red-500">*</span>}</label>
-                <input className="input-field font-mono text-sm" value={form.backend_ip} onChange={e => set('backend_ip', e.target.value)} placeholder="要写入 A 记录的 IPv4" />
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组</label>
+                <select className="input-field" value={form.group_id} onChange={e => set('group_id', e.target.value)}>
+                  <option value="0">未分组</option>
+                  {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
+                </select>
               </div>
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名 <span className="text-ink-mut font-normal">(可选)</span></label>
-                <input className="input-field font-mono text-sm" value={form.cf_record_name} onChange={e => set('cf_record_name', e.target.value)} placeholder="默认用目标地址" disabled={!form.cf_sync && !form.cf_record_name} />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">IP <span className="text-red-500">*</span></label>
+                  <input className="input-field font-mono" value={form.host} onChange={e => set('host', e.target.value)} placeholder="IP 或域名" />
+                </div>
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">端口 <span className="text-red-500">*</span></label>
+                  <input className="input-field font-mono" type="number" min="1" max="65535" value={form.port} onChange={e => set('port', e.target.value)} placeholder="1080" />
+                </div>
               </div>
-            </div>
-            {isEdit && node?.cf_last_sync_at > 0 && (
-              <div className="text-[11px] text-ink-mut">
-                上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
-                {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
-                {node.cf_last_error ? ` · 错误：${node.cf_last_error}` : ' · 成功'}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">用户名 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+                  <input className="input-field font-mono" value={form.socks_user} onChange={e => set('socks_user', e.target.value)} placeholder="无认证可空" autoComplete="off" />
+                </div>
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">密码 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+                  <input className="input-field font-mono" type="password" value={form.socks_pass} onChange={e => set('socks_pass', e.target.value)} placeholder="无认证可空" autoComplete="new-password" />
+                </div>
               </div>
-            )}
-            {isEdit && node?.cf_last_error && !node?.cf_last_sync_at && (
-              <div className="text-[11px] text-red-600">上次失败：{node.cf_last_error}</div>
-            )}
-          </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+                <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
+                <DateInput
+                  value={form.expires_at}
+                  onChange={v => set('expires_at', v)}
+                  className="w-full"
+                  placeholder="留空永不过期"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">URI <span className="text-ink-mut font-normal text-xs">(粘贴后自动识别)</span></label>
+                <input className="input-field font-mono text-xs" value={form.uri} onChange={e => set('uri', e.target.value)} onBlur={handleURIBlur} placeholder="粘贴代理 URI，自动填充下方字段" />
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">名称</label>
+                <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="自定义节点名称" autoFocus />
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">分组</label>
+                <select className="input-field" value={form.group_id} onChange={e => set('group_id', e.target.value)}>
+                  <option value="0">未分组</option>
+                  {folders.map(f => <option key={f.id} value={String(f.id)}>{f.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">协议</label>
+                <input className="input-field" value={form.protocol} onChange={e => set('protocol', e.target.value)} placeholder="如 ss, vmess, trojan, socks5" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">IP</label>
+                  <input className="input-field font-mono" value={form.host} onChange={e => set('host', e.target.value)} placeholder="域名（推荐）或 IP" />
+                  <p className="text-[11px] text-ink-mut mt-1 m-0">规则认这个地址；填域名后换 IP 用户不用改链接</p>
+                </div>
+                <div>
+                  <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">端口</label>
+                  <input className="input-field font-mono" type="number" min="1" max="65535" value={form.port} onChange={e => set('port', e.target.value)} placeholder="端口" />
+                </div>
+              </div>
+              {form.uri && form.host && form.uri.includes(form.host) === false && /@\d+\.\d+\.\d+\.\d+/.test(form.uri) && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-300 m-0 -mt-1">
+                  URI 里仍是 IP，规则已走上方域名；URI 仅作展示/复制，不影响用户入口链接。
+                </p>
+              )}
 
-          <div className="pt-1 border-t border-line-soft">
-            <div className="text-[12px] font-bold text-ink-soft tracking-wide mb-2">管理</div>
-          </div>
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
-            <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
-          </div>
-          <div>
-            <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
-            <DateInput
-              value={form.expires_at}
-              onChange={v => set('expires_at', v)}
-              className="w-full"
-              placeholder="留空永不过期"
-            />
-          </div>
+              <div className="rounded-xl border border-line-soft bg-raised/40 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[13px] font-bold text-ink">Cloudflare DNS</div>
+                    <div className="text-[11px] text-ink-mut">可选。保存时把当前 IP 写入 CF A 记录（灰云）</div>
+                  </div>
+                  <button type="button" role="switch" aria-checked={form.cf_sync}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${form.cf_sync ? 'bg-emerald-600' : 'bg-gray-500'}`}
+                    onClick={() => set('cf_sync', !form.cf_sync)}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.cf_sync ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-[12px] font-semibold text-ink-soft mb-1">当前 IP {form.cf_sync && <span className="text-red-500">*</span>}</label>
+                    <input className="input-field font-mono text-sm" value={form.backend_ip} onChange={e => set('backend_ip', e.target.value)} placeholder="要写入 A 记录的 IPv4" />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名 <span className="text-ink-mut font-normal">(可选)</span></label>
+                    <input className="input-field font-mono text-sm" value={form.cf_record_name} onChange={e => set('cf_record_name', e.target.value)} placeholder="默认用 IP" disabled={!form.cf_sync && !form.cf_record_name} />
+                  </div>
+                </div>
+                {isEdit && node?.cf_last_sync_at > 0 && (
+                  <div className="text-[11px] text-ink-mut">
+                    上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
+                    {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
+                    {node.cf_last_error ? ` · 错误：${node.cf_last_error}` : ' · 成功'}
+                  </div>
+                )}
+                {isEdit && node?.cf_last_error && !node?.cf_last_sync_at && (
+                  <div className="text-[11px] text-red-600">上次失败：{node.cf_last_error}</div>
+                )}
+              </div>
+
+              <div className="pt-1 border-t border-line-soft">
+                <div className="text-[12px] font-bold text-ink-soft tracking-wide mb-2">管理</div>
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+                <input className="input-field" value={form.remark} onChange={e => set('remark', e.target.value)} placeholder="备注" />
+              </div>
+              <div>
+                <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">到期时间 <span className="text-ink-mut font-normal text-xs">(可选，留空永不过期)</span></label>
+                <DateInput
+                  value={form.expires_at}
+                  onChange={v => set('expires_at', v)}
+                  className="w-full"
+                  placeholder="留空永不过期"
+                />
+              </div>
+            </>
+          )}
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={submitting} className="btn-primary flex-1">{submitting ? '保存中…' : '保存'}</button>
             <button type="button" onClick={onClose} className="btn-secondary flex-1">取消</button>

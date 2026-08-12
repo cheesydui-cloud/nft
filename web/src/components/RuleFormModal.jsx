@@ -94,18 +94,13 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const switchLocalVariant = (next) => {
     if (next === localVariant) return
     setLocalVariant(next)
-    setForm(f => {
-      const n = nodes.find(x => String(x.id) === String(f.node_id))
-      let node_id = f.node_id
-      if (next === 'port' && n?.node_type === 'composite') node_id = ''
-      return {
-        ...f,
-        node_id,
-        via_node_ids: next === 'port' ? [] : f.via_node_ids,
-        exit_type: next === 'port' ? 'direct' : f.exit_type,
-        exit_uri: next === 'port' ? '' : f.exit_uri,
-      }
-    })
+    setForm(f => ({
+      ...f,
+      // 端口转发也允许组合入口；仅清空 via 级联与 SK5 出口字段。
+      via_node_ids: next === 'port' ? [] : f.via_node_ids,
+      exit_type: next === 'port' ? 'direct' : f.exit_type,
+      exit_uri: next === 'port' ? '' : f.exit_uri,
+    }))
   }
 
   // Switching the entry invalidates any chosen middle-layer chain — the
@@ -118,8 +113,17 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // Select fires onChange even when the clicked option is already selected,
   // and it emits string values while a seeded node_id may be a number — the
   // String() comparison keeps a same-entry reselect from clearing the chain.
-  const pickEntry = (v) => setForm(f =>
-    String(v) === String(f.node_id) ? f : { ...f, node_id: v, via_node_ids: [] })
+  const pickEntry = (v) => {
+    // 代理 tab 选项 value 为 proxy:<serviceId>:<nodeId>，表单只存 node_id。
+    let nodeId = v
+    const s = String(v || '')
+    if (s.startsWith('proxy:')) {
+      const parts = s.split(':')
+      nodeId = parts[2] || parts[parts.length - 1]
+    }
+    setForm(f =>
+      String(nodeId) === String(f.node_id) ? f : { ...f, node_id: nodeId, via_node_ids: [] })
+  }
 
   const handleExitBlur = () => {
     if (!landingEnabled || form.exit_kind !== 'custom') return
@@ -145,13 +149,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     e.preventDefault()
     if (!form.node_id) { toast('请选择节点', 'error'); return }
     if (isPort) {
-      const n = nodes.find(x => String(x.id) === String(form.node_id))
-      if (n?.node_type === 'composite') {
-        toast('端口转发请选择单点入口；组合节点请到「链式转发」创建', 'error')
-        return
-      }
+      // 端口转发也允许选组合入口（走组合内置 hop，不展示 via 级联）。
       if ((form.via_node_ids || []).length > 0) {
-        toast('端口转发不支持线路层；请使用「链式转发」', 'error')
+        toast('端口转发不支持额外线路层；请使用「链式转发」', 'error')
         return
       }
     }
@@ -212,40 +212,41 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // Port variant never shows the composite tab; proxy tab still filters composites out for port.
   const singleOpts = entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption)
   const compositeOpts = entryNodes.filter(n => n.node_type === 'composite').map(nodeOption)
-  // 代理 tab: prefer 代理服务 names (same list as 代理服务 page); value remains node_id.
+  // 代理 tab: 每条覆盖后的代理服务单独一项（同节点多协议并列）；value 仍为 node_id。
   const entryById = Object.fromEntries(entryNodes.map(n => [Number(n.id), n]))
   const proxyOptsFromServices = []
-  const seenProxyNodes = new Set()
   for (const s of proxyServices || []) {
     const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
     for (const nid of nids) {
       const n = entryById[nid]
       if (!n) continue
-      if (isPort && n.node_type === 'composite') continue
-      if (seenProxyNodes.has(nid)) continue
-      seenProxyNodes.add(nid)
       const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
       let label = s.name || n.name || '(未命名)'
       if (n.name && n.name !== s.name) label = `${s.name || '(未命名)'} · ${n.name}`
       if (proto) label = `[${proto}] ${label}`
-      // Keep rate/stack suffix consistent with other tabs when applicable.
       const base = nodeOption(n)
-      proxyOptsFromServices.push({ ...base, label: showRate === false ? label : (base.label.includes('(×') ? `${label} ${base.label.slice(base.label.indexOf('(×'))}` : label) })
+      // Unique value per service so Select can list multi-proto on same node;
+      // form still stores node_id via onChange remap below.
+      const rateSuffix = (showRate !== false && base.label.includes('(×'))
+        ? ` ${base.label.slice(base.label.indexOf('(×'))}`
+        : ''
+      proxyOptsFromServices.push({
+        value: `proxy:${s.id}:${nid}`,
+        label: `${label}${rateSuffix}`,
+        icon: base.icon,
+        _nodeId: nid,
+      })
     }
   }
   const proxyOpts = proxyOptsFromServices.length
     ? proxyOptsFromServices
-    : entryNodes.filter(n => proxyIds.has(Number(n.id)) && (isPort ? n.node_type !== 'composite' : true)).map(nodeOption)
-  const groups = isPort
-    ? [
-        { label: '单点', options: singleOpts },
-        { label: '代理', options: proxyOpts },
-      ]
-    : [
-        { label: '单点', options: singleOpts },
-        { label: '组合', options: compositeOpts },
-        { label: '代理', options: proxyOpts },
-      ]
+    : entryNodes.filter(n => proxyIds.has(Number(n.id))).map(nodeOption)
+  // 端口/链式选线路统一：单点 | 组合 | 代理
+  const groups = [
+    { label: '单点', options: singleOpts },
+    { label: '组合', options: compositeOpts },
+    { label: '代理', options: proxyOpts },
+  ]
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
