@@ -539,7 +539,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                       options={[{ value: 'userspace', label: '用户态' }]} />
                     <span className="text-xs text-ink-mut">
                       {Number(form.proxy_service_id) > 0
-                        ? '代理入口 + SK5：入口协议核心出站走开放 SOCKS（非 nft 直转）'
+                        ? '代理入口：核心 inbound 走入口协议；出站为开放 SOCKS（3x-ui 链式，非 nft 直转）'
                         : 'SOCKS5 出口强制用户态 TCP（末跳经 SK5 CONNECT 到目标）'}
                     </span>
                   </div>
@@ -644,7 +644,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               <label className="fl"></label>
               <div className="text-xs text-ink-mut">
                 {Number(form.proxy_service_id) > 0
-                  ? '已选「代理」入口：入口为该协议入站，出站经 SK5 做开放代理（客户端 DNS/SNI 目标透传）。CONNECT 仅兼容字段，留空即可。'
+                  ? '已选「代理」入口（对齐 3x-ui）：入口协议入站 + SK5 开放出站（客户端目标透传）。CONNECT 可留空。'
                   : '可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。'}
               </div>
             </>

@@ -22,7 +22,12 @@ func ruleCoreInstanceID(ruleID int64) int64 {
 
 // protocolEntryProtocols are proxy-service protocols that can own the rule
 // entry port as a real inbound (client speaks that protocol; core outbounds
-// through exit_uri SOCKS as an open proxy).
+// according to exit_type — open SOCKS or freedom tunnel).
+//
+// Model mirrors 3x-ui outbound chaining:
+//
+//	Client --(entry protocol)--> core inbound
+//	     --(routing)--> socks|freedom outbound
 func protocolEntryProtocols() map[string]bool {
 	return map[string]bool{
 		"vless":       true,
@@ -39,14 +44,14 @@ func protocolEntryProtocols() map[string]bool {
 // ruleUsesProtocolEntry reports whether the rule should run a real protocol
 // inbound on the entry port instead of raw L4 nft/userspace.
 //
-// Product (链式 代理 tab + SK5 出口):
+// 3x-ui style (链式 + 代理 tab, single hop):
 //
 //	Client --(入口协议 VLESS/SS/…)--> entry core inbound
-//	     --(SOCKS5 open proxy via exit_uri)--> Internet
+//	  exit_type=socks5  → open SOCKS outbound via exit_uri (client destinations pass through)
+//	  exit_type=direct  → freedom redirect to exit_host:exit_port (fixed tunnel)
 //
-// CONNECT 目标 (exit_host:exit_port) is NOT used as a fixed tunnel for the
-// protocol plane: clients need full proxy semantics (DNS/SNI destinations).
-// Fixed CONNECT remains only for the legacy L4 + ExitProxy path.
+// Multi-hop stays L4 (via chain between physical nodes).
+// Plain SK5 without proxy_service_id stays L4 + ExitProxy CONNECT.
 func ruleUsesProtocolEntry(r *db.Rule) bool {
 	if r == nil {
 		return false
@@ -57,8 +62,7 @@ func ruleUsesProtocolEntry(r *db.Rule) bool {
 	if len(r.ViaNodeIDs) > 0 {
 		return false // multi-hop stays L4
 	}
-	return strings.EqualFold(strings.TrimSpace(r.ExitType), "socks5") &&
-		strings.TrimSpace(r.ExitURI) != ""
+	return true
 }
 
 func protocolEntryCore(proto string) string {
@@ -77,6 +81,7 @@ func protocolEntrySupported(proto string) bool {
 }
 
 // deployRuleProtocolPlane pushes a rule-scoped core config to the entry node.
+// Returns a user-facing error when deploy cannot complete (caller should surface it).
 func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if s == nil || r == nil || !ruleUsesProtocolEntry(r) {
 		return nil
@@ -87,7 +92,7 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	}
 	proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
 	if !protocolEntrySupported(proto) {
-		return fmt.Errorf("协议入口暂不支持 %s", svc.Protocol)
+		return fmt.Errorf("协议入口暂不支持 %s（请用 VLESS / SS / SOCKS5 / AnyTLS / Naive）", svc.Protocol)
 	}
 	if r.EntryListenPort <= 0 {
 		return fmt.Errorf("规则入口端口未分配")
@@ -130,19 +135,41 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if s.Hub == nil || !s.Hub.IsOnline(r.NodeID) {
 		return fmt.Errorf("入口节点离线，无法部署协议入口")
 	}
-	// Open SOCKS outbound: do NOT set OutboundRedirect* — client destinations
-	// must pass through the SK5 (otherwise "测通但没网").
-	ack, err := s.Hub.SendProxyServiceApply(r.NodeID, wsproto.ProxyServiceApply{
-		InstanceID:    instID,
-		ServiceID:     svc.ID,
-		Protocol:      svc.Protocol,
-		Core:          core,
-		ListenPort:    r.EntryListenPort,
-		ShareHost:     shareHost,
-		Name:          fmt.Sprintf("%s#r%d", svc.Name, r.ID),
-		Config:        cfg,
-		OutboundSocks: strings.TrimSpace(r.ExitURI),
-	})
+
+	// 3x-ui-style outbound selection:
+	//   socks5 → open SOCKS (client destinations pass through exit_uri)
+	//   direct → freedom redirect to CONNECT target (fixed tunnel)
+	apply := wsproto.ProxyServiceApply{
+		InstanceID: instID,
+		ServiceID:  svc.ID,
+		Protocol:   svc.Protocol,
+		Core:       core,
+		ListenPort: r.EntryListenPort,
+		ShareHost:  shareHost,
+		Name:       fmt.Sprintf("%s#r%d", svc.Name, r.ID),
+		Config:     cfg,
+	}
+	exitType := strings.ToLower(strings.TrimSpace(r.ExitType))
+	if exitType == "socks5" {
+		uri := strings.TrimSpace(r.ExitURI)
+		if uri == "" {
+			return fmt.Errorf("协议入口 + SK5 出口需要填写 exit_uri（socks5://…）")
+		}
+		// Open SOCKS: do NOT set OutboundRedirect* (that forced CONNECT to a
+		// single host and caused "测通但没网").
+		apply.OutboundSocks = uri
+	} else {
+		// Fixed tunnel: freedom redirect to exit_host:exit_port (no intermediate proxy).
+		// Still a real protocol inbound so copy/QR stay on the entry protocol.
+		host := strings.TrimSpace(r.ExitHost)
+		if host == "" || r.ExitPort <= 0 {
+			return fmt.Errorf("协议入口 + 直连出口需要填写落地 host:port")
+		}
+		apply.OutboundRedirectHost = host
+		apply.OutboundRedirectPort = r.ExitPort
+	}
+
+	ack, err := s.Hub.SendProxyServiceApply(r.NodeID, apply)
 	if err != nil {
 		return err
 	}
@@ -190,22 +217,31 @@ func (s *Server) stopRuleProtocolPlane(r *db.Rule) {
 }
 
 // syncRuleProtocolPlane deploys or stops based on current rule fields.
-func (s *Server) syncRuleProtocolPlane(r *db.Rule) {
+// Returns deploy error so API can surface it (previously only logged).
+func (s *Server) syncRuleProtocolPlane(r *db.Rule) error {
 	if r == nil {
-		return
+		return nil
 	}
 	if !ruleUsesProtocolEntry(r) {
 		s.stopRuleProtocolPlane(r)
-		return
+		return nil
 	}
 	svc, err := db.GetProxyService(s.DB, r.ProxyServiceID)
 	if err != nil || svc == nil || !protocolEntrySupported(svc.Protocol) {
 		s.stopRuleProtocolPlane(r)
-		return
+		if err != nil {
+			return fmt.Errorf("代理服务不可用: %w", err)
+		}
+		if svc == nil {
+			return fmt.Errorf("代理服务不存在")
+		}
+		return fmt.Errorf("协议入口暂不支持 %s", svc.Protocol)
 	}
 	if err := s.deployRuleProtocolPlane(r); err != nil {
 		log.Printf("deploy rule protocol plane rule=%d: %v", r.ID, err)
+		return err
 	}
+	return nil
 }
 
 // resyncProtocolPlanesOnNode re-deploys protocol planes whose entry node is nodeID.

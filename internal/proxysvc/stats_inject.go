@@ -150,11 +150,32 @@ func InjectSingBoxSocksOutbound(cfg []byte, socksURI string) ([]byte, error) {
 			ob["password"] = pass
 		}
 	}
+	return injectSingBoxFinalOutbound(cfg, ob, "sk5-out")
+}
+
+// InjectSingBoxRedirectOutbound forces all traffic to a fixed host:port via a
+// sing-box "direct" outbound with override_address/override_port (tunnel semantics
+// for protocol entry + direct exit, analogous to xray freedom redirect).
+func InjectSingBoxRedirectOutbound(cfg []byte, host string, port int) ([]byte, error) {
+	host = strings.TrimSpace(host)
+	if host == "" || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("redirect host:port invalid")
+	}
+	ob := map[string]any{
+		"type":             "direct",
+		"tag":              "redirect-out",
+		"override_address": host,
+		"override_port":    port,
+	}
+	return injectSingBoxFinalOutbound(cfg, ob, "redirect-out")
+}
+
+// injectSingBoxFinalOutbound drops prior direct/sk5/redirect finals and pins route.final.
+func injectSingBoxFinalOutbound(cfg []byte, ob map[string]any, finalTag string) ([]byte, error) {
 	var m map[string]any
 	if err := json.Unmarshal(cfg, &m); err != nil {
 		return nil, err
 	}
-	// Replace / append outbounds: keep non-direct, drop old sk5-out/direct-out as final.
 	outs, _ := m["outbounds"].([]any)
 	filtered := make([]any, 0, len(outs)+1)
 	for _, o := range outs {
@@ -164,20 +185,19 @@ func InjectSingBoxSocksOutbound(cfg []byte, socksURI string) ([]byte, error) {
 			continue
 		}
 		tag, _ := om["tag"].(string)
-		if tag == "direct-out" || tag == "sk5-out" {
+		if tag == "direct-out" || tag == "sk5-out" || tag == "redirect-out" || tag == finalTag {
 			continue
 		}
 		filtered = append(filtered, o)
 	}
 	filtered = append([]any{ob}, filtered...)
-	// Keep a blackhole-less direct as fallback? No — all traffic via SK5.
 	m["outbounds"] = filtered
 
 	route, _ := m["route"].(map[string]any)
 	if route == nil {
 		route = map[string]any{}
 	}
-	route["final"] = "sk5-out"
+	route["final"] = finalTag
 	m["route"] = route
 	return json.MarshalIndent(m, "", "  ")
 }

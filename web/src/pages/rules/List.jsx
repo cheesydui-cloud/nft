@@ -252,7 +252,9 @@ export default function RulesList() {
         proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const res = await api.post('/rules', ruleFormToPayload(form))
-          toast('规则已创建'); setCreateOpen(false)
+          if (res?.warning) toast(res.warning, 'error')
+          else toast('规则已创建')
+          setCreateOpen(false)
           if (res?.rule?.id) navigate(`/rules/${res.rule.id}`)
         }} />
 
@@ -262,8 +264,10 @@ export default function RulesList() {
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={editRule ? ruleToForm(editRule) : null} onAddProxyURI={addProxyURI} users={users}
         proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
-          await api.put(`/rules/${editRule.id}`, ruleFormToPayload(form))
-          toast('已保存并重下发'); setEditRule(null); load()
+          const res = await api.put(`/rules/${editRule.id}`, ruleFormToPayload(form))
+          if (res?.warning) toast(res.warning, 'error')
+          else toast('已保存并重下发')
+          setEditRule(null); load()
         }} />
     </Layout>
   )

@@ -190,6 +190,27 @@ func TestClassifyExit(t *testing.T) {
 		}
 	})
 
+	t.Run("protocol-entry VLESS+direct uses VLESS share on entry", func(t *testing.T) {
+		// 3x-ui style: proxy_service alone enables protocol plane; exit may be direct.
+		it := ruleListItem{
+			Rule: &db.Rule{
+				NodeID: 7, ProxyServiceID: 3,
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "direct",
+			},
+			Entry: "relay.example:10003",
+			Exit:  "10.0.0.1:443",
+		}
+		share := "vless://uuid@1.2.3.4:443?security=reality&sni=a.com#测直连"
+		it.classifyExitWithShare(idx, true, "vless", share, "测直连")
+		if it.LandingProtocol != "vless" {
+			t.Errorf("landing_protocol = %q, want vless", it.LandingProtocol)
+		}
+		if !strings.HasPrefix(it.RelayURI, "vless://uuid@relay.example:10003") {
+			t.Errorf("relay_uri = %q, want vless rewritten to entry", it.RelayURI)
+		}
+	})
+
 	t.Run("plain SK5 without proxy_service keeps socks5 relay", func(t *testing.T) {
 		it := ruleListItem{
 			Rule: &db.Rule{

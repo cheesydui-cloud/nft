@@ -89,15 +89,18 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 		_ = os.Remove(keyPath)
 	}
 
-	var socks *proxysvc.OutboundSOCKS
-	if uri := strings.TrimSpace(req.OutboundSocks); uri != "" {
-		socks = &proxysvc.OutboundSOCKS{
-			URI:          uri,
-			RedirectHost: strings.TrimSpace(req.OutboundRedirectHost),
-			RedirectPort: req.OutboundRedirectPort,
+		// 3x-ui-style egress: open SOCKS and/or freedom redirect to fixed host:port.
+		var socks *proxysvc.OutboundSOCKS
+		uri := strings.TrimSpace(req.OutboundSocks)
+		rh := strings.TrimSpace(req.OutboundRedirectHost)
+		if uri != "" || (rh != "" && req.OutboundRedirectPort > 0) {
+			socks = &proxysvc.OutboundSOCKS{
+				URI:          uri,
+				RedirectHost: rh,
+				RedirectPort: req.OutboundRedirectPort,
+			}
 		}
-	}
-	cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
+		cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
 	if err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
 	}
@@ -230,18 +233,28 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 		_ = os.Remove(keyPath)
 	}
 
-	cfgBytes, err := build(port, buildCfg)
-	if err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
-	}
-	// Rule-scoped SK5 exit: open SOCKS outbound (client destinations pass through).
-	if uri := strings.TrimSpace(req.OutboundSocks); uri != "" {
-		patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
-		if perr != nil {
-			return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
+		cfgBytes, err := build(port, buildCfg)
+		if err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
 		}
-		cfgBytes = patched
-	}
+		// Rule-scoped egress (3x-ui style):
+		//   OutboundSocks set → open SOCKS (client destinations pass through)
+		//   OutboundRedirect* only → freedom-like fixed dial to exit host:port
+		uri := strings.TrimSpace(req.OutboundSocks)
+		rh := strings.TrimSpace(req.OutboundRedirectHost)
+		if uri != "" {
+			patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
+			if perr != nil {
+				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
+			}
+			cfgBytes = patched
+		} else if rh != "" && req.OutboundRedirectPort > 0 {
+			patched, perr := proxysvc.InjectSingBoxRedirectOutbound(cfgBytes, rh, req.OutboundRedirectPort)
+			if perr != nil {
+				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入固定出口失败: " + perr.Error()}
+			}
+			cfgBytes = patched
+		}
 	// Clash API on loopback for agent traffic sampling.
 	if apiPort, perr := pickLoopbackPort(); perr == nil {
 		if injected, ierr := proxysvc.InjectSingBoxClashAPI(cfgBytes, apiPort); ierr == nil {

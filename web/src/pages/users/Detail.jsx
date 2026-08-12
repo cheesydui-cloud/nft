@@ -617,8 +617,9 @@ export default function UserDetail() {
         proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
-          await api.post('/rules', payload)
-          toast('规则已创建')
+          const res = await api.post('/rules', payload)
+          if (res?.warning) toast(res.warning, 'error')
+          else toast('规则已创建')
           setCreateOpen(false)
           load()
         }}
@@ -636,8 +637,9 @@ export default function UserDetail() {
         proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
-          await api.put(`/rules/${editRule.id}`, payload)
-          toast('已保存并重下发')
+          const res = await api.put(`/rules/${editRule.id}`, payload)
+          if (res?.warning) toast(res.warning, 'error')
+          else toast('已保存并重下发')
           setEditRule(null)
           load()
         }}

@@ -11,12 +11,14 @@ import (
 	"strings"
 )
 
-// OutboundSOCKS routes all inbound traffic through a SOCKS5 proxy (exit_uri).
-// When RedirectHost/RedirectPort are set, freedom+dialerProxy forces a fixed
-// CONNECT target (rule exit_host:exit_port); otherwise the client destination
-// is used (open proxy through the SOCKS).
+// OutboundSOCKS configures the core egress for a rule-scoped protocol plane
+// (3x-ui-style: inbound protocol + outbound chain).
+//
+//	URI set, no redirect  → open SOCKS (client destinations pass through)
+//	URI + Redirect*       → freedom redirect via SOCKS dialerProxy (fixed tunnel through SK5)
+//	Redirect* only        → freedom redirect (fixed tunnel, no intermediate proxy)
 type OutboundSOCKS struct {
-	URI          string // socks5://[user:pass@]host:port
+	URI          string // socks5://[user:pass@]host:port; empty = direct freedom/redirect
 	RedirectHost string
 	RedirectPort int
 }
@@ -218,42 +220,68 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 		}
 	}
 
-	outbounds, err := buildXrayOutbounds(socks)
-	if err != nil {
-		return nil, err
-	}
-	cfg := map[string]any{
-		"log": map[string]any{"loglevel": "warning"},
-		"inbounds": []any{
-			inbound,
-		},
-		"outbounds": outbounds,
-	}
-	// When SOCKS is present, pin all traffic to that outbound (skip freedom).
-	if socks != nil && strings.TrimSpace(socks.URI) != "" {
-		cfg["routing"] = map[string]any{
-			"domainStrategy": "AsIs",
-			"rules": []any{
-				map[string]any{
-					"type":        "field",
-					"inboundTag":  []string{"vless-in"},
-					"outboundTag": "sk5",
-				},
-			},
+		outbounds, err := buildXrayOutbounds(socks)
+		if err != nil {
+			return nil, err
 		}
+		cfg := map[string]any{
+			"log": map[string]any{"loglevel": "warning"},
+			"inbounds": []any{
+				inbound,
+			},
+			"outbounds": outbounds,
+		}
+		// Pin inbound → sk5 when we built a non-default egress (open SOCKS or redirect).
+		if socks != nil && (strings.TrimSpace(socks.URI) != "" ||
+			(strings.TrimSpace(socks.RedirectHost) != "" && socks.RedirectPort > 0)) {
+			cfg["routing"] = map[string]any{
+				"domainStrategy": "AsIs",
+				"rules": []any{
+					map[string]any{
+						"type":        "field",
+						"inboundTag":  []string{"vless-in"},
+						"outboundTag": "sk5",
+					},
+				},
+			}
+		}
+		return json.MarshalIndent(cfg, "", "  ")
 	}
-	return json.MarshalIndent(cfg, "", "  ")
-}
 
-// buildXrayOutbounds returns freedom/blackhole, or SOCKS (+ optional fixed redirect via dialerProxy).
+// buildXrayOutbounds returns freedom/blackhole, open SOCKS, or fixed redirect
+// (optionally via SOCKS dialerProxy). Used by protocol-entry rule planes.
 func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
-	if socks == nil || strings.TrimSpace(socks.URI) == "" {
+	if socks == nil {
 		return []any{
 			map[string]any{"protocol": "freedom", "tag": "direct"},
 			map[string]any{"protocol": "blackhole", "tag": "block"},
 		}, nil
 	}
-	u, err := url.Parse(strings.TrimSpace(socks.URI))
+	rh := strings.TrimSpace(socks.RedirectHost)
+	hasRedirect := rh != "" && socks.RedirectPort > 0
+	uri := strings.TrimSpace(socks.URI)
+
+	// Freedom redirect only (protocol entry + direct exit host:port).
+	if uri == "" {
+		if !hasRedirect {
+			return []any{
+				map[string]any{"protocol": "freedom", "tag": "direct"},
+				map[string]any{"protocol": "blackhole", "tag": "block"},
+			}, nil
+		}
+		return []any{
+			map[string]any{
+				"protocol": "freedom",
+				"tag":      "sk5", // routing pins inbound → sk5
+				"settings": map[string]any{
+					"redirect": net.JoinHostPort(rh, strconv.Itoa(socks.RedirectPort)),
+				},
+			},
+			map[string]any{"protocol": "blackhole", "tag": "block"},
+		}, nil
+	}
+
+	u, err := url.Parse(uri)
 	if err != nil {
 		return nil, fmt.Errorf("socks outbound uri: %w", err)
 	}
@@ -292,7 +320,7 @@ func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
 	}
 	// Fixed CONNECT target: freedom redirect through SOCKS dialerProxy.
 	// Client destinations are forced to RedirectHost:RedirectPort (tunnel semantics).
-	if rh := strings.TrimSpace(socks.RedirectHost); rh != "" && socks.RedirectPort > 0 {
+	if hasRedirect {
 		return []any{
 			map[string]any{
 				"protocol": "freedom",
@@ -316,6 +344,7 @@ func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
 			map[string]any{"protocol": "blackhole", "tag": "block"},
 		}, nil
 	}
+	// Open SOCKS: client destinations pass through.
 	return []any{
 		socksOB,
 		map[string]any{"protocol": "blackhole", "tag": "block"},

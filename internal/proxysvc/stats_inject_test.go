@@ -112,3 +112,28 @@ func TestInjectSingBoxSocksOutbound(t *testing.T) {
 		t.Fatalf("final not sk5-out: %s", s)
 	}
 }
+
+
+func TestInjectSingBoxRedirectOutbound(t *testing.T) {
+	base, err := BuildSingBoxSSConfig(8388, mustJSON(map[string]any{
+		"method":   "aes-128-gcm",
+		"password": "secret",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := InjectSingBoxRedirectOutbound(base, "1.2.3.4", 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "redirect-out") {
+		t.Fatalf("missing redirect-out: %s", s)
+	}
+	if !strings.Contains(s, "1.2.3.4") {
+		t.Fatalf("missing host: %s", s)
+	}
+	if !strings.Contains(s, `"final": "redirect-out"`) && !strings.Contains(s, `"final":"redirect-out"`) {
+		t.Fatalf("final not pin: %s", s)
+	}
+}

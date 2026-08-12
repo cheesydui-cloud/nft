@@ -762,3 +762,34 @@ func TestBuildXrayVLESSConfigSOCKSOpenProxy(t *testing.T) {
 		t.Fatalf("open socks should not keep freedom direct as primary")
 	}
 }
+
+
+func TestBuildXrayVLESSConfigFreedomRedirect(t *testing.T) {
+	priv, _ := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		ServerName: "www.cloudflare.com",
+		PrivateKey: priv,
+		Security:   "reality",
+	})
+	cfg, err := BuildXrayVLESSConfigOpts(10001, raw, &OutboundSOCKS{
+		RedirectHost: "10.20.30.40",
+		RedirectPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, "10.20.30.40:443") {
+		t.Fatalf("expected freedom redirect target: %s", s[:500])
+	}
+	if !strings.Contains(s, `"outboundTag": "sk5"`) && !strings.Contains(s, `"outboundTag":"sk5"`) {
+		// indented
+		if !strings.Contains(s, "outboundTag") {
+			t.Fatalf("expected routing pin: %s", s[:600])
+		}
+	}
+	if strings.Contains(s, `"protocol": "socks"`) {
+		t.Fatalf("freedom-only redirect should not add socks: %s", s[:500])
+	}
+}

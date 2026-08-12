@@ -177,12 +177,11 @@ func (s *Server) fillRuleChains(items []ruleListItem, nodesByID map[int64]*db.No
 //
 // Client-facing link (copy/QR) must match the data plane:
 //
-//  1. Protocol-entry (proxy_service_id + exit_type=socks5 + supported entry
-//     protocol, single-hop) → entry port is a real inbound of that protocol;
+//  1. Protocol-entry (proxy_service_id + supported entry protocol, single-hop)
+//     → entry port is a real inbound of that protocol (3x-ui style);
 //     relay_uri is the proxy-service share rewritten to entry host:port.
-//     Core outbound is open SOCKS via exit_uri (not fixed CONNECT tunnel).
-//     This wins over landing-index match on exit host:port — the client never
-//     speaks the landing/SK5 protocol on the entry.
+//     Egress: exit_type=socks5 → open SOCKS via exit_uri; direct → freedom
+//     redirect to exit host:port. Wins over landing-index match on exit.
 //  2. Landing exit match (direct L4 tunnel to a landing node) → rewrite that
 //     landing's share URI to the rule entry host:port.
 //  3. Plain exit_type=socks5 without protocol entry → L4 + last-hop ExitProxy;

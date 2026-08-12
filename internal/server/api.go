@@ -2497,10 +2497,19 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
-		s.syncRuleProtocolPlane(rl2)
+		if err := s.syncRuleProtocolPlane(rl2); err != nil {
+			planeErr = err.Error()
+		}
 	}
-	jsonOK(w, map[string]any{"rule": rl, "entry": entry, "entry_v6": entryV6})
+	resp := map[string]any{"rule": rl, "entry": entry, "entry_v6": entryV6}
+	if planeErr != "" {
+		// Rule is saved; surface deploy failure so the UI does not look "OK but dead".
+		resp["protocol_plane_error"] = planeErr
+		resp["warning"] = "规则已保存，但协议入口部署失败: " + planeErr
+	}
+	jsonOK(w, resp)
 }
 
 func (s *Server) apiGetRule(w http.ResponseWriter, r *http.Request) {
@@ -2889,10 +2898,18 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
-		s.syncRuleProtocolPlane(rl2)
+		if err := s.syncRuleProtocolPlane(rl2); err != nil {
+			planeErr = err.Error()
+		}
 	}
-	jsonOK(w, map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6})
+	resp := map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6}
+	if planeErr != "" {
+		resp["protocol_plane_error"] = planeErr
+		resp["warning"] = "规则已保存，但协议入口部署失败: " + planeErr
+	}
+	jsonOK(w, resp)
 }
 
 func (s *Server) apiDeleteRule(w http.ResponseWriter, r *http.Request) {
@@ -3839,10 +3856,18 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
-		s.syncRuleProtocolPlane(rl2)
+		if err := s.syncRuleProtocolPlane(rl2); err != nil {
+			planeErr = err.Error()
+		}
 	}
-	jsonOK(w, map[string]any{"ok": true, "rule_id": id, "entry": entry, "entry_v6": entryV6})
+	resp := map[string]any{"ok": true, "rule_id": id, "entry": entry, "entry_v6": entryV6}
+	if planeErr != "" {
+		resp["protocol_plane_error"] = planeErr
+		resp["warning"] = "规则已保存，但协议入口部署失败: " + planeErr
+	}
+	jsonOK(w, resp)
 }
 
 // apiMyUpdateRule lets a user edit their own rule: name / proto / exit / comment
@@ -4039,10 +4064,18 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
-		s.syncRuleProtocolPlane(rl2)
+		if err := s.syncRuleProtocolPlane(rl2); err != nil {
+			planeErr = err.Error()
+		}
 	}
-	jsonOK(w, map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6})
+	resp := map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6}
+	if planeErr != "" {
+		resp["protocol_plane_error"] = planeErr
+		resp["warning"] = "规则已保存，但协议入口部署失败: " + planeErr
+	}
+	jsonOK(w, resp)
 }
 
 func (s *Server) apiMyDeleteRule(w http.ResponseWriter, r *http.Request) {

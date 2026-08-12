@@ -189,7 +189,9 @@ export default function MyRules() {
         proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))
-          toast('规则已创建'); setCreateOpen(false)
+          if (res?.warning) toast(res.warning, 'error')
+          else toast('规则已创建')
+          setCreateOpen(false)
           if (res?.rule_id) navigate(`/my/rules/${res.rule_id}`)
         }} />
 
