@@ -9,6 +9,7 @@ const EMPTY = {
   node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit_kind: 'custom',
   exit_type: 'direct', exit_uri: '',
   entry_port: '', comment: '', mode: 'kernel', via_node_ids: [],
+  proxy_service_id: 0,
 }
 
 const PROTO_LABEL = {
@@ -107,7 +108,10 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
       seed.exit_kind = 'landing'
     }
     setForm(seed)
-    setEntrySelectValue(seed.node_id != null && seed.node_id !== '' ? String(seed.node_id) : '')
+    // Prefer proxy:<svc>:<node> so edit form shows the same 代理 label as create.
+    const sid = Number(seed.proxy_service_id) || 0
+    const nid = seed.node_id != null && seed.node_id !== '' ? String(seed.node_id) : ''
+    setEntrySelectValue(sid > 0 && nid ? `proxy:${sid}:${nid}` : nid)
     if (allowTypeSwitch) {
       // Prefill chain when editing a chain-like rule; default create to port.
       const looksChain = (seed.via_node_ids || []).length > 0
@@ -142,17 +146,29 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // and it emits string values while a seeded node_id may be a number — the
   // String() comparison keeps a same-entry reselect from clearing the chain.
   const pickEntry = (v) => {
-    // 代理 tab 选项 value 为 proxy:<serviceId>:<nodeId>，表单只存 node_id；
-    // entrySelectValue 保留完整 option value，避免 Select 回落到单点同 id 标签。
+    // 代理 tab 选项 value 为 proxy:<serviceId>:<nodeId>；表单存 node_id + proxy_service_id。
+    // entrySelectValue 保留完整 option value，选什么就显示什么，不回落到单点标签。
     let nodeId = v
+    let svcId = 0
     const s = String(v || '')
     if (s.startsWith('proxy:')) {
       const parts = s.split(':')
+      svcId = Number(parts[1]) || 0
       nodeId = parts[2] || parts[parts.length - 1]
     }
     setEntrySelectValue(s)
-    setForm(f =>
-      String(nodeId) === String(f.node_id) ? f : { ...f, node_id: nodeId, via_node_ids: [] })
+    setForm(f => {
+      const sameNode = String(nodeId) === String(f.node_id)
+      const sameSvc = Number(svcId) === Number(f.proxy_service_id || 0)
+      if (sameNode && sameSvc) return f
+      return {
+        ...f,
+        node_id: nodeId,
+        proxy_service_id: svcId,
+        // 换节点才清 via；同节点换代理服务保留中间层
+        via_node_ids: sameNode ? f.via_node_ids : [],
+      }
+    })
   }
 
   const handleExitBlur = () => {
@@ -679,6 +695,7 @@ export function ruleToForm(rule) {
     // 单点规则两者本就相同。
     mode: rule.exit_mode || rule.entry_mode || 'kernel',
     via_node_ids: rule.via_node_ids || [],
+    proxy_service_id: Number(rule.proxy_service_id) || 0,
   }
 }
 
@@ -706,6 +723,8 @@ export function ruleFormToPayload(form) {
     via_node_ids: (form.via_node_ids || []).map(Number),
     owner_id: form.owner_id ? Number(form.owner_id) : undefined,
     exit_type: exitType,
+    // 0 clears a previous 代理-tab pick when re-saving as plain node.
+    proxy_service_id: Number(form.proxy_service_id) || 0,
   }
   if (exitType === 'socks5') {
     payload.exit_uri = form.exit_uri || ''

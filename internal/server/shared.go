@@ -174,12 +174,22 @@ func (s *Server) fillRuleChains(items []ruleListItem, nodesByID map[int64]*db.No
 // the owner's landing nodes; withURI controls whether the copyable relay URI is
 // computed (skipped for the admin list, which only shows the kind badge).
 //
-// SOCKS5 exits (exit_type=socks5 + exit_uri) are not in the landing index: the
-// client-facing link is exit_uri with its authority rewritten to the rule's
-// entry host:port so QR/copy dial the relay instead of the SOCKS proxy directly.
-// ExitURI is always redacted for the JSON response after RelayURI is built from
+// Client-facing link priority (copy/QR):
+//  1. Landing exit match → rewrite landing share URI to entry host:port
+//  2. Else proxy_service_id on the entry node → rewrite that service's share
+//     URI (e.g. vless://…) to entry host:port — so a VLESS 代理 + SK5 出口
+//     rule still copies a VLESS link, not the SOCKS exit
+//  3. Else exit_type=socks5 → rewrite exit_uri authority to entry (pure SK5)
+//
+// ExitURI is always redacted in the JSON response after RelayURI is built from
 // the unredacted secret (buildRuleListItem embeds the raw db.Rule).
 func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) {
+	it.classifyExitWithShare(idx, withURI, "", "", "")
+}
+
+// classifyExitWithShare is classifyExit plus an optional entry proxy-service
+// share (protocol/uri/name from proxy_service_instances).
+func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withURI bool, shareProto, shareURI, shareName string) {
 	it.ExitKind = "custom"
 	relayHost, relayPort, entryOK := splitEntry(it.Entry)
 	if node, ok := idx[it.Exit]; ok {
@@ -193,15 +203,31 @@ func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) 
 				it.RelayURI = u
 			}
 		}
-	} else if it.Rule != nil && it.ExitType == "socks5" {
-		// SK5 CONNECT target is rarely a landing node; still tag protocol for UI.
-		if it.LandingProtocol == "" {
-			it.LandingProtocol = "socks5"
+	} else {
+		// Entry picked from 代理 tab: tag + rewrite with that service's share link.
+		shareURI = strings.TrimSpace(shareURI)
+		shareProto = strings.TrimSpace(shareProto)
+		if shareProto != "" {
+			it.LandingProtocol = shareProto
 		}
-		src := strings.TrimSpace(it.ExitURI)
-		if withURI && entryOK && src != "" && !isRedactedExitURI(src) {
-			if u, err := landing.RewriteEndpoint(src, relayHost, relayPort); err == nil {
+		if shareName != "" && it.LandingName == "" {
+			it.LandingName = shareName
+		}
+		if withURI && entryOK && shareURI != "" {
+			if u, err := landing.RewriteEndpoint(shareURI, relayHost, relayPort); err == nil {
 				it.RelayURI = u
+			}
+		}
+		// Pure SK5 (no proxy-service share): client link is socks5 rewritten to entry.
+		if it.RelayURI == "" && it.Rule != nil && it.ExitType == "socks5" {
+			if it.LandingProtocol == "" {
+				it.LandingProtocol = "socks5"
+			}
+			src := strings.TrimSpace(it.ExitURI)
+			if withURI && entryOK && src != "" && !isRedactedExitURI(src) {
+				if u, err := landing.RewriteEndpoint(src, relayHost, relayPort); err == nil {
+					it.RelayURI = u
+				}
 			}
 		}
 	}
@@ -211,6 +237,22 @@ func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) 
 		cp.ExitURI = redactedExitURI(it.ExitURI)
 		it.Rule = &cp
 	}
+}
+
+// classifyRuleExit runs classifyExit and, when the rule remembers a
+// proxy_service_id, prefers that service's share URI for relay_uri / protocol tag.
+func (s *Server) classifyRuleExit(it *ruleListItem, idx map[string]landing.Node, withURI bool) {
+	if it == nil {
+		return
+	}
+	var shareProto, shareURI, shareName string
+	if it.Rule != nil && it.ProxyServiceID > 0 && it.NodeID > 0 {
+		if p, u, n, ok := db.LookupProxyServiceShare(s.DB, it.ProxyServiceID, it.NodeID); ok || p != "" || n != "" {
+			shareProto, shareURI, shareName = p, u, n
+			_ = ok
+		}
+	}
+	it.classifyExitWithShare(idx, withURI, shareProto, shareURI, shareName)
 }
 
 // splitEntry parses a "host:port" entry string; entry is "—" before the rule's

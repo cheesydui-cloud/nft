@@ -148,6 +148,10 @@ type Rule struct {
 	// ExitType is socks5. Empty for direct exits. Passwords live in this URI;
 	// list/detail APIs may redact credentials before returning to the client.
 	ExitURI         string        `json:"exit_uri,omitempty"`
+	// ProxyServiceID is the proxy_services.id chosen on the 代理 tab (0 if the
+	// entry was picked as a plain node). Used for list labels and client-facing
+	// relay_uri rewrite; hops still use NodeID only.
+	ProxyServiceID  int64         `json:"proxy_service_id,omitempty"`
 	EntryListenPort int           `json:"entry_listen_port"`
 	Comment         string        `json:"comment"`
 	Disabled        bool          `json:"disabled"`
@@ -861,13 +865,13 @@ func RecordUpgradeResult(d DBTX, nodeID int64, version, status, errText string) 
 // bandwidth_mbps is dead (shaping moved to the per-grant rate limit on
 // user_nodes) and stays out of the projection. exit_uri / exit_type are live
 // for SOCKS5 chain exits (migration 0010 + 0062).
-const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,COALESCE(exit_type,'direct'),COALESCE(exit_uri,''),entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids,exit_bytes`
+const ruleCols = `id,node_id,owner_id,name,proto,exit_host,exit_port,COALESCE(exit_type,'direct'),COALESCE(exit_uri,''),entry_listen_port,comment,disabled,created_at,entry_family,via_node_ids,exit_bytes,COALESCE(proxy_service_id,0)`
 
 func scanRule(r rowScanner) (*Rule, error) {
 	rl := &Rule{}
 	var disabled int
 	var viaJSON string
-	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.ExitType, &rl.ExitURI, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON, &rl.ExitBytes); err != nil {
+	if err := r.Scan(&rl.ID, &rl.NodeID, &rl.OwnerID, &rl.Name, &rl.Proto, &rl.ExitHost, &rl.ExitPort, &rl.ExitType, &rl.ExitURI, &rl.EntryListenPort, &rl.Comment, &disabled, &rl.CreatedAt, &rl.EntryFamily, &viaJSON, &rl.ExitBytes, &rl.ProxyServiceID); err != nil {
 		return nil, err
 	}
 	rl.Disabled = disabled == 1

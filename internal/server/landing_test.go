@@ -130,4 +130,30 @@ func TestClassifyExit(t *testing.T) {
 			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
 		}
 	})
+
+	t.Run("proxy service share preferred over socks5 exit rewrite", func(t *testing.T) {
+		it := ruleListItem{
+			Rule: &db.Rule{
+				NodeID: 7, ProxyServiceID: 3,
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@proxy.example:1080",
+			},
+			Entry: "relay.example:10001",
+			Exit:  "10.0.0.1:443",
+		}
+		share := "vless://uuid@1.2.3.4:443?security=reality&sni=a.com#测试1"
+		it.classifyExitWithShare(idx, true, "vless", share, "测试1")
+		want := "vless://uuid@relay.example:10001?security=reality&sni=a.com#测试1"
+		if it.RelayURI != want {
+			t.Errorf("relay_uri = %q, want %q", it.RelayURI, want)
+		}
+		if it.LandingProtocol != "vless" {
+			t.Errorf("landing_protocol = %q, want vless", it.LandingProtocol)
+		}
+		// exit_uri still redacted
+		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
+			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+		}
+	})
 }

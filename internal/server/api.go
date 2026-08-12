@@ -2267,7 +2267,7 @@ func (s *Server) apiListRules(w http.ResponseWriter, r *http.Request) {
 			idx = ownerIndex(rl.OwnerID.Int64)
 		}
 		item := s.buildRuleListItem(rl, oname)
-		item.classifyExit(idx, true)
+		s.classifyRuleExit(&item, idx, true)
 		if n := nodeByID[rl.NodeID]; n != nil {
 			item.RateMultiplier = n.RateMultiplier
 		} else {
@@ -2320,6 +2320,8 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		// EntryFamily selects the entry endpoint's IP family: "v4" (default),
 		// "v6", or "both". Empty defaults to "v4".
 		EntryFamily string `json:"entry_family"`
+		// ProxyServiceID is the 代理 tab service (0 = plain node). Optional.
+		ProxyServiceID int64 `json:"proxy_service_id"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -2426,17 +2428,18 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		ownerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
 	}
 	rl := &db.Rule{
-		NodeID:      ruleNodeID,
-		OwnerID:     ownerID,
-		Name:        name,
-		Proto:       proto,
-		ExitHost:    pe.Host,
-		ExitPort:    pe.Port,
-		ExitType:    pe.Type,
-		ExitURI:     pe.URI,
-		Comment:     strings.TrimSpace(body.Comment),
-		EntryFamily: entryFamily,
-		ViaNodeIDs:  vias,
+		NodeID:         ruleNodeID,
+		OwnerID:        ownerID,
+		Name:           name,
+		Proto:          proto,
+		ExitHost:       pe.Host,
+		ExitPort:       pe.Port,
+		ExitType:       pe.Type,
+		ExitURI:        pe.URI,
+		Comment:        strings.TrimSpace(body.Comment),
+		EntryFamily:    entryFamily,
+		ViaNodeIDs:     vias,
+		ProxyServiceID: body.ProxyServiceID,
 	}
 	id, err := db.CreateRule(tx, rl)
 	if err != nil {
@@ -2488,7 +2491,7 @@ func (s *Server) apiGetRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	item := s.buildRuleListItem(rl, ownerName)
-	item.classifyExit(idx, true)
+	s.classifyRuleExit(&item, idx, true)
 	if n := nodeByID[rl.NodeID]; n != nil {
 		item.RateMultiplier = n.RateMultiplier
 	} else {
@@ -2672,6 +2675,8 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
 			// "v6", or "both". Empty defaults to "v4".
 			EntryFamily string `json:"entry_family"`
+			// ProxyServiceID is the 代理 tab service (0 = plain node). Optional.
+			ProxyServiceID int64 `json:"proxy_service_id"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -2802,6 +2807,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 		}
 		rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, pe.Host, pe.Port
 		rl.ExitType, rl.ExitURI = pe.Type, pe.URI
+		rl.ProxyServiceID = body.ProxyServiceID
 		rl.Comment = strings.TrimSpace(body.Comment)
 	// Absent entry_family keeps the stored family — only an explicit value
 	// changes it, mirroring how an empty mode keeps the exit segment.
@@ -2972,7 +2978,7 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	ruleViews := make([]ruleListItem, 0, len(rules))
 	for _, rl := range rules {
 		item := s.buildRuleListItem(rl, target.Username)
-		item.classifyExit(idx, true)
+		s.classifyRuleExit(&item, idx, true)
 		ruleViews = append(ruleViews, item)
 	}
 	// Day buckets use Asia/Shanghai calendar days (北京时间 0–23:59).
@@ -3546,7 +3552,7 @@ func (s *Server) apiMyListRules(w http.ResponseWriter, r *http.Request) {
 	views := make([]ruleListItem, 0, len(rules))
 	for _, rl := range rules {
 		item := s.buildRuleListItem(rl, "")
-		item.classifyExit(idx, true)
+		s.classifyRuleExit(&item, idx, true)
 		if n := grantedByID[rl.NodeID]; n != nil {
 			item.RateMultiplier = n.RateMultiplier
 		} else {
@@ -3612,7 +3618,7 @@ func (s *Server) apiMyGetRule(w http.ResponseWriter, r *http.Request) {
 	grantedByID := buildMap(grantedNodes, func(n *db.Node) int64 { return n.ID })
 	idx := s.landingIndexFromDB(u.ID)
 	item := s.buildRuleListItem(rl, "")
-	item.classifyExit(idx, true)
+	s.classifyRuleExit(&item, idx, true)
 	if n := grantedByID[rl.NodeID]; n != nil {
 		item.RateMultiplier = n.RateMultiplier
 	} else {
@@ -3664,6 +3670,8 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
 			// "v6", or "both". Empty defaults to "v4".
 			EntryFamily string `json:"entry_family"`
+			// ProxyServiceID is the 代理 tab service (0 = plain node). Optional.
+			ProxyServiceID int64 `json:"proxy_service_id"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -3753,17 +3761,18 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 		defer tx.Rollback()
 
 		rl := &db.Rule{
-			NodeID:      body.NodeID,
-			OwnerID:     nullInt64(u.ID),
-			Name:        name,
-			Proto:       proto,
-			ExitHost:    pe.Host,
-			ExitPort:    pe.Port,
-			ExitType:    pe.Type,
-			ExitURI:     pe.URI,
-			Comment:     strings.TrimSpace(body.Comment),
-			EntryFamily: entryFamily,
-			ViaNodeIDs:  vias,
+			NodeID:         body.NodeID,
+			OwnerID:        nullInt64(u.ID),
+			Name:           name,
+			Proto:          proto,
+			ExitHost:       pe.Host,
+			ExitPort:       pe.Port,
+			ExitType:       pe.Type,
+			ExitURI:        pe.URI,
+			Comment:        strings.TrimSpace(body.Comment),
+			EntryFamily:    entryFamily,
+			ViaNodeIDs:     vias,
+			ProxyServiceID: body.ProxyServiceID,
 		}
 	id, err := db.CreateRule(tx, rl)
 	if err != nil {
@@ -3838,6 +3847,8 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 			// EntryFamily selects the entry endpoint's IP family: "v4" (default),
 			// "v6", or "both". Empty defaults to "v4".
 			EntryFamily string `json:"entry_family"`
+			// ProxyServiceID is the 代理 tab service (0 = plain node). Optional.
+			ProxyServiceID int64 `json:"proxy_service_id"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -3950,6 +3961,7 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 		rl.ViaNodeIDs = vias
 		rl.Name, rl.Proto, rl.ExitHost, rl.ExitPort = name, proto, pe.Host, pe.Port
 		rl.ExitType, rl.ExitURI = pe.Type, pe.URI
+		rl.ProxyServiceID = body.ProxyServiceID
 		rl.Comment = strings.TrimSpace(body.Comment)
 	// Absent entry_family keeps the stored family — only an explicit value
 	// changes it, mirroring how an empty mode keeps the exit segment.

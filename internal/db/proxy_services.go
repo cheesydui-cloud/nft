@@ -309,6 +309,29 @@ func ListDeployedProxyNodeIDs(d *sql.DB) ([]int64, error) {
 	return ids, rows.Err()
 }
 
+// LookupProxyServiceShare looks up a ready share URI for serviceID on nodeID.
+// Prefer ready instances with non-empty uri; fall back to any non-empty uri.
+// Returns protocol, share URI, and service display name.
+func LookupProxyServiceShare(d *sql.DB, serviceID, nodeID int64) (protocol, uri, name string, ok bool) {
+	if serviceID <= 0 || nodeID <= 0 || d == nil {
+		return "", "", "", false
+	}
+	var proto, svcName string
+	if err := d.QueryRow(`SELECT protocol, name FROM proxy_services WHERE id=?`, serviceID).Scan(&proto, &svcName); err != nil {
+		return "", "", "", false
+	}
+	var shareURI string
+	err := d.QueryRow(`
+		SELECT uri FROM proxy_service_instances
+		WHERE service_id=? AND node_id=? AND TRIM(uri) != ''
+		ORDER BY CASE WHEN deploy_status=? THEN 0 ELSE 1 END, id DESC
+		LIMIT 1`, serviceID, nodeID, ProxyDeployReady).Scan(&shareURI)
+	if err != nil || strings.TrimSpace(shareURI) == "" {
+		return proto, "", svcName, false
+	}
+	return proto, strings.TrimSpace(shareURI), svcName, true
+}
+
 // ListProxyServices returns all services with instance counts.
 func ListProxyServices(d *sql.DB) ([]*ProxyService, error) {
 	rows, err := d.Query(`SELECT ` + proxyServiceCols + ` FROM proxy_services ORDER BY id DESC`)
