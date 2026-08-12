@@ -112,8 +112,17 @@ func buildXraySSOutbound(raw, tag string) (map[string]any, error) {
 	}, nil
 }
 
-// parseSSShare supports SIP002 (ss://base64(method:pass)@host:port#name) and
-// legacy whole-base64 (ss://base64(method:pass@host:port)#name).
+// parseSSShare supports common ss:// share forms used by panels / Clash / SIP002:
+//
+//	ss://base64(method:pass)@host:port#name          (SIP002)
+//	ss://method:pass@host:port#name                  (plain userinfo)
+//	ss://method:url-encoded-pass@host:port           (percent-encoded)
+//	ss://base64(method:pass@host:port)#name          (legacy whole-base64)
+//	ss://base64(method:pass@host:port)/?plugin=...   (legacy + query)
+//
+// Many warehouse pastes URL-encode the colon (%3A) or the whole userinfo; we
+// unescape before splitting so "ss userinfo missing method:password" is not
+// raised on otherwise valid links.
 func parseSSShare(uri string) (method, password, host string, port int, err error) {
 	uri = strings.TrimSpace(uri)
 	if !strings.HasPrefix(strings.ToLower(uri), "ss://") && !strings.HasPrefix(strings.ToLower(uri), "shadowsocks://") {
@@ -126,28 +135,33 @@ func parseSSShare(uri string) (method, password, host string, port int, err erro
 	if h := strings.Index(rest, "#"); h >= 0 {
 		rest = rest[:h]
 	}
+	// plugin query is after host:port in SIP002; strip for host parse but keep path-less.
+	query := ""
 	if q := strings.Index(rest, "?"); q >= 0 {
+		query = rest[q+1:]
 		rest = rest[:q]
 	}
+	_ = query // plugin not needed for xray basic ss outbound
+
 	var userinfo, hostport string
 	if at := strings.LastIndex(rest, "@"); at >= 0 {
 		userinfo = rest[:at]
 		hostport = rest[at+1:]
-		// SIP002: userinfo is base64(method:password)
-		dec, ok := b64DecodeFlexible(userinfo)
-		if !ok {
-			// sometimes already method:password
-			dec = []byte(userinfo)
+		// hostport may still carry a trailing "/" from some generators
+		hostport = strings.TrimSuffix(hostport, "/")
+		method, password, err = splitSSUserinfo(userinfo)
+		if err != nil {
+			return "", "", "", 0, err
 		}
-		mp := string(dec)
-		colon := strings.Index(mp, ":")
-		if colon < 0 {
-			return "", "", "", 0, fmt.Errorf("ss userinfo missing method:password")
-		}
-		method = mp[:colon]
-		password = mp[colon+1:]
 	} else {
+		// Legacy: entire body is base64(method:pass@host:port)
 		dec, ok := b64DecodeFlexible(rest)
+		if !ok {
+			// try unescape then decode
+			if u, e := url.PathUnescape(rest); e == nil {
+				dec, ok = b64DecodeFlexible(u)
+			}
+		}
 		if !ok {
 			return "", "", "", 0, fmt.Errorf("ss legacy base64 decode failed")
 		}
@@ -156,18 +170,26 @@ func parseSSShare(uri string) (method, password, host string, port int, err erro
 		if at < 0 {
 			return "", "", "", 0, fmt.Errorf("ss legacy missing @")
 		}
-		mp := s[:at]
-		hostport = s[at+1:]
-		colon := strings.Index(mp, ":")
-		if colon < 0 {
-			return "", "", "", 0, fmt.Errorf("ss legacy missing method:password")
+		method, password, err = splitSSUserinfo(s[:at])
+		if err != nil {
+			return "", "", "", 0, err
 		}
-		method = mp[:colon]
-		password = mp[colon+1:]
+		hostport = s[at+1:]
+		if q := strings.Index(hostport, "?"); q >= 0 {
+			hostport = hostport[:q]
+		}
+		hostport = strings.TrimSuffix(hostport, "/")
 	}
+
 	h, pStr, e := net.SplitHostPort(hostport)
 	if e != nil {
-		return "", "", "", 0, fmt.Errorf("ss host:port: %w", e)
+		// IPv6 without brackets rare in ss shares; try last colon split
+		if i := strings.LastIndex(hostport, ":"); i > 0 {
+			h = hostport[:i]
+			pStr = hostport[i+1:]
+		} else {
+			return "", "", "", 0, fmt.Errorf("ss host:port: %w", e)
+		}
 	}
 	p, e := strconv.Atoi(pStr)
 	if e != nil || p < 1 || p > 65535 || h == "" {
@@ -177,6 +199,147 @@ func parseSSShare(uri string) (method, password, host string, port int, err erro
 		return "", "", "", 0, fmt.Errorf("ss method/password empty")
 	}
 	return method, password, h, p, nil
+}
+
+// splitSSUserinfo extracts method + password from the authority userinfo part.
+// Tries: percent-unescape → plain method:pass → base64(method:pass) → base64(method):pass.
+func splitSSUserinfo(userinfo string) (method, password string, err error) {
+	userinfo = strings.TrimSpace(userinfo)
+	if userinfo == "" {
+		return "", "", fmt.Errorf("ss userinfo empty")
+	}
+	// Reject already-redacted secrets from list API.
+	if userinfo == "***" || strings.HasPrefix(userinfo, "***") {
+		return "", "", fmt.Errorf("ss 分享链已被脱敏，请重新选择落地节点")
+	}
+
+	// Percent-decode first (aes-256-gcm%3Apass, or encoded base64 blobs).
+	// Prefer PathUnescape; fall back to QueryUnescape only if still no colon.
+	unescaped := userinfo
+	if u, e := url.PathUnescape(userinfo); e == nil && u != "" {
+		unescaped = u
+	}
+	if !strings.Contains(unescaped, ":") {
+		if u, e := url.QueryUnescape(userinfo); e == nil && u != "" {
+			unescaped = u
+		}
+	}
+
+	// 1) Plain method:password (or method:pass:with:colons)
+	if m, p, ok := splitMethodPass(unescaped); ok && !looksLikeBase64Only(m) {
+		return m, p, nil
+	}
+
+	// 2) SIP002: entire userinfo is base64(method:password)
+	if dec, ok := b64DecodeFlexible(unescaped); ok {
+		mp := strings.Trim(string(dec), "\x00\r\n\t ")
+		if m, p, ok := splitMethodPass(mp); ok {
+			return m, p, nil
+		}
+	}
+	// Try original (pre-unescape) base64 — some links encode '+' as %2B only in password half
+	if unescaped != userinfo {
+		if dec, ok := b64DecodeFlexible(userinfo); ok {
+			mp := strings.Trim(string(dec), "\x00\r\n\t ")
+			if m, p, ok := splitMethodPass(mp); ok {
+				return m, p, nil
+			}
+		}
+	}
+
+	// 3) Non-standard: base64(method):password  or  method:base64(password)
+	if m, p, ok := splitMethodPass(unescaped); ok {
+		// method might itself be base64 of the real method name (rare)
+		if dec, ok2 := b64DecodeFlexible(m); ok2 {
+			dm := strings.TrimSpace(string(dec))
+			if dm != "" && !strings.Contains(dm, ":") && len(dm) < 64 {
+				return dm, p, nil
+			}
+		}
+		// password might be base64 — keep as-is for xray (password is opaque)
+		return m, p, nil
+	}
+
+	// 4) url.Parse("ss://"+userinfo+"@x:1") for edge userinfo forms
+	if u, e := url.Parse("ss://" + userinfo + "@x:1"); e == nil && u.User != nil {
+		name := u.User.Username()
+		pass, hasPass := u.User.Password()
+		if hasPass && name != "" {
+			// method:password already split by url
+			if dec, ok := b64DecodeFlexible(name); ok {
+				if m, p, ok2 := splitMethodPass(string(dec) + ":" + pass); ok2 {
+					return m, p, nil
+				}
+				// name was base64(method) only
+				dm := strings.TrimSpace(string(dec))
+				if dm != "" {
+					return dm, pass, nil
+				}
+			}
+			return name, pass, nil
+		}
+		if name != "" {
+			if m, p, ok := splitMethodPass(name); ok {
+				return m, p, nil
+			}
+			if dec, ok := b64DecodeFlexible(name); ok {
+				if m, p, ok2 := splitMethodPass(strings.TrimSpace(string(dec))); ok2 {
+					return m, p, nil
+				}
+			}
+		}
+	}
+
+	preview := userinfo
+	if len(preview) > 24 {
+		preview = preview[:24] + "…"
+	}
+	return "", "", fmt.Errorf("ss userinfo missing method:password（userinfo=%q，请确认落地仓库 ss:// 含加密方式与密码）", preview)
+}
+
+// splitMethodPass splits "method:password" on the first colon.
+func splitMethodPass(mp string) (method, password string, ok bool) {
+	mp = strings.TrimSpace(mp)
+	colon := strings.Index(mp, ":")
+	if colon <= 0 || colon >= len(mp)-1 {
+		return "", "", false
+	}
+	method = strings.TrimSpace(mp[:colon])
+	password = mp[colon+1:] // keep password as-is (may start/end with spaces rarely)
+	if method == "" || password == "" {
+		return "", "", false
+	}
+	return method, password, true
+}
+
+// looksLikeBase64Only reports userinfo that is almost certainly base64 of
+// method:pass (no raw colon before decode). Used to prefer base64 path.
+// Known SS cipher names (aes-*-gcm, 2022-blake3-*, chacha20-*) must NOT match
+// so plain "method:password" is preferred over a bogus base64 attempt.
+func looksLikeBase64Only(s string) bool {
+	if strings.Contains(s, ":") {
+		return false
+	}
+	if len(s) < 4 {
+		return false
+	}
+	// Cipher tokens look base64-ish (hyphens + alnum) but are not.
+	low := strings.ToLower(s)
+	if strings.Contains(low, "aes-") || strings.Contains(low, "chacha") ||
+		strings.Contains(low, "blake3") || strings.Contains(low, "poly1305") ||
+		strings.HasPrefix(low, "2022-") || strings.HasPrefix(low, "xchacha") ||
+		low == "rc4-md5" || low == "none" || strings.Contains(low, "gcm") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '+' || r == '/' || r == '=' || r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func b64DecodeFlexible(s string) ([]byte, bool) {

@@ -164,12 +164,21 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 		if host == "" || r.ExitPort <= 0 {
 			return fmt.Errorf("协议入口 + 直连出口需要填写落地 host:port")
 		}
-		// Prefer stored exit_uri when it is a proxy share (ss:// / vless:// …).
-		// Else resolve from node_repo / user landing ledger by host:port.
+		// Prefer stored exit_uri when it is a usable proxy share (ss:// / vless:// …).
+		// List/detail redacts secrets as ss://***@host:port — never deploy that.
+		// Else resolve full credentials from node_repo / user landing ledger.
 		shareURI := strings.TrimSpace(r.ExitURI)
-		if shareURI != "" && !proxysvc.IsProxyShareURI(shareURI) {
-			// leftover socks uri on a direct rule — ignore
+		if shareURI != "" && (isRedactedExitURI(shareURI) || !proxysvc.IsProxyShareURI(shareURI)) {
 			shareURI = ""
+		}
+		if shareURI != "" {
+			if _, err := proxysvc.BuildXrayOutboundFromShareURI(shareURI, "sk5"); err != nil {
+				if _, err2 := proxysvc.BuildSingBoxOutboundFromShareURI(shareURI, "share-out"); err2 != nil {
+					// Stored URI unusable (corrupt / partial) — fall back to warehouse.
+					log.Printf("rule %d exit_uri share unusable (%v), resolve landing", r.ID, err)
+					shareURI = ""
+				}
+			}
 		}
 		if shareURI == "" {
 			shareURI = s.resolveLandingShareURI(r)
@@ -185,6 +194,8 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 			apply.OutboundShareURI = shareURI
 		} else {
 			// No share credentials: bare TCP tunnel (only works if exit speaks raw TCP).
+			// SS/VLESS landings will be dead without warehouse URI — warn in log.
+			log.Printf("rule %d protocol plane: no share URI for %s:%d, freedom redirect only", r.ID, host, r.ExitPort)
 			apply.OutboundRedirectHost = host
 			apply.OutboundRedirectPort = r.ExitPort
 		}

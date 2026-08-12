@@ -772,10 +772,15 @@ export function ruleFormToPayload(form) {
   } else {
     // Direct + landing share (ss:// / vless:// …) for protocol-entry egress.
     // Bare host:port alone cannot speak SS — credentials go in exit_uri.
+    // List API redacts as ss://***@host:port — never re-submit that (server
+    // would store garbage and SS outbound parse fails). Prefer landing re-pick.
     const eu = String(form.exit_uri || '').trim()
-    if (eu && /^(ss|shadowsocks|vless|vmess|trojan|socks5?|hy2|hysteria2):\/\//i.test(eu)) {
+    const redacted = !eu || eu.includes(':***@') || eu.includes('://***@') || eu.includes('://***')
+    if (!redacted && /^(ss|shadowsocks|vless|vmess|trojan|socks5?|hy2|hysteria2):\/\//i.test(eu)) {
       payload.exit_uri = eu
     } else {
+      // Empty: server keeps prior secret on edit when body omits usable uri;
+      // create/update with empty + host:port still resolves from warehouse.
       payload.exit_uri = ''
     }
   }

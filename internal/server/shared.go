@@ -102,17 +102,17 @@ type ruleListItem struct {
 	// landing directly. RelayURI is populated only where the copy action is
 	// offered (detail and the user's own list). Matches against the user's own
 	// browser-local URIs happen client-side, not here.
-		ExitKind        string  `json:"exit_kind"`
-		LandingName     string  `json:"landing_name,omitempty"`
-		LandingProtocol string  `json:"landing_protocol,omitempty"`
-		LandingURI      string  `json:"landing_uri,omitempty"`
-		// LandingExpiresAt is the owner's assigned landing-exit expiry
-		// (user_landing_exits.expires_at) for this rule's exit host:port.
-		// Used by clipboard rename (`用户名-8月5日`); not node_repo warehouse expiry.
-		LandingExpiresAt int64   `json:"landing_expires_at,omitempty"`
-		RelayURI         string  `json:"relay_uri,omitempty"`
-		RateMultiplier   float64 `json:"rate_multiplier"`
-		BillingRate      float64 `json:"billing_rate"`
+	ExitKind        string `json:"exit_kind"`
+	LandingName     string `json:"landing_name,omitempty"`
+	LandingProtocol string `json:"landing_protocol,omitempty"`
+	LandingURI      string `json:"landing_uri,omitempty"`
+	// LandingExpiresAt is the owner's assigned landing-exit expiry
+	// (user_landing_exits.expires_at) for this rule's exit host:port.
+	// Used by clipboard rename (`用户名-8月5日`); not node_repo warehouse expiry.
+	LandingExpiresAt int64   `json:"landing_expires_at,omitempty"`
+	RelayURI         string  `json:"relay_uri,omitempty"`
+	RateMultiplier   float64 `json:"rate_multiplier"`
+	BillingRate      float64 `json:"billing_rate"`
 	// Chain is the flattened physical path (entry → the hop that dials the
 	// target, target excluded), with composite segments already expanded into
 	// their member nodes. Sourced from rule_hops so it reflects what is actually
@@ -404,8 +404,9 @@ func parseExitFull(exit, exitType, exitURI string) (parsedExit, error) {
 		}
 		// Optional landing share (ss:// / vless:// …) for protocol-entry egress.
 		// Bare host:port alone cannot speak SS/VLESS — credentials live in exit_uri.
+		// Never persist list-redacted values (ss://***@host:port).
 		pe := parsedExit{Type: "direct", Host: host, Port: port}
-		if exitURI != "" && proxysvc.IsProxyShareURI(exitURI) {
+		if exitURI != "" && !isRedactedExitURI(exitURI) && proxysvc.IsProxyShareURI(exitURI) {
 			pe.URI = strings.TrimSpace(exitURI)
 		}
 		return pe, nil
@@ -534,6 +535,23 @@ func redactedExitURI(uri string) string {
 		return "***"
 	}
 	return "***"
+}
+
+// preserveShareExitURI keeps a previously stored landing share (ss:// / vless:// …)
+// when the client edit cleared exit_uri (list redaction stripped on FE) but the
+// exit host:port is unchanged. Switching landing IP clears the old share.
+func preserveShareExitURI(pe parsedExit, rl *db.Rule) parsedExit {
+	if pe.Type != "direct" || pe.URI != "" || rl == nil {
+		return pe
+	}
+	prev := strings.TrimSpace(rl.ExitURI)
+	if prev == "" || isRedactedExitURI(prev) || !proxysvc.IsProxyShareURI(prev) {
+		return pe
+	}
+	if pe.Host == rl.ExitHost && pe.Port == rl.ExitPort {
+		pe.URI = prev
+	}
+	return pe
 }
 
 // isRedactedExitURI reports whether the client re-submitted a list/detail
