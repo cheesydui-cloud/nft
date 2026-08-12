@@ -452,6 +452,7 @@ export default function UserDetail() {
           allNodes={all_nodes}
           allUsers={allUsers}
           userSpeedLimitMBytes={user.speed_limit_mbytes || 0}
+          proxyNodeIds={data?.proxy_node_ids || []}
           onDone={load}
           embedded
         />
@@ -613,6 +614,7 @@ export default function UserDetail() {
         landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={{ owner_id: Number(id) }}
+        proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           await api.post('/rules', payload)
@@ -631,6 +633,7 @@ export default function UserDetail() {
         landingNodes={ruleFormLandingNodes.length ? ruleFormLandingNodes : undefined}
         bindings={bindings}
         initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
+        proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           await api.put(`/rules/${editRule.id}`, payload)

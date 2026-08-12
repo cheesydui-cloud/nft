@@ -41,10 +41,11 @@ type ProxyService struct {
 	CreatedAt  int64           `json:"created_at"`
 	UpdatedAt  int64           `json:"updated_at"`
 	// Filled by list/detail APIs, not always loaded from DB.
-	InstanceCount int                     `json:"instance_count,omitempty"`
-	ReadyCount    int                     `json:"ready_count,omitempty"`
-	Instances     []*ProxyServiceInstance `json:"instances,omitempty"`
-}
+		InstanceCount    int                     `json:"instance_count,omitempty"`
+		ReadyCount       int                     `json:"ready_count,omitempty"`
+		DeployedNodeIDs  []int64                 `json:"deployed_node_ids,omitempty"`
+		Instances        []*ProxyServiceInstance `json:"instances,omitempty"`
+	}
 
 // ProxyServiceInstance is one deployment of a service onto a line node.
 type ProxyServiceInstance struct {
@@ -290,6 +291,24 @@ func GetProxyService(d *sql.DB, id int64) (*ProxyService, error) {
 	return scanProxyService(row)
 }
 
+// ListDeployedProxyNodeIDs returns distinct node_ids that host any proxy_service instance.
+func ListDeployedProxyNodeIDs(d *sql.DB) ([]int64, error) {
+	rows, err := d.Query(`SELECT DISTINCT node_id FROM proxy_service_instances WHERE node_id > 0 ORDER BY node_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ListProxyServices returns all services with instance counts.
 func ListProxyServices(d *sql.DB) ([]*ProxyService, error) {
 	rows, err := d.Query(`SELECT ` + proxyServiceCols + ` FROM proxy_services ORDER BY id DESC`)
@@ -308,12 +327,26 @@ func ListProxyServices(d *sql.DB) ([]*ProxyService, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, s := range out {
-		_ = d.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN deploy_status='ready' THEN 1 ELSE 0 END),0)
-			FROM proxy_service_instances WHERE service_id=?`, s.ID).Scan(&s.InstanceCount, &s.ReadyCount)
+		for _, s := range out {
+			_ = d.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN deploy_status='ready' THEN 1 ELSE 0 END),0)
+				FROM proxy_service_instances WHERE service_id=?`, s.ID).Scan(&s.InstanceCount, &s.ReadyCount)
+			rows2, err := d.Query(`SELECT DISTINCT node_id FROM proxy_service_instances WHERE service_id=? AND node_id > 0 ORDER BY node_id`, s.ID)
+			if err != nil {
+				continue
+			}
+			var ids []int64
+			for rows2.Next() {
+				var nid int64
+				if err := rows2.Scan(&nid); err != nil {
+					continue
+				}
+				ids = append(ids, nid)
+			}
+			_ = rows2.Close()
+			s.DeployedNodeIDs = ids
+		}
+		return out, nil
 	}
-	return out, nil
-}
 
 // DeleteProxyService removes the service and its instances (FK cascade).
 func DeleteProxyService(d *sql.DB, id int64) error {

@@ -116,21 +116,21 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 		var agentVersion, agentArch sql.NullString
 		var ownerID sql.NullInt64
 		var luVersion, luStatus, luError sql.NullString
-		if err := rows.Scan(
-			&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
-			&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
-			&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
-			&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
-			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
-			&n.SortOrder, &n.RateMultiplier, &unidirectional,
-			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
-			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
-			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
-			&agentArch,
-			&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
-		); err != nil {
-			return nil, nil, err
-		}
+			if err := rows.Scan(
+				&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
+				&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
+				&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
+				&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
+				&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
+				&n.SortOrder, &n.RateMultiplier, &unidirectional,
+				&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+				&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+				&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+				&agentArch, &n.ListGroup,
+				&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
+			); err != nil {
+				return nil, nil, err
+			}
 		n.LastUpgradeVersion = luVersion.String
 		n.LastUpgradeStatus = luStatus.String
 		n.LastUpgradeError = luError.String

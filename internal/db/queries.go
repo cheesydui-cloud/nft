@@ -115,10 +115,13 @@ type Node struct {
 	CFSync       bool   `json:"cf_sync"`
 	CFZoneID     string `json:"cf_zone_id"`
 	CFRecordName string `json:"cf_record_name"`
-	CFLastSyncAt int64  `json:"cf_last_sync_at"`
-	CFLastError  string `json:"cf_last_error"`
-	CFLastIP     string `json:"cf_last_ip"`
-}
+		CFLastSyncAt int64  `json:"cf_last_sync_at"`
+		CFLastError  string `json:"cf_last_error"`
+		CFLastIP     string `json:"cf_last_ip"`
+		// ListGroup is the admin node-list bucket. Empty = default (单点/组合 by
+		// node_type). "landing" = 落地 tab only (manual move in/out).
+		ListGroup string `json:"list_group"`
+	}
 
 // NodeChildHop is one member of a composite node's chain, resolved to its
 // physical child node's name and type for display. Mode is the segment mode the
@@ -455,7 +458,7 @@ func ResetNodeSecret(d *sql.DB, id int64) (string, error) {
 
 // NOTE: scanNode and the inline scan in grants.go (ListNodesForUser) read these
 // columns in this exact order — keep all three in lockstep when adding a column.
-const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip,agent_arch`
+const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip,agent_arch,COALESCE(list_group,'')`
 
 func GetNode(d *sql.DB, id int64) (*Node, error) {
 	row := d.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id)
@@ -472,19 +475,19 @@ func scanNode(r rowScanner) (*Node, error) {
 	var ownerID sql.NullInt64
 	var luVersion, luStatus, luError sql.NullString
 	if err := r.Scan(
-		&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
-		&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
-		&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
-		&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
-		&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
-		&n.SortOrder, &n.RateMultiplier, &unidirectional,
-		&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
-		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
-		&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
-		&agentArch,
-	); err != nil {
-		return nil, err
-	}
+			&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
+			&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
+			&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
+			&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
+			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
+			&n.SortOrder, &n.RateMultiplier, &unidirectional,
+			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+			&agentArch, &n.ListGroup,
+		); err != nil {
+			return nil, err
+		}
 	n.Disabled = disabled == 1
 	n.Unidirectional = unidirectional == 1
 	n.NoDirectExit = noDirectExit == 1
@@ -547,6 +550,32 @@ func SetNodeCFSyncResult(d *sql.DB, id int64, ok bool, ip, errMsg string) error 
 
 func ListNodes(d *sql.DB) ([]*Node, error) {
 	return queryAll(d, `SELECT `+nodeCols+` FROM nodes ORDER BY sort_order, id`, scanNode)
+}
+
+// SetNodeListGroupBatch sets nodes.list_group for many nodes.
+// group "" = default (单点/组合); "landing" = 落地 tab.
+func SetNodeListGroupBatch(d *sql.DB, ids []int64, group string) error {
+	group = strings.TrimSpace(group)
+	if group != "" && group != "landing" {
+		return fmt.Errorf("unsupported list_group %q", group)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE nodes SET list_group=? WHERE id=?`, group, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ReorderNodes assigns sort_order to match the given id sequence (1-based).

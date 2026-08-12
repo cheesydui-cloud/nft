@@ -186,6 +186,7 @@ export default function MyRules() {
         submitLabel="创建"
         variant={createVariant}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate} showStack={false}
+        proxyNodeIds={data?.proxy_node_ids || []}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))
           toast('规则已创建'); setCreateOpen(false)

@@ -4,6 +4,7 @@ import { api } from '../../lib/api'
 import { fmtTime, fmtBytes, nullStr } from '../../lib/fmt'
 import { useSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { useIsMobile } from '../../lib/useIsMobile'
+import { partitionRouteNodes, isLandingListGroup } from '../../lib/routeNodes'
 import { Layout, useToast } from '../../components/Layout'
 import { Loading, Empty, Badge, Modal, Confirm, NodeStackBadge, NodeBillingBadges, useConfirm, Select, CopyText } from '../../components/ui'
 import { PageHeader, Panel, PanelToolbar, SearchInput, ToolbarButton, ToolbarActions, TableScroll } from '../../components/page'
@@ -14,13 +15,13 @@ export default function NodeList() {
   const [error, setError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [showComposite, setShowComposite] = useState(false)
-  // 搜索词与角色过滤存 sessionStorage：进详情返回后过滤还在，但不像 tab 那样
-  // 跨会话记住——隔天打开还带着旧搜索词会让列表看起来莫名缺节点。
+  // 搜索词存 sessionStorage：进详情返回后过滤还在，但不像 tab 那样跨会话记住。
   const [search, setSearch] = useState(() => sessionStorage.getItem('nodes.search') || '')
-  // 角色过滤位掩码，与 nodes.roles 同构（bit0 入口 / bit1 中间层）；0 表示不过滤，
-  // 选中多个时要求同时具备（用于收窄，而非并集）。
-  const [roleMask, setRoleMask] = useState(() => Number(sessionStorage.getItem('nodes.roleMask')) || 0)
-  const [tab, setTab] = useState(() => localStorage.getItem('nodes.tab') || 'single')
+  const [tab, setTab] = useState(() => {
+    const t = localStorage.getItem('nodes.tab') || 'single'
+    return t === 'landing' || t === 'composite' ? t : 'single'
+  })
+  const [selected, setSelected] = useState(new Set())
   const [dragIndex, setDragIndex] = useState(null)
   const speeds = useSpeed()
   const isMobile = useIsMobile()
@@ -36,7 +37,7 @@ export default function NodeList() {
 
   useEffect(() => { localStorage.setItem('nodes.tab', tab) }, [tab])
   useEffect(() => { sessionStorage.setItem('nodes.search', search) }, [search])
-  useEffect(() => { sessionStorage.setItem('nodes.roleMask', String(roleMask)) }, [roleMask])
+  useEffect(() => { setSelected(new Set()) }, [tab])
 
   const load = () => {
     setLoading(true)
@@ -82,19 +83,17 @@ export default function NodeList() {
     if (n.agent_version === 'latest') return false
     return n.agent_version && n.agent_version !== latest_agent_version
   }
-  const singleNodes = nodes.filter(n => n.node_type !== 'composite')
-  const compositeNodes = nodes.filter(n => n.node_type === 'composite')
-  const tabNodes = tab === 'composite' ? compositeNodes : singleNodes
+  const { single: singleNodes, composite: compositeNodes, landing: landingNodes } = partitionRouteNodes(nodes)
+  const tabNodes = tab === 'composite' ? compositeNodes : tab === 'landing' ? landingNodes : singleNodes
   const q = search.trim().toLowerCase()
-  const roleFiltered = !roleMask ? tabNodes : tabNodes.filter(n => ((n.roles ?? 1) & roleMask) === roleMask)
-  const filtered0 = !q ? roleFiltered : roleFiltered.filter(n => (n.name || '').toLowerCase().includes(q))
+  const filtered0 = !q ? tabNodes : tabNodes.filter(n => (n.name || '').toLowerCase().includes(q))
 
-  // 「原始流量」列只在单点 tab 渲染：带着它的排序切去组合 tab，排序仍生效却
-  // 无处显示、无法取消，还会静默禁用拖拽调序——切走时清掉这个不可见排序。
+  // 「原始流量」列只在单点 tab 渲染：带着它的排序切去组合/落地 tab 时清掉。
   const switchTab = (key) => {
     setTab(key)
-    if (key === 'composite') setSort(s => s.col === 'rawtraffic' ? { col: null, dir: null } : s)
+    if (key !== 'single') setSort(s => s.col === 'rawtraffic' ? { col: null, dir: null } : s)
   }
+
   const cycleSort = (col) => {
     setSort(s => {
       if (col === 'speed') setSpeedSnap({ ...speeds })
@@ -117,15 +116,44 @@ export default function NodeList() {
     }
     return sort.dir === 'asc' ? d : -d
   })
+  const toggleOne = (id) => setSelected(s => {
+    const next = new Set(s)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  const toggleAll = () => {
+    const allIds = filtered.map(n => n.id)
+    const allSelected = allIds.length > 0 && allIds.every(id => selected.has(id))
+    if (allSelected) setSelected(s => { const next = new Set(s); allIds.forEach(id => next.delete(id)); return next })
+    else setSelected(s => { const next = new Set(s); allIds.forEach(id => next.add(id)); return next })
+  }
+  const batchListGroup = async (listGroup) => {
+    const ids = [...selected]
+    if (!ids.length) return
+    try {
+      await api.post('/nodes/batch-list-group', { ids, list_group: listGroup || '' })
+      toast(listGroup === 'landing' ? `已移入「落地」(${ids.length})` : `已移回「单点/组合」(${ids.length})`)
+      setSelected(new Set())
+      load()
+    } catch (err) { toast(err.message, 'error') }
+  }
   // 任何过滤/排序生效时都不能拖拽调序：saveOrder 以可见列表为全量重建顺序，
   // 子集视图下会把被过滤掉的节点从顺序里丢掉。
-  const draggable = !sort.col && !q && !roleMask
+  const draggable = !sort.col && !q
   const saveOrder = async (visibleList) => {
-    const otherIds = (tab === 'composite' ? singleNodes : compositeNodes).map(n => n.id)
     const tabIds = visibleList.map(n => n.id)
-    const allIds = tab === 'composite' ? [...otherIds, ...tabIds] : [...tabIds, ...otherIds]
+    const tabSet = new Set(tabIds)
+    const rest = nodes.filter(n => !tabSet.has(n.id)).map(n => n.id)
+    let allIds
+    if (tab === 'single') {
+      allIds = [...tabIds, ...rest]
+    } else if (tab === 'composite') {
+      allIds = [...singleNodes.map(n => n.id), ...tabIds, ...landingNodes.map(n => n.id)]
+    } else {
+      allIds = [...rest, ...tabIds]
+    }
     const byId = Object.fromEntries(nodes.map(n => [n.id, n]))
-    setData(d => ({ ...d, nodes: allIds.map(id => byId[id]) }))
+    setData(d => ({ ...d, nodes: allIds.map(id => byId[id]).filter(Boolean) }))
     try { await api.post('/nodes/reorder', { ids: allIds }); toast('顺序已保存') } catch (err) { toast(err.message, 'error'); load() }
   }
   const onDrop = async (toIndex) => {
@@ -189,35 +217,52 @@ export default function NodeList() {
           </ToolbarActions>
         </PanelToolbar>
         <div className="flex items-center flex-wrap gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
-          {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
+          {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length], ['landing', '落地', landingNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => switchTab(key)}
               className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
-          <span className="ml-3 text-xs text-ink-mut select-none">角色</span>
-          {[[1, '入口'], [2, '中间层']].map(([bit, label]) => (
-            <button key={bit} onClick={() => setRoleMask(m => m ^ bit)}
-              title="按节点角色筛选，可叠加（同时选中表示需兼具两种角色）；不选则显示全部"
-              className={`chip-btn ${(roleMask & bit) !== 0 ? 'is-active' : ''}`}>{label}</button>
-          ))}
+          {selected.size > 0 && (
+            <div className="ml-auto flex items-center gap-1.5">
+              {tab === 'landing' ? (
+                <button type="button" onClick={() => batchListGroup('')}
+                  className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">
+                  移回单点/组合 ({selected.size})
+                </button>
+              ) : (
+                <button type="button" onClick={() => batchListGroup('landing')}
+                  className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">
+                  移入落地 ({selected.size})
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <TableScroll>
         {nodes.length === 0 ? (
           <Empty title="尚未注册任何节点" desc="点击右上角「添加节点」创建。" />
         ) : tabNodes.length === 0 ? (
-          <Empty title={tab === 'composite' ? '暂无组合节点' : '暂无单点节点'} desc={tab === 'composite' ? '点击右上角「组合节点」创建。' : '点击右上角「添加节点」创建。'} />
+          <Empty
+            title={tab === 'composite' ? '暂无组合节点' : tab === 'landing' ? '暂无落地节点' : '暂无单点节点'}
+            desc={tab === 'composite' ? '点击右上角「组合节点」创建。' : tab === 'landing' ? '在「单点」或「组合」勾选节点后点「移入落地」。' : '点击右上角「添加节点」创建。'}
+          />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配节点" desc={roleMask ? '试试别的关键词，或取消上方的角色筛选。' : '试试别的关键词。'} />
+          <Empty title="无匹配节点" desc="试试别的关键词。" />
         ) : (<>
           {/* Desktop table */}
           {!isMobile && <div ref={listRef} className="relative">
           <table className="tbl">
             <thead><tr>
+              <th className="w-8">
+                <input type="checkbox" className="accent-emerald-600"
+                  checked={filtered.length > 0 && filtered.every(n => selected.has(n.id))}
+                  onChange={toggleAll} />
+              </th>
               <th className="w-14">ID</th><th>名称</th><th>IP 栈</th><th>版本</th><th>最近同步</th><th>状态</th>
               <th className="cursor-pointer select-none" onClick={() => cycleSort('traffic')}
                 title="按授权记账的当期用量：单向计费节点只计上行，随用户流量周期重置清零">
                 <span className="inline-flex items-center">流量<SortArrow col="traffic" sort={sort} /></span>
               </th>
-              {tab !== 'composite' && <th className="cursor-pointer select-none" onClick={() => cycleSort('rawtraffic')}
+              {tab === 'single' && <th className="cursor-pointer select-none" onClick={() => cycleSort('rawtraffic')}
                 title="节点实际转发的累计字节（上行+下行），不乘倍率、不随重置清零">
                 <span className="inline-flex items-center">原始流量<SortArrow col="rawtraffic" sort={sort} /></span>
               </th>}
@@ -235,7 +280,10 @@ export default function NodeList() {
                   onPointerMove={onPinMove}
                   onPointerUp={onPinUp}
                   onClick={() => { if (!pinClickGuard.current) navigate(`/nodes/${n.id}`) }}
-                  className={`cursor-pointer ${dragIndex === i ? 'opacity-50' : ''} ${pinMode?.idx === i ? 'opacity-40' : ''}`}>
+                  className={`cursor-pointer ${dragIndex === i ? 'opacity-50' : ''} ${pinMode?.idx === i ? 'opacity-40' : ''} ${selected.has(n.id) ? 'bg-emerald-50/40 dark:bg-emerald-900/10' : ''}`}>
+                  <td onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} />
+                  </td>
                   <td className="font-mono text-xs text-ink-mut">
                     {draggable && <span className="text-ink-mut mr-1 select-none cursor-move" title="拖拽排序"
                       draggable onDragStart={() => setDragIndex(i)}>⠿</span>}#{n.id}
@@ -244,7 +292,7 @@ export default function NodeList() {
                     <span className="inline-flex items-center gap-2 font-semibold text-emerald-600">
                       <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]' : 'bg-gray-400 shadow-[0_0_0_3px_rgba(154,163,176,0.16)]'}`} />
                       {n.name}
-                      {(n.roles & 2) !== 0 && <Badge color="blue">中间层</Badge>}
+                      {isLandingListGroup(n) && <Badge color="amber">落地</Badge>}
                       <NodeBillingBadges node={n} />
                     </span>
                   </td>
@@ -261,7 +309,7 @@ export default function NodeList() {
                   </td>
                   <td><NodeStatus node={n} /></td>
                   <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_traffic[n.id] || 0)}</td>
-                  {tab !== 'composite' && <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_raw_traffic[n.id] || 0)}</td>}
+                  {tab === 'single' && <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_raw_traffic[n.id] || 0)}</td>}
                   <td className="font-mono text-xs whitespace-nowrap min-w-[170px]">
                     {speeds[n.id] ? (
                       <>
@@ -300,16 +348,20 @@ export default function NodeList() {
           {/* Mobile cards */}
           {isMobile && <div>
             {filtered.map(n => (
-              <Link key={n.id} to={`/nodes/${n.id}`} className="mobile-card block no-underline text-ink">
-                <div className="flex items-center justify-between mb-1">
+              <div key={n.id} className="mobile-card">
+                <div className="flex items-center gap-2 mb-1">
+                  <input type="checkbox" className="accent-emerald-600 flex-none" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} />
+                  <Link to={`/nodes/${n.id}`} className="flex-1 min-w-0 flex items-center justify-between no-underline text-ink">
                   <span className="inline-flex items-center gap-2 font-semibold text-emerald-600 flex-wrap">
                     <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500' : 'bg-gray-400'}`} />
                     {n.name}
-                    {(n.roles & 2) !== 0 && <Badge color="blue">中间层</Badge>}
+                    {isLandingListGroup(n) && <Badge color="amber">落地</Badge>}
                     <NodeBillingBadges node={n} />
                   </span>
                   <NodeStatus node={n} />
+                  </Link>
                 </div>
+                <Link to={`/nodes/${n.id}`} className="block no-underline text-ink">
                 <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
                   <span className="font-mono text-ink-mut">{fmtBytes(node_traffic[n.id] || 0)}</span>
                   {n.node_type !== 'composite' && <>
@@ -322,7 +374,8 @@ export default function NodeList() {
                     <span className="font-mono text-emerald-600">↓{fmtSpeed(speeds[n.id].down)}</span>
                   </>}
                 </div>
-              </Link>
+                </Link>
+              </div>
             ))}
           </div>}
         </>)}

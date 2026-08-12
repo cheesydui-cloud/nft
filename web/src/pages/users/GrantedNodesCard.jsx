@@ -167,7 +167,7 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
-function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
+function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, onDone }) {
   const [nodeIds, setNodeIds] = useState([])
   const [max, setMax] = useState('10')
   const [loading, setLoading] = useState(false)
@@ -177,6 +177,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
   const grantedIds = new Set((grantedNodes || []).map(n => n.id))
   const available = allNodes.filter(n => !grantedIds.has(n.id))
   if (!available.length) return <div className="text-xs text-ink-mut">所有节点均已授权</div>
+  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
 
   const submit = async (e) => {
     e.preventDefault()
@@ -199,6 +200,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
             groups={[
               { label: '单点', options: available.filter(n => n.node_type !== 'composite').map(n => ({ value: n.id, label: n.name })) },
               { label: '组合', options: available.filter(n => n.node_type === 'composite').map(n => ({ value: n.id, label: n.name })) },
+              { label: '代理', options: available.filter(n => proxyIds.has(Number(n.id))).map(n => ({ value: n.id, label: n.name })) },
             ]} />
         </div>
         <button type="submit" disabled={loading} className="btn-primary text-xs">授权</button>
@@ -207,7 +209,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, onDone }) {
   )
 }
 
-function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeedLimitMBytes, onDone, embedded = false }) {
+function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeedLimitMBytes, proxyNodeIds = [], onDone, embedded = false }) {
   const [tab, setTab] = useState('single')
   const [selected, setSelected] = useState(new Set())
   const [revoking, setRevoking] = useState(false)
@@ -215,9 +217,11 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
   const toast = useToast()
   const confirm = useConfirm()
 
+  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
   const singleNodes = nodes.filter(n => n.node_type !== 'composite')
   const compositeNodes = nodes.filter(n => n.node_type === 'composite')
-  const tabNodes = tab === 'composite' ? compositeNodes : singleNodes
+  const proxyNodes = nodes.filter(n => proxyIds.has(Number(n.id)))
+  const tabNodes = tab === 'composite' ? compositeNodes : tab === 'proxy' ? proxyNodes : singleNodes
   const grantByNode = {}
   nodes.forEach((n, i) => { grantByNode[n.id] = grants[i] })
 
@@ -278,7 +282,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
       <div className={embedded ? 'detail-panel-header' : 'card-header'}>
         <div className="min-w-0">
           <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>已授权线路</h3>
-          {embedded && <div className="detail-panel-sub">{nodes.length} 条线路 · 单点/组合配额与限速</div>}
+          {embedded && <div className="detail-panel-sub">{nodes.length} 条线路 · 单点/组合/代理配额与限速</div>}
         </div>
         <div className="flex items-center gap-1.5 ml-auto">
           {nodes.length > 0 && <button onClick={copyGrants} className="btn-secondary text-xs">复制授权</button>}
@@ -287,7 +291,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
       </div>
       {nodes.length > 0 && (
         <div className="flex items-center gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
-          {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length]].map(([key, label, n]) => (
+          {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length], ['proxy', '代理', proxyNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => { setTab(key); setSelected(new Set()) }}
               className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
@@ -344,12 +348,12 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         </table>
         </TableBox>
       ) : nodes.length > 0 ? (
-        <Empty title={tab === 'composite' ? '暂无已授权的组合线路' : '暂无已授权的单点线路'} />
+        <Empty title={tab === 'composite' ? '暂无已授权的组合线路' : tab === 'proxy' ? '暂无已授权的代理线路' : '暂无已授权的单点线路'} />
       ) : (
         <Empty title="尚未授权任何线路" />
       )}
       <div className="p-5 border-t border-line-soft">
-        <GrantNodeForm userId={userId} allNodes={allNodes} grantedNodes={nodes} onDone={onDone} />
+        <GrantNodeForm userId={userId} allNodes={allNodes} grantedNodes={nodes} proxyNodeIds={proxyIds} onDone={onDone} />
       </div>
       {showPaste && <PasteGrantsModal open={showPaste} onClose={() => setShowPaste(false)} onDone={onDone}
         allNodes={allNodes} allUsers={allUsers} preSelectedUserIds={[Number(userId)]} />}

@@ -197,7 +197,7 @@ export function Layout({ children }) {
                   ) : null}
                 </NavGroup>
                 <NavGroup label="节点管理">
-                  <SideLink to="/nodes" icon={<IconNodes />}>线路节点</SideLink>
+                  <SideLink to="/nodes" icon={<IconNodes />}>节点管理</SideLink>
                   <SideLink to="/proxy-services" icon={<IconProxy />}>代理服务</SideLink>
                   <SideLink to="/rules" icon={<IconForwards />}>代理转发</SideLink>
                 </NavGroup>

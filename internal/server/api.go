@@ -1905,23 +1905,43 @@ func (s *Server) apiUpdateNodeOwner(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiReorderNodes persists the manual node display order from a drag-and-drop
-// reorder in the admin node list.
-func (s *Server) apiReorderNodes(w http.ResponseWriter, r *http.Request) {
-	u := userFromCtx(r.Context())
-	var body struct {
-		IDs []int64 `json:"ids"`
+	// reorder in the admin node list.
+	func (s *Server) apiReorderNodes(w http.ResponseWriter, r *http.Request) {
+		u := userFromCtx(r.Context())
+		var body struct {
+			IDs []int64 `json:"ids"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
+			return
+		}
+		if err := db.ReorderNodes(s.DB, body.IDs); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "node.reorder", "", "")
+		jsonOK(w, map[string]any{"ok": true})
 	}
-	if err := decodeJSON(r, &body); err != nil {
-		jsonErr(w, http.StatusBadRequest, "请求格式错误")
-		return
+
+	// apiBatchSetNodeListGroup moves nodes into the 落地 bucket (list_group=landing)
+	// or back to the default 单点/组合 view (list_group empty).
+	func (s *Server) apiBatchSetNodeListGroup(w http.ResponseWriter, r *http.Request) {
+		u := userFromCtx(r.Context())
+		var body struct {
+			IDs       []int64 `json:"ids"`
+			ListGroup string  `json:"list_group"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "请求格式错误")
+			return
+		}
+		if err := db.SetNodeListGroupBatch(s.DB, body.IDs, body.ListGroup); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "node.list_group", strings.TrimSpace(body.ListGroup), strconv.Itoa(len(body.IDs)))
+		jsonOK(w, map[string]any{"ok": true})
 	}
-	if err := db.ReorderNodes(s.DB, body.IDs); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	db.WriteAudit(s.DB, u.ID, "node.reorder", "", "")
-	jsonOK(w, map[string]any{"ok": true})
-}
 
 func (s *Server) apiResyncAllNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := db.ListNodes(s.DB)
@@ -2261,9 +2281,13 @@ func (s *Server) apiListRules(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, item)
 	}
-	s.fillRuleChains(views, nodeByID)
-	jsonOK(w, map[string]any{"rules": views, "nodes": nodes, "users": userList})
-}
+		s.fillRuleChains(views, nodeByID)
+		proxyNodeIDs, _ := db.ListDeployedProxyNodeIDs(s.DB)
+		if proxyNodeIDs == nil {
+			proxyNodeIDs = []int64{}
+		}
+		jsonOK(w, map[string]any{"rules": views, "nodes": nodes, "users": userList, "proxy_node_ids": proxyNodeIDs})
+	}
 
 func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
@@ -2955,6 +2979,10 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	// Billable view is raw × billing_rate on the client.
 	todayRaw, _ := db.TodayUserTrafficBytes(s.DB, id)
 	yesterdayRaw, _ := db.YesterdayUserTrafficBytes(s.DB, id)
+	proxyNodeIDs, _ := db.ListDeployedProxyNodeIDs(s.DB)
+	if proxyNodeIDs == nil {
+		proxyNodeIDs = []int64{}
+	}
 	jsonOK(w, map[string]any{
 		"user": apiUserFullView(target), "nodes": grantedNodes,
 		"grants": grants, "all_nodes": allNodes,
@@ -2964,6 +2992,7 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 		"today_day":           db.DayKeyNow(),
 		"yesterday_raw_bytes": yesterdayRaw,
 		"yesterday_day":       db.DayKeyYesterday(),
+		"proxy_node_ids":      proxyNodeIDs,
 	})
 }
 
@@ -3538,13 +3567,18 @@ func (s *Server) apiMyListRules(w http.ResponseWriter, r *http.Request) {
 			edges = append(edges, e)
 		}
 	}
-	showRate, _ := db.GetSetting(s.DB, "show_rate_to_user")
-	jsonOK(w, map[string]any{
-		"rules": views, "nodes": grantedNodes,
-		"node_by_id": grantedByID, "show_rate": showRate == "1",
-		"bindings": edges,
-	})
-}
+		showRate, _ := db.GetSetting(s.DB, "show_rate_to_user")
+		proxyNodeIDs, _ := db.ListDeployedProxyNodeIDs(s.DB)
+		if proxyNodeIDs == nil {
+			proxyNodeIDs = []int64{}
+		}
+		jsonOK(w, map[string]any{
+			"rules": views, "nodes": grantedNodes,
+			"node_by_id": grantedByID, "show_rate": showRate == "1",
+			"bindings": edges,
+			"proxy_node_ids": proxyNodeIDs,
+		})
+	}
 
 func (s *Server) apiMyGetRule(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())

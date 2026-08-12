@@ -705,6 +705,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/toggle", s.apiToggleNode)
 			r.Post("/nodes/{id}/owner", s.apiUpdateNodeOwner)
 			r.Post("/nodes/reorder", s.apiReorderNodes)
+			r.Post("/nodes/batch-list-group", s.apiBatchSetNodeListGroup)
 			r.Post("/nodes/resync-all", s.apiResyncAllNodes)
 			r.Post("/nodes/upgrade-all", s.apiUpgradeAllNodes)
 			r.Post("/nodes/{id}/rate-multiplier", s.apiSetNodeRateMultiplier)

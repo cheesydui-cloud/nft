@@ -29,12 +29,17 @@ const EMPTY = {
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant, proxyNodeIds }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
+  // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
+  const [localVariant, setLocalVariant] = useState(variant === 'chain' ? 'chain' : 'port')
   const toast = useToast()
 
   const landingEnabled = Array.isArray(landingNodes)
+  const effectiveVariant = variant === 'port' || variant === 'chain' ? variant : localVariant
+  const allowTypeSwitch = variant !== 'port' && variant !== 'chain'
+  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set(proxyNodeIds || [])
 
   useEffect(() => {
     if (!open) return
@@ -50,9 +55,33 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
       seed.exit_kind = 'landing'
     }
     setForm(seed)
+    if (allowTypeSwitch) {
+      // Prefill chain when editing a chain-like rule; default create to port.
+      const looksChain = (seed.via_node_ids || []).length > 0
+        || nodes.find(n => String(n.id) === String(seed.node_id))?.node_type === 'composite'
+        || seed.exit_type === 'socks5'
+      setLocalVariant(looksChain ? 'chain' : 'port')
+    }
   }, [open])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const switchLocalVariant = (next) => {
+    if (next === localVariant) return
+    setLocalVariant(next)
+    setForm(f => {
+      const n = nodes.find(x => String(x.id) === String(f.node_id))
+      let node_id = f.node_id
+      if (next === 'port' && n?.node_type === 'composite') node_id = ''
+      return {
+        ...f,
+        node_id,
+        via_node_ids: next === 'port' ? [] : f.via_node_ids,
+        exit_type: next === 'port' ? 'direct' : f.exit_type,
+        exit_uri: next === 'port' ? '' : f.exit_uri,
+      }
+    })
+  }
 
   // Switching the entry invalidates any chosen middle-layer chain — the
   // binding graph downstream of the old entry has nothing to do with the
@@ -83,8 +112,8 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     toast(`已识别 ${node.protocol} 代理并保存`)
   }
 
-  const isPort = variant === 'port'
-  const isChain = variant === 'chain'
+  const isPort = effectiveVariant === 'port'
+  const isChain = effectiveVariant === 'chain'
   const isSocks = isChain && form.exit_type === 'socks5'
 
   const submit = async (e) => {
@@ -154,18 +183,20 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // reported by a server that predates the roles column) default to entry,
   // so old deployments keep working until an admin explicitly narrows roles.
   const entryNodes = nodes.filter(n => ((n.roles ?? 1) & 1) !== 0)
-  // Port variant: only single (non-composite) entry nodes.
-  const entryPool = isPort
-    ? entryNodes.filter(n => n.node_type !== 'composite')
-    : entryNodes
-  // Admin: tabbed single/composite groups. User: one flat list of all lines.
-  // Port variant never shows the composite tab.
-  const entryOptions = entryPool.map(nodeOption)
-  const groups = (showStack === false || isPort)
-    ? null
+  // Tabbed groups: 单点 [+ 组合 for chain] + 代理 (proxy-service deployed nodes).
+  // Port variant never shows the composite tab; proxy tab still filters composites out for port.
+  const singleOpts = entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption)
+  const compositeOpts = entryNodes.filter(n => n.node_type === 'composite').map(nodeOption)
+  const proxyOpts = entryNodes.filter(n => proxyIds.has(Number(n.id)) && (isPort ? n.node_type !== 'composite' : true)).map(nodeOption)
+  const groups = isPort
+    ? [
+        { label: '单点', options: singleOpts },
+        { label: '代理', options: proxyOpts },
+      ]
     : [
-        { label: '单点', options: entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption) },
-        { label: '组合', options: entryNodes.filter(n => n.node_type === 'composite').map(nodeOption) },
+        { label: '单点', options: singleOpts },
+        { label: '组合', options: compositeOpts },
+        { label: '代理', options: proxyOpts },
       ]
 
   // Show protocol + node remark only — the real connection address is hidden
@@ -251,6 +282,17 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <form onSubmit={submit} className="space-y-[22px]">
+        {allowTypeSwitch && (
+          <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
+            <label className="fl">规则类型</label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {[['port', '端口转发'], ['chain', '链式转发']].map(([key, label]) => (
+                <button key={key} type="button" onClick={() => switchLocalVariant(key)}
+                  className={`chip-btn ${localVariant === key ? 'is-active' : ''}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
           <label className="fl">选择线路</label>
           <Select
@@ -258,9 +300,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             onChange={pickEntry}
             placeholder="-- 选择节点 --"
             searchable
-            tabs={showStack !== false}
-            groups={groups || undefined}
-            options={groups ? undefined : entryOptions}
+            tabs
+            groups={groups}
+            options={undefined}
           />
           {!isPort && viaLevels.map(({ level, cands, chosen, mustVia }) => (
             <Fragment key={level}>
