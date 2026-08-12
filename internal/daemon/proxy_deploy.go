@@ -89,7 +89,15 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 		_ = os.Remove(keyPath)
 	}
 
-	cfgBytes, err := proxysvc.BuildXrayVLESSConfig(port, buildCfg)
+	var socks *proxysvc.OutboundSOCKS
+	if uri := strings.TrimSpace(req.OutboundSocks); uri != "" {
+		socks = &proxysvc.OutboundSOCKS{
+			URI:          uri,
+			RedirectHost: strings.TrimSpace(req.OutboundRedirectHost),
+			RedirectPort: req.OutboundRedirectPort,
+		}
+	}
+	cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
 	if err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
 	}

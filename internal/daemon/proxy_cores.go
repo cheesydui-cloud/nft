@@ -397,3 +397,31 @@ func extractUsefulCoreErr(s string) string {
 	}
 	return strings.Join(nonEmpty[start:], " | ")
 }
+
+// handleProxyServiceStop stops a core instance previously started by apply.
+// Used for rule-scoped VLESS+SK5 planes (instance id = synthetic rule id space).
+func handleProxyServiceStop(req wsproto.ProxyServiceStop) wsproto.ProxyServiceStopAck {
+	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
+	core := strings.ToLower(strings.TrimSpace(req.Core))
+	if req.InstanceID <= 0 {
+		return wsproto.ProxyServiceStopAck{OK: false, Error: "instance_id 无效"}
+	}
+	// Map protocol/core → state subdir (same layout as deploy).
+	dirName := ""
+	switch {
+	case proto == "vless" || core == "xray":
+		dirName = "xray"
+	case proto == "mieru" || core == "mieru":
+		dirName = "mieru"
+	default:
+		// ss/socks5/anytls/naive → sing-box
+		dirName = "sing-box"
+	}
+	pidPath := filepath.Join(coreStateDir(), dirName, fmt.Sprintf("instance-%d.pid", req.InstanceID))
+	cfgPath := filepath.Join(coreStateDir(), dirName, fmt.Sprintf("instance-%d.json", req.InstanceID))
+	logPath := filepath.Join(coreStateDir(), dirName, fmt.Sprintf("instance-%d.log", req.InstanceID))
+	stopPIDFile(pidPath)
+	_ = os.Remove(cfgPath)
+	_ = os.Remove(logPath)
+	return wsproto.ProxyServiceStopAck{OK: true}
+}

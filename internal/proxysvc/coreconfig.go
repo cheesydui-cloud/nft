@@ -5,15 +5,33 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
+
+// OutboundSOCKS routes all inbound traffic through a SOCKS5 proxy (exit_uri).
+// When RedirectHost/RedirectPort are set, freedom+dialerProxy forces a fixed
+// CONNECT target (rule exit_host:exit_port); otherwise the client destination
+// is used (open proxy through the SOCKS).
+type OutboundSOCKS struct {
+	URI          string // socks5://[user:pass@]host:port
+	RedirectHost string
+	RedirectPort int
+}
 
 // BuildXrayVLESSConfig builds a standalone xray-core JSON config for one VLESS inbound.
 // Supports security=reality | tls | none with the transport matrix in NetworksForSecurity.
 // For TLS, prefer cert_file/key_file (agent-written paths); falls back to cert_pem/key_pem
 // only when file paths are set by deploy before calling this builder.
 func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
+	return BuildXrayVLESSConfigOpts(listenPort, raw, nil)
+}
+
+// BuildXrayVLESSConfigOpts is BuildXrayVLESSConfig with optional SOCKS outbound
+// (VLESS entry + SK5 exit for rule-scoped chains).
+func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *OutboundSOCKS) ([]byte, error) {
 	var c VLESSConfig
 	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
 		return nil, err
@@ -200,17 +218,108 @@ func BuildXrayVLESSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		}
 	}
 
+	outbounds, err := buildXrayOutbounds(socks)
+	if err != nil {
+		return nil, err
+	}
 	cfg := map[string]any{
 		"log": map[string]any{"loglevel": "warning"},
 		"inbounds": []any{
 			inbound,
 		},
-		"outbounds": []any{
-			map[string]any{"protocol": "freedom", "tag": "direct"},
-			map[string]any{"protocol": "blackhole", "tag": "block"},
-		},
+		"outbounds": outbounds,
+	}
+	// When SOCKS is present, pin all traffic to that outbound (skip freedom).
+	if socks != nil && strings.TrimSpace(socks.URI) != "" {
+		cfg["routing"] = map[string]any{
+			"domainStrategy": "AsIs",
+			"rules": []any{
+				map[string]any{
+					"type":        "field",
+					"inboundTag":  []string{"vless-in"},
+					"outboundTag": "sk5",
+				},
+			},
+		}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// buildXrayOutbounds returns freedom/blackhole, or SOCKS (+ optional fixed redirect via dialerProxy).
+func buildXrayOutbounds(socks *OutboundSOCKS) ([]any, error) {
+	if socks == nil || strings.TrimSpace(socks.URI) == "" {
+		return []any{
+			map[string]any{"protocol": "freedom", "tag": "direct"},
+			map[string]any{"protocol": "blackhole", "tag": "block"},
+		}, nil
+	}
+	u, err := url.Parse(strings.TrimSpace(socks.URI))
+	if err != nil {
+		return nil, fmt.Errorf("socks outbound uri: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "socks5" && scheme != "socks" {
+		return nil, fmt.Errorf("socks outbound scheme %q", u.Scheme)
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	if host == "" || portStr == "" {
+		return nil, fmt.Errorf("socks outbound missing host:port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("socks outbound port invalid")
+	}
+	server := map[string]any{
+		"address": host,
+		"port":    port,
+	}
+	if u.User != nil {
+		user := u.User.Username()
+		pass, _ := u.User.Password()
+		if user != "" {
+			server["users"] = []any{
+				map[string]any{"user": user, "pass": pass},
+			}
+		}
+	}
+	socksOB := map[string]any{
+		"protocol": "socks",
+		"tag":      "sk5",
+		"settings": map[string]any{
+			"servers": []any{server},
+		},
+	}
+	// Fixed CONNECT target: freedom redirect through SOCKS dialerProxy.
+	// Client destinations are forced to RedirectHost:RedirectPort (tunnel semantics).
+	if rh := strings.TrimSpace(socks.RedirectHost); rh != "" && socks.RedirectPort > 0 {
+		return []any{
+			map[string]any{
+				"protocol": "freedom",
+				"tag":      "sk5",
+				"settings": map[string]any{
+					"redirect": net.JoinHostPort(rh, strconv.Itoa(socks.RedirectPort)),
+				},
+				"streamSettings": map[string]any{
+					"sockopt": map[string]any{
+						"dialerProxy": "sk5-proxy",
+					},
+				},
+			},
+			map[string]any{
+				"protocol": "socks",
+				"tag":      "sk5-proxy",
+				"settings": map[string]any{
+					"servers": []any{server},
+				},
+			},
+			map[string]any{"protocol": "blackhole", "tag": "block"},
+		}, nil
+	}
+	return []any{
+		socksOB,
+		map[string]any{"protocol": "blackhole", "tag": "block"},
+	}, nil
 }
 
 // parseALPNList splits "h2,http/1.1" into ["h2","http/1.1"].

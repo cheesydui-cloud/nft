@@ -703,3 +703,62 @@ func TestBuildSingBoxNaiveConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildXrayVLESSConfigSOCKSOutbound(t *testing.T) {
+	priv, _ := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		ServerName: "www.cloudflare.com",
+		ServerPort: 443,
+		PrivateKey: priv,
+		Security:   "reality",
+		PublicKey:  "x",
+	})
+	// Public key not validated in build for inbound — only private. Use Ensure-like.
+	// Reality needs valid private only.
+	cfg, err := BuildXrayVLESSConfigOpts(10001, raw, &OutboundSOCKS{
+		URI:          "socks5://u:p@proxy.example:1080",
+		RedirectHost: "10.0.0.1",
+		RedirectPort: 443,
+	})
+	if err != nil {
+		// public key may not be required for server config
+		t.Fatalf("build: %v", err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, `"protocol": "socks"`) && !strings.Contains(s, `"protocol":"socks"`) {
+		// indented json uses "protocol": "socks"
+		if !strings.Contains(s, "socks") {
+			t.Fatalf("expected socks outbound in config: %s", s[:400])
+		}
+	}
+	if !strings.Contains(s, "dialerProxy") && !strings.Contains(s, "redirect") {
+		t.Fatalf("expected redirect/dialerProxy for fixed CONNECT: %s", s[:500])
+	}
+	if !strings.Contains(s, "10.0.0.1:443") {
+		t.Fatalf("expected redirect target: %s", s[:500])
+	}
+}
+
+func TestBuildXrayVLESSConfigSOCKSOpenProxy(t *testing.T) {
+	priv, _ := GenerateRealityKeyPair()
+	raw, _ := json.Marshal(VLESSConfig{
+		UUID:       "11111111-2222-3333-4444-555555555555",
+		ServerName: "www.cloudflare.com",
+		PrivateKey: priv,
+		Security:   "reality",
+	})
+	cfg, err := BuildXrayVLESSConfigOpts(10001, raw, &OutboundSOCKS{
+		URI: "socks5://proxy.example:1080",
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, "sk5") {
+		t.Fatalf("expected sk5 tag: %s", s[:400])
+	}
+	if strings.Contains(s, "freedom") && strings.Contains(s, `"tag": "direct"`) {
+		t.Fatalf("open socks should not keep freedom direct as primary")
+	}
+}

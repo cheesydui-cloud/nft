@@ -428,7 +428,7 @@ func (h *Hub) readerLoop(parent context.Context, ac *agentConn) {
 			}
 			ackP, _ := json.Marshal(ack)
 			ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeRuleCmdAck, ID: env.ID, Payload: ackP})
-		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck, wsproto.TypeProxyServiceApplyAck, wsproto.TypeCoreInstallAck:
+		case wsproto.TypeApplyAck, wsproto.TypeHelloAck, wsproto.TypeUpgradeAck, wsproto.TypeProbeAck, wsproto.TypePanelRedirectAck, wsproto.TypeProxyServiceApplyAck, wsproto.TypeProxyServiceStopAck, wsproto.TypeCoreInstallAck:
 			ac.dispatchAck(env)
 		default:
 			log.Printf("hub: node %d unknown frame type %q", ac.nodeID, env.Type)
@@ -571,6 +571,44 @@ func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply)
 		return wsproto.ProxyServiceApplyAck{}, errors.New("connection closed")
 	}
 }
+
+
+// SendProxyServiceStop asks the agent to tear down a core instance.
+func (h *Hub) SendProxyServiceStop(nodeID int64, req wsproto.ProxyServiceStop) (wsproto.ProxyServiceStopAck, error) {
+	h.mu.RLock()
+	ac, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return wsproto.ProxyServiceStopAck{}, fmt.Errorf("node %d not connected", nodeID)
+	}
+	id := ac.nextID()
+	ch := make(chan json.RawMessage, 1)
+	ac.pendMu.Lock()
+	ac.pending[id] = ch
+	ac.pendMu.Unlock()
+	defer func() {
+		ac.pendMu.Lock()
+		delete(ac.pending, id)
+		ac.pendMu.Unlock()
+	}()
+
+	payload, _ := json.Marshal(req)
+	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeProxyServiceStop, ID: id, Payload: payload})
+
+	select {
+	case raw := <-ch:
+		var ack wsproto.ProxyServiceStopAck
+		if err := json.Unmarshal(raw, &ack); err != nil {
+			return wsproto.ProxyServiceStopAck{}, fmt.Errorf("malformed proxy_service_stop_ack: %w", err)
+		}
+		return ack, nil
+	case <-time.After(coreInstallAckTimeout):
+		return wsproto.ProxyServiceStopAck{}, errors.New("proxy_service_stop_ack timeout")
+	case <-ac.closed:
+		return wsproto.ProxyServiceStopAck{}, errors.New("connection closed")
+	}
+}
+
 
 func (h *Hub) IsConnected(nodeID int64) bool {
 	h.mu.RLock()

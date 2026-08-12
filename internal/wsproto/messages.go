@@ -40,6 +40,8 @@ const (
 	TypePanelRedirectAck     = "panel_redirect_ack"
 	TypeProxyServiceApply    = "proxy_service_apply"
 	TypeProxyServiceApplyAck = "proxy_service_apply_ack"
+	TypeProxyServiceStop     = "proxy_service_stop"
+	TypeProxyServiceStopAck  = "proxy_service_stop_ack"
 	TypeCoreInstall          = "core_install"
 	TypeCoreInstallAck       = "core_install_ack"
 )
@@ -126,6 +128,13 @@ type ProxyServiceApply struct {
 	ShareHost  string          `json:"share_host"`
 	Name       string          `json:"name"`
 	Config     json.RawMessage `json:"config"`
+	// OutboundSocks, when set, makes the core route inbound traffic through
+	// this SOCKS5 proxy (rule-scoped VLESS entry + SK5 exit). Empty = freedom.
+	OutboundSocks string `json:"outbound_socks,omitempty"`
+	// OutboundRedirectHost/Port force a fixed CONNECT target through the SOCKS
+	// (rule exit_host:exit_port). Empty host = open proxy via SOCKS.
+	OutboundRedirectHost string `json:"outbound_redirect_host,omitempty"`
+	OutboundRedirectPort int    `json:"outbound_redirect_port,omitempty"`
 }
 
 // ProxyServiceApplyAck is the agent response after attempting deploy.
@@ -137,6 +146,19 @@ type ProxyServiceApplyAck struct {
 	// DryRun true means agent accepted config but did not start a real core
 	// process (phase-1 skeleton / core missing).
 	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// ProxyServiceStop asks the agent to stop a previously applied core instance.
+type ProxyServiceStop struct {
+	InstanceID int64  `json:"instance_id"`
+	Protocol   string `json:"protocol"`
+	Core       string `json:"core"`
+}
+
+// ProxyServiceStopAck is the agent response after stop.
+type ProxyServiceStopAck struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // CoreInstall asks the agent to download and install a proxy core binary from

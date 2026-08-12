@@ -785,6 +785,21 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 					default:
 					}
 				})
+			case wsproto.TypeProxyServiceStop:
+				var req wsproto.ProxyServiceStop
+				if err := json.Unmarshal(env.Payload, &req); err != nil {
+					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+					continue
+				}
+				id := env.ID
+				safeGo(func() {
+					ack := handleProxyServiceStop(req)
+					raw, _ := json.Marshal(ack)
+					select {
+					case d.cmdCh <- wsproto.Envelope{Type: wsproto.TypeProxyServiceStopAck, ID: id, Payload: raw}:
+					default:
+					}
+				})
 			case wsproto.TypeCoreInstall:
 				var req wsproto.CoreInstall
 				if err := json.Unmarshal(env.Payload, &req); err != nil {

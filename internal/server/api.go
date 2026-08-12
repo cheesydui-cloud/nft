@@ -2459,6 +2459,9 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if rl2, err := db.GetRule(s.DB, id); err == nil {
+		s.syncRuleProtocolPlane(rl2)
+	}
 	jsonOK(w, map[string]any{"rule": rl, "entry": entry, "entry_v6": entryV6})
 }
 
@@ -2848,6 +2851,9 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if rl2, err := db.GetRule(s.DB, id); err == nil {
+		s.syncRuleProtocolPlane(rl2)
+	}
 	jsonOK(w, map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6})
 }
 
@@ -2857,6 +2863,9 @@ func (s *Server) apiDeleteRule(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, "bad id")
 		return
+	}
+	if rl, err := db.GetRule(s.DB, id); err == nil {
+		s.stopRuleProtocolPlane(rl)
 	}
 	nodes, err := db.DeleteRule(s.DB, id)
 	if err != nil {
@@ -3792,6 +3801,9 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if rl2, err := db.GetRule(s.DB, id); err == nil {
+		s.syncRuleProtocolPlane(rl2)
+	}
 	jsonOK(w, map[string]any{"ok": true, "rule_id": id, "entry": entry, "entry_v6": entryV6})
 }
 
@@ -3989,6 +4001,9 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if rl2, err := db.GetRule(s.DB, id); err == nil {
+		s.syncRuleProtocolPlane(rl2)
+	}
 	jsonOK(w, map[string]any{"ok": true, "entry": entry, "entry_v6": entryV6})
 }
 
@@ -4008,6 +4023,7 @@ func (s *Server) apiMyDeleteRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "无权操作该规则")
 		return
 	}
+	s.stopRuleProtocolPlane(rl)
 	nodes, err := db.DeleteRule(s.DB, id)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())

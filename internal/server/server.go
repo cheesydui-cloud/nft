@@ -418,6 +418,9 @@ func (s *Server) dispatchToNode(nodeID int64) error {
 		return err
 	}
 	_ = db.MarkNodeApplied(s.DB, nodeID, warning)
+	// Re-assert protocol-entry cores (VLESS+SK5) whose entry is this node.
+	// L4 ruleset intentionally omits those ports; xray owns them.
+	s.resyncProtocolPlanesOnNode(nodeID)
 	return nil
 }
 
@@ -533,8 +536,24 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 		hopCounts = map[int64]int{}
 	}
 
+	// Cache proxy_service_id → protocol so we only skip L4 for VLESS protocol-entry.
+	protoBySvc := map[int64]string{}
 	rules := make([]nft.Rule, 0, len(ruleHops))
 	for _, rh := range ruleHops {
+		if r := ruleMap[rh.RuleID]; r != nil && ruleUsesProtocolEntry(r) {
+			proto, ok := protoBySvc[r.ProxyServiceID]
+			if !ok {
+				if svc, err := db.GetProxyService(d, r.ProxyServiceID); err == nil && svc != nil {
+					proto = strings.ToLower(strings.TrimSpace(svc.Protocol))
+				}
+				protoBySvc[r.ProxyServiceID] = proto
+			}
+			// Protocol plane is single-hop end-to-end (VLESS in + SOCKS out).
+			// Multi-hop falls back to L4 + ExitProxy on the last hop.
+			if proto == "vless" && hopCounts[rh.RuleID] <= 1 {
+				continue // xray owns entry_listen_port
+			}
+		}
 		rule := nft.Rule{
 			Proto:    rh.Proto,
 			SrcPort:  rh.ListenPort,

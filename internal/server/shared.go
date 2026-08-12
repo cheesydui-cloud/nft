@@ -11,6 +11,7 @@ import (
 
 	"nft/internal/db"
 	"nft/internal/landing"
+	"nft/internal/proxysvc"
 	"nft/internal/resolver"
 )
 
@@ -179,13 +180,12 @@ func (s *Server) fillRuleChains(items []ruleListItem, nodesByID map[int64]*db.No
 //  1. Landing exit match → rewrite that landing's share URI to the rule entry
 //     host:port. Client speaks the landing protocol; L4 on the entry tunnels
 //     bytes to the real landing host:port.
-//  2. exit_type=socks5 → rewrite exit_uri (socks5://user:pass@proxy) authority
-//     to the rule entry host:port. The agent last hop dials ExitProxy and
-//     CONNECTs to exit_host:exit_port; the scannable client link is SOCKS5 to
-//     the entry (credentials from exit_uri). Never rewrite a proxy-service
-//     VLESS/SS share onto the L4 entry port — that port is not a VLESS inbound.
-//  3. proxy_service_id only affects form labels (which 代理 was picked); it
-//     does not change relay_uri for SK5 exits.
+//  2. Protocol-entry (proxy_service_id + exit_type=socks5 + VLESS service) →
+//     entry port is a real VLESS inbound; relay_uri is the proxy-service share
+//     rewritten to entry host:port. Core outbound CONNECTs through exit_uri.
+//  3. Plain exit_type=socks5 (no protocol entry) → rewrite exit_uri authority
+//     to the rule entry host:port (L4 + last-hop ExitProxy path).
+//  4. proxy_service_id also supplies display name for 线路 labels.
 //
 // ExitURI is always redacted in the JSON response after RelayURI is built from
 // the unredacted secret (buildRuleListItem embeds the raw db.Rule).
@@ -194,11 +194,15 @@ func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) 
 }
 
 // classifyExitWithShare is classifyExit plus optional entry proxy-service
-// metadata (name only — used for display, not for SK5 relay rewrite).
+// metadata. When shareProto is vless and the rule is protocol-entry, relay_uri
+// uses the VLESS share rewritten onto the entry (real inbound).
 func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withURI bool, shareProto, shareURI, shareName string) {
 	it.ExitKind = "custom"
 	relayHost, relayPort, entryOK := splitEntry(it.Entry)
-	_ = shareURI // share URI must not be rewritten onto L4 entry for SK5
+	protocolEntry := it.Rule != nil && ruleUsesProtocolEntry(it.Rule) &&
+		len(it.Rule.ViaNodeIDs) == 0 &&
+		strings.EqualFold(strings.TrimSpace(shareProto), "vless") &&
+		strings.TrimSpace(shareURI) != ""
 	if node, ok := idx[it.Exit]; ok {
 		it.ExitKind = "landing"
 		it.LandingName = node.Name
@@ -210,9 +214,19 @@ func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withU
 				it.RelayURI = u
 			}
 		}
+	} else if protocolEntry {
+		// Real VLESS inbound on entry: client link is the service share @ entry.
+		it.LandingProtocol = strings.ToLower(strings.TrimSpace(shareProto))
+		if shareName != "" {
+			it.LandingName = shareName
+		}
+		if withURI && entryOK {
+			if u, err := landing.RewriteEndpoint(shareURI, relayHost, relayPort); err == nil {
+				it.RelayURI = u
+			}
+		}
 	} else if it.Rule != nil && it.ExitType == "socks5" {
-		// SK5 exit: client link is socks5 with authority = rule entry.
-		// Protocol tag stays socks5/sk5 even if entry was picked from a VLESS 代理 tab.
+		// L4 entry + last-hop ExitProxy CONNECT.
 		it.LandingProtocol = "socks5"
 		if shareName != "" && it.LandingName == "" {
 			it.LandingName = shareName
@@ -240,8 +254,8 @@ func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withU
 	}
 }
 
-// classifyRuleExit runs classifyExit and attaches proxy-service display name
-// when the rule remembers a proxy_service_id (labels only; SK5 relay stays socks5).
+// classifyRuleExit runs classifyExit and attaches proxy-service share metadata
+// when the rule remembers a proxy_service_id (display + protocol-entry relay).
 func (s *Server) classifyRuleExit(it *ruleListItem, idx map[string]landing.Node, withURI bool) {
 	if it == nil {
 		return
@@ -251,6 +265,40 @@ func (s *Server) classifyRuleExit(it *ruleListItem, idx map[string]landing.Node,
 		if p, u, n, ok := db.LookupProxyServiceShare(s.DB, it.ProxyServiceID, it.NodeID); ok || p != "" || n != "" {
 			shareProto, shareURI, shareName = p, u, n
 			_ = ok
+		}
+		// Prefer building share from service config when instance URI missing
+		// (protocol-entry rules do not require a published instance on the node).
+		if shareURI == "" || shareProto == "" {
+			if svc, err := db.GetProxyService(s.DB, it.ProxyServiceID); err == nil && svc != nil {
+				if shareProto == "" {
+					shareProto = svc.Protocol
+				}
+				if shareName == "" {
+					shareName = svc.Name
+				}
+				if shareURI == "" && withURI {
+					host, port, eok := splitEntry(it.Entry)
+					if !eok {
+						if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
+							host = firstNonEmpty(n.RelayHost, n.Address)
+							if h, _, e := splitHostPortLoose(host); e == nil && h != "" {
+								host = h
+							}
+							port = it.EntryListenPort
+							eok = host != "" && port > 0
+						}
+					}
+					if eok {
+						cfg := svc.ConfigJSON
+						if fixed, err := proxysvc.EnsureSecrets(svc.Protocol, cfg); err == nil {
+							cfg = fixed
+						}
+						if u, err := proxysvc.BuildShareURI(svc.Protocol, svc.Name, host, port, cfg); err == nil {
+							shareURI = u
+						}
+					}
+				}
+			}
 		}
 	}
 	it.classifyExitWithShare(idx, withURI, shareProto, shareURI, shareName)

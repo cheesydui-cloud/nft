@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"nft/internal/db"
@@ -131,9 +132,9 @@ func TestClassifyExit(t *testing.T) {
 		}
 	})
 
-	t.Run("SK5 exit keeps socks5 relay even when entry was a VLESS proxy service", func(t *testing.T) {
-		// Data plane: L4 entry + last-hop ExitProxy CONNECT. Client link must be
-		// socks5 rewritten to entry — never the VLESS share on the L4 port.
+	t.Run("protocol-entry VLESS+SK5 uses VLESS share on entry", func(t *testing.T) {
+		// Data plane: xray VLESS inbound on entry + SOCKS outbound to exit_uri.
+		// Client link is the VLESS share rewritten to entry host:port.
 		it := ruleListItem{
 			Rule: &db.Rule{
 				NodeID: 7, ProxyServiceID: 3,
@@ -146,18 +147,38 @@ func TestClassifyExit(t *testing.T) {
 		}
 		share := "vless://uuid@1.2.3.4:443?security=reality&sni=a.com#测试1"
 		it.classifyExitWithShare(idx, true, "vless", share, "测试1")
+		if it.LandingProtocol != "vless" {
+			t.Errorf("landing_protocol = %q, want vless", it.LandingProtocol)
+		}
+		if it.LandingName != "测试1" {
+			t.Errorf("landing_name = %q, want service display name", it.LandingName)
+		}
+		if !strings.HasPrefix(it.RelayURI, "vless://uuid@relay.example:10001") {
+			t.Errorf("relay_uri = %q, want vless rewritten to entry", it.RelayURI)
+		}
+		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
+			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+		}
+	})
+
+	t.Run("plain SK5 without proxy_service keeps socks5 relay", func(t *testing.T) {
+		it := ruleListItem{
+			Rule: &db.Rule{
+				NodeID: 7, ProxyServiceID: 0,
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@proxy.example:1080",
+			},
+			Entry: "relay.example:10001",
+			Exit:  "10.0.0.1:443",
+		}
+		it.classifyExitWithShare(idx, true, "", "", "")
 		want := "socks5://alice:s3cret@relay.example:10001"
 		if it.RelayURI != want {
 			t.Errorf("relay_uri = %q, want %q", it.RelayURI, want)
 		}
 		if it.LandingProtocol != "socks5" {
-			t.Errorf("landing_protocol = %q, want socks5 (not entry proxy protocol)", it.LandingProtocol)
-		}
-		if it.LandingName != "测试1" {
-			t.Errorf("landing_name = %q, want service display name", it.LandingName)
-		}
-		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
-			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+			t.Errorf("landing_protocol = %q, want socks5", it.LandingProtocol)
 		}
 	})
 }

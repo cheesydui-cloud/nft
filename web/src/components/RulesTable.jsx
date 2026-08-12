@@ -33,6 +33,19 @@ function SortArrow({ dir }) {
   )
 }
 
+
+function lineLabel(r, node) {
+  const nodeName = node?.name || `#${r.node_id}`
+  const svc = (r.landing_name || '').trim()
+  const proto = (r.landing_protocol || '').toLowerCase()
+  // Protocol-entry / 代理 tab: show service name with node, e.g. [vless] 测试1 · NB.JP
+  if (svc && Number(r.proxy_service_id) > 0) {
+    const tag = proto && proto !== 'socks5' && proto !== 'sk5' ? `[${proto}] ` : ''
+    return `${tag}${svc} · ${nodeName}`
+  }
+  return nodeName
+}
+
 export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, onEdit, onCopy, onRowClick, probeAllTrigger, displayRate = 1, landingExpiry, copyUsername = '' }) {
   const isAdmin = variant === 'admin'
   const isMobile = useIsMobile()
@@ -134,7 +147,8 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <td>
                 <span className="inline-flex items-center gap-1.5 font-mono text-[13px] text-ink-soft">
                   <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
-                  <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
+                  <NodeTypeIcon type={node?.node_type} />
+                  <span className={Number(r.proxy_service_id) > 0 ? 'font-sans' : ''}>{lineLabel(r, node)}</span>
                   {r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
                 </span>
               </td>
@@ -143,7 +157,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
               <td className="font-mono text-xs !whitespace-normal min-w-[12rem]">
                 <div className="inline-block max-w-[22rem]" onClick={e => e.stopPropagation()}>
                   {(() => {
-                    const nodeLabel = node?.name || `#${r.node_id}`
+                    const nodeLabel = lineLabel(r, node)
                     const shown = r.entry_listen_port ? `${nodeLabel}:${r.entry_listen_port}` : nodeLabel
                     return (
                       <>
@@ -268,7 +282,8 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
             <div className="flex items-center gap-2 text-xs text-ink-soft mb-1.5 flex-wrap">
               <span className="inline-flex items-center gap-1 font-mono">
                 <HealthDot online={node?.online} disabled={!!node?.disabled} showLabel={false} />
-                <NodeTypeIcon type={node?.node_type} />{node?.name || `#${r.node_id}`}
+                <NodeTypeIcon type={node?.node_type} />
+                <span className={Number(r.proxy_service_id) > 0 ? 'font-sans' : ''}>{lineLabel(r, node)}</span>
                 {!isAdmin && r.via_node_ids?.length > 0 && <span className="text-ink-mut text-[11px] font-sans">+{r.via_node_ids.length}层</span>}
               </span>
               {isAdmin && r.owner_name && <><span className="text-ink-mut">·</span><span>{r.owner_name}</span></>}
@@ -283,7 +298,7 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
             </div>
             {isAdmin && (
             <div className="text-xs text-ink-mut truncate">
-              <span className="font-sans">{r.entry ? (r.entry_listen_port ? `${node?.name || `#${r.node_id}`}:${r.entry_listen_port}` : (node?.name || `#${r.node_id}`)) : '--'}</span>
+              <span className="font-sans">{r.entry ? (r.entry_listen_port ? `${lineLabel(r, node)}:${r.entry_listen_port}` : lineLabel(r, node)) : '--'}</span>
               <span className="mx-1.5">→</span>
               <span className="text-ink-soft font-mono">
                 {!isAdmin && r.exit_kind === 'landing' && r.landing_name
