@@ -198,12 +198,15 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
   const landingCount = preview.filter(n => roleOf(n) & ROLE_LANDING).length
   const directCount = preview.filter(n => roleOf(n) & ROLE_DIRECT).length
   const unconfiguredCount = preview.filter(n => !roleOf(n)).length
-  // Keep quota UI visible when a ledger is already enforcing, even if the
-  // landing mark is currently off.
+  // 限额/已用挂在落地账本 (user_landing_exits) 上，与「落地 / 直连」用途无关。
+  // 直连同样可设限额、看已用；账本无行时不显示控件。
+  // 已有配额或用量时即使用途被关掉也继续展示，避免「正在执行的限额突然消失」。
   const showQuotaFor = (n, st) => {
     const ex = exitByAddr[`${n.host}:${n.port}`]
     if (!ex) return null
-    return (st & ROLE_LANDING) || ex.quota_bytes > 0 || ex.used_bytes > 0 ? ex : null
+    if ((st & ROLE_LANDING) || (st & ROLE_DIRECT)) return ex
+    if (ex.quota_bytes > 0 || ex.used_bytes > 0) return ex
+    return null
   }
   const selectedNodes = preview.filter((_, i) => sel.has(i))
 
