@@ -74,12 +74,17 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     api.get('/node-repo')
       .then(d => {
         if (cancelled) return
-        const list = (d?.nodes || []).filter(n => {
-          const p = String(n.protocol || '').toLowerCase()
-          const uri = String(n.uri || '').toLowerCase()
-          return p === 'socks5' || p === 'socks' || uri.startsWith('socks5://') || uri.startsWith('socks://')
-        })
-        setRepoSocksNodes(list)
+        const isSocks = (n) => {
+          const p = String(n.protocol || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+          const uri = String(n.uri || '').trim().toLowerCase()
+          if (p === 'socks5' || p === 'socks' || p === 'sk5' || p === 'sock') return true
+          if (uri.startsWith('socks5://') || uri.startsWith('socks://')) return true
+          // 名称/备注里写了 socks 且有 host:port 也纳入（快捷添加后 protocol 偶发为空时兜底）
+          const blob = `${n.name || ''} ${n.remark || ''}`.toLowerCase()
+          if ((blob.includes('socks') || blob.includes('sk5')) && n.host && n.port) return true
+          return false
+        }
+        setRepoSocksNodes((d?.nodes || []).filter(isSocks))
       })
       .catch(() => { if (!cancelled) setRepoSocksNodes([]) })
     return () => { cancelled = true }
@@ -277,12 +282,26 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     const hostPart = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
     return `socks5://${hostPart}:${port}`
   }
-  const repoSocksOptions = (repoSocksNodes || []).map(n => {
+  // value 用 repo:<id>，避免同 URI 多节点冲突；选中后再写入真实 URI。
+  const repoSocksByKey = {}
+  const repoSocksOptions = []
+  for (const n of repoSocksNodes || []) {
     const uri = buildRepoSocksURI(n)
-    const proto = (n.protocol || 'socks5').toLowerCase()
+    if (!uri) continue
+    const key = `repo:${n.id}`
+    repoSocksByKey[key] = uri
+    const proto = String(n.protocol || 'socks5').toLowerCase() || 'socks5'
     const label = `${n.name || '(未命名)'}${n.host ? ` · ${n.host}:${n.port || ''}` : ''}`
-    return { value: uri, label: `[${proto}] ${label}`, _id: n.id }
-  }).filter(o => o.value)
+    repoSocksOptions.push({ value: key, label: `[${proto}] ${label}` })
+  }
+  const repoSocksSelectValue = (() => {
+    const cur = String(form.exit_uri || '').trim()
+    if (!cur) return ''
+    for (const [k, uri] of Object.entries(repoSocksByKey)) {
+      if (uri === cur) return k
+    }
+    return ''
+  })()
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
@@ -500,25 +519,29 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             <>
               <label className="fl">SK5 代理</label>
               <div className="space-y-2 min-w-0">
-                {repoSocksOptions.length > 0 && (
-                  <Select
-                    value={repoSocksOptions.some(o => o.value === (form.exit_uri || '')) ? (form.exit_uri || '') : ''}
-                    onChange={v => set('exit_uri', v)}
-                    placeholder="-- 从落地仓库导入 --"
-                    searchable
-                    options={repoSocksOptions}
-                  />
-                )}
+                <Select
+                  value={repoSocksSelectValue}
+                  onChange={v => {
+                    const uri = repoSocksByKey[v] || ''
+                    if (uri) set('exit_uri', uri)
+                  }}
+                  placeholder={repoSocksOptions.length ? '-- 从落地仓库导入 --' : '落地仓库暂无 SOCKS5'}
+                  searchable={repoSocksOptions.length > 0}
+                  disabled={repoSocksOptions.length === 0}
+                  options={repoSocksOptions.length ? repoSocksOptions : [{ value: '', label: '暂无 SOCKS5 节点，请先在落地仓库添加' }]}
+                />
                 <input
                   className="input-field font-mono"
                   value={form.exit_uri || ''}
                   onChange={e => set('exit_uri', e.target.value)}
                   required
-                  placeholder="socks5://user:pass@proxy:1080"
+                  placeholder="socks5://user:pass@proxy:1080（可导入或手填）"
                 />
-                {repoSocksOptions.length === 0 && (
-                  <div className="text-[11px] text-ink-mut">落地仓库暂无 SOCKS5 节点，可手动填写 URI 或先在落地仓库添加</div>
-                )}
+                <div className="text-[11px] text-ink-mut">
+                  {repoSocksOptions.length
+                    ? `可从落地仓库导入（${repoSocksOptions.length} 个 SOCKS5），也可手动填写 URI`
+                    : '落地仓库暂无 SOCKS5 节点：请到「落地仓库 → 添加节点 → SOCKS5 快捷」添加后再导入'}
+                </div>
               </div>
               <label className="fl">CONNECT 目标</label>
               <div className="flex items-center gap-3">
