@@ -524,6 +524,31 @@ func DeleteRulesForUserNode(d *sql.DB, userID, nodeID int64) ([]int64, error) {
 	return nodes, nil
 }
 
+// DeleteRulesForUserProxyService removes rules the user owns that were created
+// against a specific proxy service (rules.proxy_service_id). Used when a
+// protocol-level grant is revoked so sibling protocols on the same node stay.
+func DeleteRulesForUserProxyService(d *sql.DB, userID, serviceID int64) ([]int64, error) {
+	if userID <= 0 || serviceID <= 0 {
+		return nil, nil
+	}
+	ruleIDs, err := queryInt64s(d, `SELECT id FROM rules WHERE owner_id=? AND proxy_service_id=?`, userID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := placeholderList(ruleIDs)
+	nodes, err := queryInt64s(d, `SELECT DISTINCT node_id FROM rule_hops WHERE rule_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.Exec(`DELETE FROM rules WHERE id IN (`+ph+`)`, args...); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
 // DeleteRulesUsingNode removes every rule that runs through nodeID — as a
 // physical hop, as its entry, or as a middle layer — and returns the OTHER
 // physical nodes those rules touched, so their kernel state can be re-pushed

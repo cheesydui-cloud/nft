@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 type NodeHop struct {
 	NodeID            int64   `json:"node_id"`
@@ -116,21 +119,21 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 		var agentVersion, agentArch sql.NullString
 		var ownerID sql.NullInt64
 		var luVersion, luStatus, luError sql.NullString
-			if err := rows.Scan(
-				&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
-				&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
-				&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
-				&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
-				&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
-				&n.SortOrder, &n.RateMultiplier, &unidirectional,
-				&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
-				&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
-				&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
-				&agentArch, &n.ListGroup,
-				&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
-			); err != nil {
-				return nil, nil, err
-			}
+		if err := rows.Scan(
+			&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
+			&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
+			&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
+			&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
+			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
+			&n.SortOrder, &n.RateMultiplier, &unidirectional,
+			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+			&agentArch, &n.ListGroup,
+			&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
+		); err != nil {
+			return nil, nil, err
+		}
 		n.LastUpgradeVersion = luVersion.String
 		n.LastUpgradeStatus = luStatus.String
 		n.LastUpgradeError = luError.String
@@ -261,6 +264,97 @@ func GrantShapes(d *sql.DB) (map[[2]int64]GrantShape, error) {
 			return nil, err
 		}
 		out[[2]int64{uid, nid}] = gs
+	}
+	return out, rows.Err()
+}
+
+// --- Proxy service grants (protocol-level; independent of whole-node grants) ---
+
+// GrantProxyService records that a user may use a specific proxy_services row.
+// Does not touch user_nodes — callers that need node-level quota/caps should
+// also GrantNode for the service's deployed nodes.
+func GrantProxyService(d *sql.DB, userID, serviceID int64) error {
+	if userID <= 0 || serviceID <= 0 {
+		return nil
+	}
+	_, err := d.Exec(`INSERT INTO user_proxy_services(user_id, service_id, granted_at) VALUES (?,?,?)
+		ON CONFLICT(user_id, service_id) DO NOTHING`,
+		userID, serviceID, now())
+	return err
+}
+
+// RevokeProxyService removes a protocol-level grant. Node grants are left intact.
+func RevokeProxyService(d *sql.DB, userID, serviceID int64) error {
+	_, err := d.Exec(`DELETE FROM user_proxy_services WHERE user_id=? AND service_id=?`, userID, serviceID)
+	return err
+}
+
+// HasProxyServiceGrant reports whether the user is authorized for serviceID.
+func HasProxyServiceGrant(d *sql.DB, userID, serviceID int64) bool {
+	if userID <= 0 || serviceID <= 0 {
+		return false
+	}
+	var n int
+	err := d.QueryRow(`SELECT 1 FROM user_proxy_services WHERE user_id=? AND service_id=?`, userID, serviceID).Scan(&n)
+	return err == nil
+}
+
+// ListProxyServiceIDsForUser returns granted proxy_service ids for a user.
+func ListProxyServiceIDsForUser(d *sql.DB, userID int64) ([]int64, error) {
+	rows, err := d.Query(`SELECT service_id FROM user_proxy_services WHERE user_id=? ORDER BY service_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if out == nil {
+		out = []int64{}
+	}
+	return out, rows.Err()
+}
+
+// ListProxyServiceNodeIDs returns distinct node_ids that host any of the given services.
+func ListProxyServiceNodeIDs(d *sql.DB, serviceIDs []int64) ([]int64, error) {
+	if len(serviceIDs) == 0 {
+		return []int64{}, nil
+	}
+	// Build placeholders for IN (...).
+	args := make([]any, 0, len(serviceIDs))
+	ph := make([]string, 0, len(serviceIDs))
+	for _, id := range serviceIDs {
+		if id <= 0 {
+			continue
+		}
+		args = append(args, id)
+		ph = append(ph, "?")
+	}
+	if len(args) == 0 {
+		return []int64{}, nil
+	}
+	q := `SELECT DISTINCT node_id FROM proxy_service_instances WHERE service_id IN (` +
+		strings.Join(ph, ",") + `) AND node_id > 0 ORDER BY node_id`
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if out == nil {
+		out = []int64{}
 	}
 	return out, rows.Err()
 }

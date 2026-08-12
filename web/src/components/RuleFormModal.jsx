@@ -42,7 +42,7 @@ const PROTO_LABEL = {
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant, proxyNodeIds }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant, proxyNodeIds, proxyServiceIds }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
@@ -60,6 +60,12 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const proxyIds = useMemo(() => (
     proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
   ), [proxyNodeIds])
+  // When parent supplies proxyServiceIds (user-scoped), only those services appear
+  // on the 代理 tab. Admin lists omit the prop → all services stay visible.
+  const grantedSvcIds = useMemo(() => {
+    if (proxyServiceIds == null) return null // unrestricted (admin)
+    return new Set((proxyServiceIds instanceof Set ? [...proxyServiceIds] : (proxyServiceIds || [])).map(Number).filter(id => id > 0))
+  }, [proxyServiceIds])
 
   // Admin surfaces can load 代理服务 for service-name labels on the 代理 tab.
   useEffect(() => {
@@ -280,6 +286,8 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const entryById = Object.fromEntries(entryNodes.map(n => [Number(n.id), n]))
   const proxyOptsFromServices = []
   for (const s of proxyServices || []) {
+    // User-scoped: hide services not in the protocol grant set.
+    if (grantedSvcIds && !grantedSvcIds.has(Number(s.id))) continue
     const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
     for (const nid of nids) {
       // Hard gate: never list a node outside the parent-provided pool.

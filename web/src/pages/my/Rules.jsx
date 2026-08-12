@@ -85,6 +85,10 @@ export default function MyRules() {
     const deployed = data?.proxy_node_ids || []
     return (Array.isArray(deployed) ? deployed : []).map(Number).filter(id => granted.has(id))
   }, [data?.nodes, data?.proxy_node_ids])
+  const grantedProxyServiceIds = useMemo(
+    () => (Array.isArray(data?.proxy_service_ids) ? data.proxy_service_ids : []).map(Number).filter(id => id > 0),
+    [data?.proxy_service_ids],
+  )
 
   if (loading) return <Layout><Loading /></Layout>
 
@@ -195,6 +199,7 @@ export default function MyRules() {
         variant={createVariant}
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={createInitial} onAddProxyURI={addProxyURI} showRate={show_rate} showStack={false}
         proxyNodeIds={grantedProxyNodeIds}
+        proxyServiceIds={grantedProxyServiceIds}
         onSubmit={async (form) => {
           const res = await api.post('/my/rules', ruleFormToPayload(form))
           if (res?.warning) toast(res.warning, 'error')

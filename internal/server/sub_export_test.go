@@ -43,6 +43,10 @@ func TestPublicSubAndMySubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Subscription export requires both node grant and protocol-level service grant.
+	if err := db.GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
 	inst, err := db.UpsertProxyInstance(d, svc.ID, node.ID, 443, "10.0.0.1")
 	if err != nil {
 		t.Fatal(err)

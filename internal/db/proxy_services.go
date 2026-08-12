@@ -41,11 +41,11 @@ type ProxyService struct {
 	CreatedAt  int64           `json:"created_at"`
 	UpdatedAt  int64           `json:"updated_at"`
 	// Filled by list/detail APIs, not always loaded from DB.
-		InstanceCount    int                     `json:"instance_count,omitempty"`
-		ReadyCount       int                     `json:"ready_count,omitempty"`
-		DeployedNodeIDs  []int64                 `json:"deployed_node_ids,omitempty"`
-		Instances        []*ProxyServiceInstance `json:"instances,omitempty"`
-	}
+	InstanceCount   int                     `json:"instance_count,omitempty"`
+	ReadyCount      int                     `json:"ready_count,omitempty"`
+	DeployedNodeIDs []int64                 `json:"deployed_node_ids,omitempty"`
+	Instances       []*ProxyServiceInstance `json:"instances,omitempty"`
+}
 
 // ProxyServiceInstance is one deployment of a service onto a line node.
 type ProxyServiceInstance struct {
@@ -350,26 +350,26 @@ func ListProxyServices(d *sql.DB) ([]*ProxyService, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-		for _, s := range out {
-			_ = d.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN deploy_status='ready' THEN 1 ELSE 0 END),0)
+	for _, s := range out {
+		_ = d.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN deploy_status='ready' THEN 1 ELSE 0 END),0)
 				FROM proxy_service_instances WHERE service_id=?`, s.ID).Scan(&s.InstanceCount, &s.ReadyCount)
-			rows2, err := d.Query(`SELECT DISTINCT node_id FROM proxy_service_instances WHERE service_id=? AND node_id > 0 ORDER BY node_id`, s.ID)
-			if err != nil {
+		rows2, err := d.Query(`SELECT DISTINCT node_id FROM proxy_service_instances WHERE service_id=? AND node_id > 0 ORDER BY node_id`, s.ID)
+		if err != nil {
+			continue
+		}
+		var ids []int64
+		for rows2.Next() {
+			var nid int64
+			if err := rows2.Scan(&nid); err != nil {
 				continue
 			}
-			var ids []int64
-			for rows2.Next() {
-				var nid int64
-				if err := rows2.Scan(&nid); err != nil {
-					continue
-				}
-				ids = append(ids, nid)
-			}
-			_ = rows2.Close()
-			s.DeployedNodeIDs = ids
+			ids = append(ids, nid)
 		}
-		return out, nil
+		_ = rows2.Close()
+		s.DeployedNodeIDs = ids
 	}
+	return out, nil
+}
 
 // DeleteProxyService removes the service and its instances (FK cascade).
 func DeleteProxyService(d *sql.DB, id int64) error {
@@ -484,6 +484,7 @@ type SubExportNode struct {
 // ListSubVisibleReadyInstancesForUser returns published proxy instances that:
 //   - belong to services with sub_visible=1
 //   - are deploy_status=ready with non-empty uri
+//   - the user is granted the proxy service (user_proxy_services)
 //   - run on a line node the user is granted (user_nodes)
 func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNode, error) {
 	rows, err := d.Query(`
@@ -491,13 +492,14 @@ func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNo
 		       COALESCE(n.name, '')
 		FROM proxy_service_instances i
 		JOIN proxy_services s ON s.id = i.service_id
+		JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
 		JOIN user_nodes g ON g.node_id = i.node_id AND g.user_id = ?
 		LEFT JOIN nodes n ON n.id = i.node_id
 		WHERE s.sub_visible = 1
 		  AND i.deploy_status = ?
 		  AND TRIM(i.uri) != ''
 		ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
-		userID, ProxyDeployReady)
+		userID, userID, ProxyDeployReady)
 	if err != nil {
 		return nil, err
 	}

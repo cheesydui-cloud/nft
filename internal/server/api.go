@@ -2483,6 +2483,10 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+			if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, target.ID, body.ProxyServiceID) {
+				jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
+				return
+			}
 		}
 	}
 	rl := &db.Rule{
@@ -2924,6 +2928,10 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+			if rl.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, owner.ID, rl.ProxyServiceID) {
+				jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
+				return
+			}
 		}
 	}
 	tx, err := s.DB.Begin()
@@ -3102,6 +3110,10 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	if proxyNodeIDs == nil {
 		proxyNodeIDs = []int64{}
 	}
+	proxyServiceIDs, _ := db.ListProxyServiceIDsForUser(s.DB, id)
+	if proxyServiceIDs == nil {
+		proxyServiceIDs = []int64{}
+	}
 	jsonOK(w, map[string]any{
 		"user": apiUserFullView(target), "nodes": grantedNodes,
 		"grants": grants, "all_nodes": allNodes,
@@ -3112,6 +3124,7 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 		"yesterday_raw_bytes": yesterdayRaw,
 		"yesterday_day":       db.DayKeyYesterday(),
 		"proxy_node_ids":      proxyNodeIDs,
+		"proxy_service_ids":   proxyServiceIDs,
 	})
 }
 
@@ -3185,8 +3198,12 @@ func (s *Server) apiGrantNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		NodeID            int64   `json:"node_id"`
-		NodeIDs           []int64 `json:"node_ids"`
+		NodeID  int64   `json:"node_id"`
+		NodeIDs []int64 `json:"node_ids"`
+		// ProxyServiceIDs grants protocol-level access. Each service also
+		// ensures its deployed nodes are in user_nodes (quota/caps still key
+		// on the node). Sibling protocols on the same node are NOT auto-granted.
+		ProxyServiceIDs   []int64 `json:"proxy_service_ids"`
 		MaxForwards       int     `json:"max_forwards"`
 		TrafficQuotaBytes int64   `json:"traffic_quota_bytes"`
 	}
@@ -3201,16 +3218,59 @@ func (s *Server) apiGrantNode(w http.ResponseWriter, r *http.Request) {
 	if len(ids) == 0 && body.NodeID != 0 {
 		ids = []int64{body.NodeID}
 	}
-	if len(ids) == 0 {
-		jsonErr(w, http.StatusBadRequest, "请选择节点")
+	svcIDs := body.ProxyServiceIDs
+	// Expand proxy services → their deployed nodes so rule caps still work.
+	if len(svcIDs) > 0 {
+		for _, sid := range svcIDs {
+			if sid <= 0 {
+				continue
+			}
+			if _, err := db.GetProxyService(s.DB, sid); err != nil {
+				jsonErr(w, http.StatusBadRequest, "代理服务不存在: "+strconv.FormatInt(sid, 10))
+				return
+			}
+		}
+		extra, err := db.ListProxyServiceNodeIDs(s.DB, svcIDs)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		seen := map[int64]bool{}
+		for _, nid := range ids {
+			if nid > 0 {
+				seen[nid] = true
+			}
+		}
+		for _, nid := range extra {
+			if nid > 0 && !seen[nid] {
+				ids = append(ids, nid)
+				seen[nid] = true
+			}
+		}
+	}
+	if len(ids) == 0 && len(svcIDs) == 0 {
+		jsonErr(w, http.StatusBadRequest, "请选择节点或代理服务")
 		return
 	}
 	for _, nid := range ids {
+		if nid <= 0 {
+			continue
+		}
 		if err := db.GrantNode(s.DB, userID, nid, body.MaxForwards, body.TrafficQuotaBytes); err != nil {
 			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		db.WriteAudit(s.DB, u.ID, "user.grant_node", strconv.FormatInt(userID, 10), strconv.FormatInt(nid, 10))
+	}
+	for _, sid := range svcIDs {
+		if sid <= 0 {
+			continue
+		}
+		if err := db.GrantProxyService(s.DB, userID, sid); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		db.WriteAudit(s.DB, u.ID, "user.grant_proxy_service", strconv.FormatInt(userID, 10), strconv.FormatInt(sid, 10))
 	}
 	jsonOK(w, map[string]any{"ok": true})
 }
@@ -3244,6 +3304,33 @@ func (s *Server) apiRevokeNode(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "removed_rule_nodes": len(affected)})
 }
 
+// apiRevokeProxyService drops a protocol-level grant and any rules that used it.
+func (s *Server) apiRevokeProxyService(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	userID, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	serviceID, err := urlParamInt64(r, "serviceID")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad service id")
+		return
+	}
+	if err := db.RevokeProxyService(s.DB, userID, serviceID); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	affected, err := db.DeleteRulesForUserProxyService(s.DB, userID, serviceID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.apiDispatchFanout(affected)
+	db.WriteAudit(s.DB, u.ID, "user.revoke_proxy_service", strconv.FormatInt(userID, 10), strconv.FormatInt(serviceID, 10))
+	jsonOK(w, map[string]any{"ok": true, "removed_rule_nodes": len(affected)})
+}
+
 func (s *Server) apiBatchRevokeNodes(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	userID, err := urlParamInt64(r, "id")
@@ -3252,17 +3339,34 @@ func (s *Server) apiBatchRevokeNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		NodeIDs []int64 `json:"node_ids"`
+		NodeIDs         []int64 `json:"node_ids"`
+		ProxyServiceIDs []int64 `json:"proxy_service_ids"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	if len(body.NodeIDs) == 0 {
-		jsonErr(w, http.StatusBadRequest, "请选择节点")
+	if len(body.NodeIDs) == 0 && len(body.ProxyServiceIDs) == 0 {
+		jsonErr(w, http.StatusBadRequest, "请选择节点或代理服务")
 		return
 	}
 	var affected []int64
+	for _, sid := range body.ProxyServiceIDs {
+		if sid <= 0 {
+			continue
+		}
+		if err := db.RevokeProxyService(s.DB, userID, sid); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		nodes, err := db.DeleteRulesForUserProxyService(s.DB, userID, sid)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		affected = append(affected, nodes...)
+		db.WriteAudit(s.DB, u.ID, "user.revoke_proxy_service", strconv.FormatInt(userID, 10), strconv.FormatInt(sid, 10))
+	}
 	for _, nid := range body.NodeIDs {
 		if err := db.RevokeNode(s.DB, userID, nid); err != nil {
 			jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -3691,11 +3795,16 @@ func (s *Server) apiMyListRules(w http.ResponseWriter, r *http.Request) {
 	if proxyNodeIDs == nil {
 		proxyNodeIDs = []int64{}
 	}
+	proxyServiceIDs, _ := db.ListProxyServiceIDsForUser(s.DB, u.ID)
+	if proxyServiceIDs == nil {
+		proxyServiceIDs = []int64{}
+	}
 	jsonOK(w, map[string]any{
 		"rules": views, "nodes": grantedNodes,
 		"node_by_id": grantedByID, "show_rate": showRate == "1",
-		"bindings":       edges,
-		"proxy_node_ids": proxyNodeIDs,
+		"bindings":          edges,
+		"proxy_node_ids":    proxyNodeIDs,
+		"proxy_service_ids": proxyServiceIDs,
 	})
 }
 
@@ -3829,6 +3938,11 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 	grant, gerr := db.GetNodeGrant(s.DB, u.ID, body.NodeID)
 	if gerr != nil {
 		jsonErr(w, http.StatusForbidden, "无权使用该节点")
+		return
+	}
+	// Protocol-entry (代理 tab) also requires a per-service grant.
+	if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, u.ID, body.ProxyServiceID) {
+		jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
 		return
 	}
 
@@ -4037,6 +4151,10 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 	grant, gerr := db.GetNodeGrant(s.DB, u.ID, entryID)
 	if gerr != nil {
 		jsonErr(w, http.StatusForbidden, "无权使用该节点")
+		return
+	}
+	if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, u.ID, body.ProxyServiceID) {
+		jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
 		return
 	}
 	// Each middle-layer node is authorized on its own grant before the chain

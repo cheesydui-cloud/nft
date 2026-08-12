@@ -63,6 +63,11 @@ export default function UserDetail() {
     const deployed = data?.proxy_node_ids || []
     return (Array.isArray(deployed) ? deployed : []).map(Number).filter(id => granted.has(id))
   }, [data?.nodes, data?.proxy_node_ids])
+  // 协议级授权：只展示/可选这些 proxy_service_id（同节点其它协议不出现）。
+  const grantedProxyServiceIds = useMemo(
+    () => (Array.isArray(data?.proxy_service_ids) ? data.proxy_service_ids : []).map(Number).filter(id => id > 0),
+    [data?.proxy_service_ids],
+  )
 
   if (loading) return <Layout><Loading /></Layout>
   if (!data) return <Layout><Empty title="用户不存在" /></Layout>
@@ -459,6 +464,7 @@ export default function UserDetail() {
           allUsers={allUsers}
           userSpeedLimitMBytes={user.speed_limit_mbytes || 0}
           proxyNodeIds={data?.proxy_node_ids || []}
+          proxyServiceIds={grantedProxyServiceIds}
           onDone={load}
           embedded
         />
@@ -621,6 +627,7 @@ export default function UserDetail() {
         bindings={bindings}
         initial={{ owner_id: Number(id) }}
         proxyNodeIds={grantedProxyNodeIds}
+        proxyServiceIds={grantedProxyServiceIds}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.post('/rules', payload)
@@ -641,6 +648,7 @@ export default function UserDetail() {
         bindings={bindings}
         initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
         proxyNodeIds={grantedProxyNodeIds}
+        proxyServiceIds={grantedProxyServiceIds}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.put(`/rules/${editRule.id}`, payload)

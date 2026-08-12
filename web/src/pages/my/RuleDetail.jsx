@@ -17,6 +17,8 @@ export default function MyRuleDetail() {
   // endpoint computes the granted-intersection edges) — fetch it alongside
   // so the edit modal's middle-layer cascade has candidates to offer.
   const [bindings, setBindings] = useState([])
+  const [proxyServiceIds, setProxyServiceIds] = useState([])
+  const [proxyNodeIds, setProxyNodeIds] = useState([])
   // Admin-assigned landing nodes live on the server (unlike the user's own
   // browser-local URIs) — without this fetch the edit modal's exit picker
   // would only offer local nodes and silently fall back to a custom exit.
@@ -40,7 +42,12 @@ export default function MyRuleDetail() {
   const load = () => {
     setLoading(true)
     api.get(`/my/rules/${id}`).then(setData).catch(console.error).finally(() => setLoading(false))
-    api.get('/my/rules').then(d => setBindings(d?.bindings || [])).catch(console.error)
+    api.get('/my/rules').then(d => {
+      setBindings(d?.bindings || [])
+      setProxyServiceIds((d?.proxy_service_ids || []).map(Number).filter(x => x > 0))
+      const granted = new Set((d?.nodes || []).map(n => Number(n.id)).filter(x => x > 0))
+      setProxyNodeIds((d?.proxy_node_ids || []).map(Number).filter(x => granted.has(x)))
+    }).catch(console.error)
     api.get('/my/landing-nodes').then(d => setServerLanding(d?.nodes || [])).catch(console.error)
   }
   useEffect(load, [id])
@@ -130,6 +137,7 @@ export default function MyRuleDetail() {
       <RuleFormModal
         open={showEdit} onClose={() => setShowEdit(false)} title="编辑规则" submitLabel="保存并重下发"
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={showEdit ? ruleToForm(rule) : null}
+        proxyNodeIds={proxyNodeIds} proxyServiceIds={proxyServiceIds}
         onSubmit={saveEdit} showRate={show_rate} showStack={false} />
     </Layout>
   )

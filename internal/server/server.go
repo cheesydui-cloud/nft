@@ -762,6 +762,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/users", s.apiCreateUser)
 			r.Post("/users/{id}/grants", s.apiGrantNode)
 			r.Delete("/users/{id}/grants/{nodeID}", s.apiRevokeNode)
+			r.Delete("/users/{id}/proxy-grants/{serviceID}", s.apiRevokeProxyService)
 			r.Post("/users/{id}/grants/batch-revoke", s.apiBatchRevokeNodes)
 			r.Post("/users/{id}/quota", s.apiSetUserQuota)
 			r.Post("/users/{id}/max-forwards", s.apiSetMaxForwards)
