@@ -45,6 +45,12 @@ export default function UserDetail() {
     setLoading(true)
     api.get(`/users/${id}`).then(setData).catch(console.error).finally(() => setLoading(false))
   }
+  // Soft refresh: update user detail + role map without full-page Loading flash.
+  // Used after 落地导入/授权/用途变更 so 创建规则 immediately sees new IPs/线路.
+  const softRefresh = () => {
+    api.get(`/users/${id}`).then(setData).catch(console.error)
+    fetchNodeRoles().then(setNodeRoles).catch(() => {})
+  }
   useEffect(load, [id])
   useEffect(() => { api.get('/users').then(d => setAllUsers(d?.users || [])) }, [])
   useEffect(() => { api.get('/node-bindings').then(d => setBindings(d?.bindings || [])).catch(console.error) }, [])
@@ -465,7 +471,7 @@ export default function UserDetail() {
           userSpeedLimitMBytes={user.speed_limit_mbytes || 0}
           proxyNodeIds={data?.proxy_node_ids || []}
           proxyServiceIds={grantedProxyServiceIds}
-          onDone={load}
+          onDone={softRefresh}
           embedded
         />
       )}
@@ -478,6 +484,7 @@ export default function UserDetail() {
           nodes={landing_nodes}
           blurred={blurred}
           embedded
+          onDone={softRefresh}
         />
       )}
 
@@ -496,7 +503,7 @@ export default function UserDetail() {
                   测试全部
                 </button>
               )}
-              <button type="button" className="btn-primary text-xs" onClick={() => setCreateOpen(true)}>
+              <button type="button" className="btn-primary text-xs" onClick={() => { softRefresh(); setCreateOpen(true) }}>
                 ＋ 替用户创建规则
               </button>
             </div>
@@ -634,7 +641,7 @@ export default function UserDetail() {
           if (res?.warning) toast(res.warning, 'error')
           else toast('规则已创建')
           setCreateOpen(false)
-          load()
+          softRefresh()
         }}
       />
 
@@ -655,7 +662,7 @@ export default function UserDetail() {
           if (res?.warning) toast(res.warning, 'error')
           else toast('已保存并重下发')
           setEditRule(null)
-          load()
+          softRefresh()
         }}
       />
 

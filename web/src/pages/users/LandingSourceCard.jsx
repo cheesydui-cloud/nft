@@ -102,7 +102,7 @@ function ExitNameCell({ userId, name, exit, onDone }) {
   )
 }
 
-export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp, embedded = false }) {
+export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred: blurredProp, embedded = false, onDone }) {
   const blurred = blurredProp ?? useBlur()
   const [url, setUrl] = useState(subURL || '')
   const [text, setText] = useState(uris || '')
@@ -114,6 +114,12 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
   const [showRepoPicker, setShowRepoPicker] = useState(false)
   const toast = useToast()
 
+  // Parent user detail holds the source of truth for 创建规则; keep local form
+  // fields in sync when parent reloads after onDone.
+  useEffect(() => { setUrl(subURL || '') }, [subURL])
+  useEffect(() => { setText(uris || '') }, [uris])
+  useEffect(() => { setPreview(nodes || []) }, [nodes])
+
   useEffect(() => {
     api.get('/node-repo').catch(() => {})
     api.get('/users/' + userId + '/landing-exits')
@@ -123,8 +129,13 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
   }, [userId])
   useEffect(() => { setSel(new Set()) }, [preview])
 
-  const reloadLanding = () => {
-    api.get(`/users/${userId}/landing-exits`)
+  // Notify parent so 创建规则 modal sees fresh landing_nodes / roles without a
+  // full browser refresh.
+  const notifyParent = () => { try { onDone?.() } catch { /* ignore */ } }
+
+  const reloadLanding = (opts = {}) => {
+    const { notify = true } = opts
+    return api.get(`/users/${userId}/landing-exits`)
       .then(d => {
         const ex = d?.exits || []
         setExits(ex)
@@ -137,6 +148,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
           protocol: e.protocol || '',
           expires_at: e.expires_at || 0,
         })))
+        if (notify) notifyParent()
       })
       .catch(err => toast(err.message, 'error'))
   }
@@ -146,7 +158,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
     setLoading(true)
     try {
       await api.post(`/users/${userId}/landing`, { landing_sub_url: url.trim(), landing_uris: text })
-      reloadLanding()
+      await reloadLanding()
       toast('已保存')
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
   }
@@ -154,13 +166,13 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
   const resetExit = async (ex) => {
     try {
       await api.post(`/users/${userId}/landing-exits/reset`, { host: ex.host, port: ex.port })
-      toast('已重置'); reloadLanding()
+      toast('已重置'); reloadLanding({ notify: false })
     } catch (err) { toast(err.message, 'error') }
   }
   const deleteExit = async (ex) => {
     try {
       await api.post(`/users/${userId}/landing-exits/delete`, { host: ex.host, port: ex.port })
-      toast('已删除'); reloadLanding()
+      toast('已删除'); await reloadLanding()
     } catch (err) { toast(err.message, 'error') }
   }
 
@@ -169,6 +181,8 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
     setRoles(next)
     try {
       await saveNodeRoles(next)
+      // 落地/直连 用途变更后，创建规则的落地 IP 列表依赖父页 roles。
+      notifyParent()
     } catch (err) {
       toast(err.message || '保存用途失败', 'error')
       fetchNodeRoles().then(setRoles).catch(() => {})
@@ -179,6 +193,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
     setRoles(next)
     try {
       await saveNodeRoles(next)
+      notifyParent()
     } catch (err) {
       toast(err.message || '保存用途失败', 'error')
       fetchNodeRoles().then(setRoles).catch(() => {})
@@ -248,7 +263,7 @@ export default function LandingSourceCard({ userId, subURL, uris, nodes, blurred
             userId={userId}
             existingExits={exits}
             onClose={() => setShowRepoPicker(false)}
-            onDone={() => { setShowRepoPicker(false); reloadLanding() }}
+            onDone={() => { setShowRepoPicker(false); reloadLanding() /* notifies parent */ }}
           />
         )}
 
