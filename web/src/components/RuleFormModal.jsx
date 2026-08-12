@@ -46,6 +46,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const [loading, setLoading] = useState(false)
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
   const [localVariant, setLocalVariant] = useState(variant === 'chain' ? 'chain' : 'port')
+  // Select value for 选择线路: plain node_id or proxy:<serviceId>:<nodeId>.
+  // Must match option values so 代理 tab labels stick (form only stores node_id).
+  const [entrySelectValue, setEntrySelectValue] = useState('')
   const [proxyServices, setProxyServices] = useState([])
   const [repoSocksNodes, setRepoSocksNodes] = useState([]) // 落地仓库 socks5 节点（admin）
   const toast = useToast()
@@ -104,6 +107,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
       seed.exit_kind = 'landing'
     }
     setForm(seed)
+    setEntrySelectValue(seed.node_id != null && seed.node_id !== '' ? String(seed.node_id) : '')
     if (allowTypeSwitch) {
       // Prefill chain when editing a chain-like rule; default create to port.
       const looksChain = (seed.via_node_ids || []).length > 0
@@ -138,13 +142,15 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // and it emits string values while a seeded node_id may be a number — the
   // String() comparison keeps a same-entry reselect from clearing the chain.
   const pickEntry = (v) => {
-    // 代理 tab 选项 value 为 proxy:<serviceId>:<nodeId>，表单只存 node_id。
+    // 代理 tab 选项 value 为 proxy:<serviceId>:<nodeId>，表单只存 node_id；
+    // entrySelectValue 保留完整 option value，避免 Select 回落到单点同 id 标签。
     let nodeId = v
     const s = String(v || '')
     if (s.startsWith('proxy:')) {
       const parts = s.split(':')
       nodeId = parts[2] || parts[parts.length - 1]
     }
+    setEntrySelectValue(s)
     setForm(f =>
       String(nodeId) === String(f.node_id) ? f : { ...f, node_id: nodeId, via_node_ids: [] })
   }
@@ -437,7 +443,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
         <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
           <label className="fl">选择线路</label>
           <Select
-            value={form.node_id}
+            value={entrySelectValue}
             onChange={pickEntry}
             placeholder="-- 选择节点 --"
             searchable

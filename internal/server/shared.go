@@ -173,22 +173,45 @@ func (s *Server) fillRuleChains(items []ruleListItem, nodesByID map[int64]*db.No
 // classifyExit fills the exit-kind / proxy-URI fields. idx maps "host:port" to
 // the owner's landing nodes; withURI controls whether the copyable relay URI is
 // computed (skipped for the admin list, which only shows the kind badge).
+//
+// SOCKS5 exits (exit_type=socks5 + exit_uri) are not in the landing index: the
+// client-facing link is exit_uri with its authority rewritten to the rule's
+// entry host:port so QR/copy dial the relay instead of the SOCKS proxy directly.
+// ExitURI is always redacted for the JSON response after RelayURI is built from
+// the unredacted secret (buildRuleListItem embeds the raw db.Rule).
 func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) {
 	it.ExitKind = "custom"
 	relayHost, relayPort, entryOK := splitEntry(it.Entry)
 	if node, ok := idx[it.Exit]; ok {
-			it.ExitKind = "landing"
-			it.LandingName = node.Name
-			it.LandingProtocol = node.Protocol
-			it.LandingURI = node.URI
-			it.LandingExpiresAt = node.ExpiresAt
-			if withURI && entryOK {
-				if u, err := landing.RewriteEndpoint(node.URI, relayHost, relayPort); err == nil {
-					it.RelayURI = u
-				}
+		it.ExitKind = "landing"
+		it.LandingName = node.Name
+		it.LandingProtocol = node.Protocol
+		it.LandingURI = node.URI
+		it.LandingExpiresAt = node.ExpiresAt
+		if withURI && entryOK {
+			if u, err := landing.RewriteEndpoint(node.URI, relayHost, relayPort); err == nil {
+				it.RelayURI = u
+			}
+		}
+	} else if it.Rule != nil && it.ExitType == "socks5" {
+		// SK5 CONNECT target is rarely a landing node; still tag protocol for UI.
+		if it.LandingProtocol == "" {
+			it.LandingProtocol = "socks5"
+		}
+		src := strings.TrimSpace(it.ExitURI)
+		if withURI && entryOK && src != "" && !isRedactedExitURI(src) {
+			if u, err := landing.RewriteEndpoint(src, relayHost, relayPort); err == nil {
+				it.RelayURI = u
 			}
 		}
 	}
+	// Never leak SOCKS credentials in list/detail JSON.
+	if it.Rule != nil && it.ExitURI != "" {
+		cp := *it.Rule
+		cp.ExitURI = redactedExitURI(it.ExitURI)
+		it.Rule = &cp
+	}
+}
 
 // splitEntry parses a "host:port" entry string; entry is "—" before the rule's
 // first regeneration, which fails the split and reports ok=false.

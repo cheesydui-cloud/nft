@@ -65,4 +65,69 @@ func TestClassifyExit(t *testing.T) {
 			t.Fatalf("kind=%q relay=%q, want landing with empty relay", it.ExitKind, it.RelayURI)
 		}
 	})
+
+	t.Run("socks5 exit rewrites exit_uri to entry for copy/QR", func(t *testing.T) {
+		it := ruleListItem{
+			Rule: &db.Rule{
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@proxy.example:1080",
+			},
+			Entry: "relay.example:10001",
+			Exit:  "10.0.0.1:443",
+		}
+		it.classifyExit(idx, true)
+		if it.ExitKind != "custom" {
+			t.Fatalf("kind = %q, want custom", it.ExitKind)
+		}
+		if it.LandingProtocol != "socks5" {
+			t.Errorf("landing_protocol = %q, want socks5", it.LandingProtocol)
+		}
+		want := "socks5://alice:s3cret@relay.example:10001"
+		if it.RelayURI != want {
+			t.Errorf("relay_uri = %q, want %q", it.RelayURI, want)
+		}
+		// ExitURI must be redacted in the embedded rule after classify.
+		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
+			t.Errorf("exit_uri after classify = %q, want redacted", it.ExitURI)
+		}
+	})
+
+	t.Run("socks5 without entry omits relay uri but still redacts", func(t *testing.T) {
+		it := ruleListItem{
+			Rule: &db.Rule{
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@proxy.example:1080",
+			},
+			Entry: "—",
+			Exit:  "10.0.0.1:443",
+		}
+		it.classifyExit(idx, true)
+		if it.RelayURI != "" {
+			t.Fatalf("relay_uri = %q, want empty before entry ready", it.RelayURI)
+		}
+		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
+			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+		}
+	})
+
+	t.Run("socks5 withURI=false omits relay but redacts exit_uri", func(t *testing.T) {
+		it := ruleListItem{
+			Rule: &db.Rule{
+				ExitHost: "10.0.0.1", ExitPort: 443,
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@proxy.example:1080",
+			},
+			Entry: "relay.example:10001",
+			Exit:  "10.0.0.1:443",
+		}
+		it.classifyExit(idx, false)
+		if it.RelayURI != "" {
+			t.Fatalf("relay_uri = %q, want empty when withURI=false", it.RelayURI)
+		}
+		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
+			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+		}
+	})
 }
