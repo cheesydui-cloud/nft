@@ -1,13 +1,25 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import { Modal, Select, ProbeButton, nodeStack, NodeTypeIcon } from './ui'
 import { useToast } from './Layout'
 import { tryParseURI } from '../lib/landing'
 import { fmtDate } from '../lib/fmt'
+import { api } from '../lib/api'
 
 const EMPTY = {
   node_id: '', owner_id: 0, name: '', proto: 'tcp', exit: '', exit_kind: 'custom',
   exit_type: 'direct', exit_uri: '',
   entry_port: '', comment: '', mode: 'kernel', via_node_ids: [],
+}
+
+const PROTO_LABEL = {
+  vless: 'VLESS',
+  shadowsocks: 'Shadowsocks',
+  mieru: 'mieru',
+  socks5: 'SOCKS5',
+  socks: 'SOCKS5',
+  anytls: 'AnyTLS',
+  naive: 'Naive',
+  naiveproxy: 'Naive',
 }
 
 /* Shared create/edit form for forwarding rules, used by both the admin
@@ -34,12 +46,25 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const [loading, setLoading] = useState(false)
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
   const [localVariant, setLocalVariant] = useState(variant === 'chain' ? 'chain' : 'port')
+  const [proxyServices, setProxyServices] = useState([])
   const toast = useToast()
 
   const landingEnabled = Array.isArray(landingNodes)
   const effectiveVariant = variant === 'port' || variant === 'chain' ? variant : localVariant
   const allowTypeSwitch = variant !== 'port' && variant !== 'chain'
-  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set(proxyNodeIds || [])
+  const proxyIds = useMemo(() => (
+    proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
+  ), [proxyNodeIds])
+
+  // Admin surfaces can load 代理服务 for service-name labels on the 代理 tab.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api.get('/proxy-services')
+      .then(d => { if (!cancelled) setProxyServices(d?.services || []) })
+      .catch(() => { if (!cancelled) setProxyServices([]) })
+    return () => { cancelled = true }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -187,7 +212,30 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // Port variant never shows the composite tab; proxy tab still filters composites out for port.
   const singleOpts = entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption)
   const compositeOpts = entryNodes.filter(n => n.node_type === 'composite').map(nodeOption)
-  const proxyOpts = entryNodes.filter(n => proxyIds.has(Number(n.id)) && (isPort ? n.node_type !== 'composite' : true)).map(nodeOption)
+  // 代理 tab: prefer 代理服务 names (same list as 代理服务 page); value remains node_id.
+  const entryById = Object.fromEntries(entryNodes.map(n => [Number(n.id), n]))
+  const proxyOptsFromServices = []
+  const seenProxyNodes = new Set()
+  for (const s of proxyServices || []) {
+    const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
+    for (const nid of nids) {
+      const n = entryById[nid]
+      if (!n) continue
+      if (isPort && n.node_type === 'composite') continue
+      if (seenProxyNodes.has(nid)) continue
+      seenProxyNodes.add(nid)
+      const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
+      let label = s.name || n.name || '(未命名)'
+      if (n.name && n.name !== s.name) label = `${s.name || '(未命名)'} · ${n.name}`
+      if (proto) label = `[${proto}] ${label}`
+      // Keep rate/stack suffix consistent with other tabs when applicable.
+      const base = nodeOption(n)
+      proxyOptsFromServices.push({ ...base, label: showRate === false ? label : (base.label.includes('(×') ? `${label} ${base.label.slice(base.label.indexOf('(×'))}` : label) })
+    }
+  }
+  const proxyOpts = proxyOptsFromServices.length
+    ? proxyOptsFromServices
+    : entryNodes.filter(n => proxyIds.has(Number(n.id)) && (isPort ? n.node_type !== 'composite' : true)).map(nodeOption)
   const groups = isPort
     ? [
         { label: '单点', options: singleOpts },

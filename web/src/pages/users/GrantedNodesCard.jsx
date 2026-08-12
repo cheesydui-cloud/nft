@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { fmtTrafficGB } from '../../lib/fmt'
@@ -167,25 +167,112 @@ function AdminRoleBulkToggle({ nodes, roleOf, onToggle }) {
   )
 }
 
-function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, onDone }) {
-  const [nodeIds, setNodeIds] = useState([])
+const PROTO_LABEL = {
+  vless: 'VLESS',
+  shadowsocks: 'Shadowsocks',
+  mieru: 'mieru',
+  socks5: 'SOCKS5',
+  socks: 'SOCKS5',
+  anytls: 'AnyTLS',
+  naive: 'Naive',
+  naiveproxy: 'Naive',
+}
+
+function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, proxyServices: proxyServicesProp, onDone }) {
+  const [selected, setSelected] = useState([]) // string values: node id or "svc:<id>"
   const [max, setMax] = useState('10')
   const [loading, setLoading] = useState(false)
+  const [proxyServicesLocal, setProxyServicesLocal] = useState([])
   const toast = useToast()
-  if (!allNodes?.length) return <Empty desc={<Link to="/nodes" className="text-emerald-600 text-xs font-semibold">请先创建节点</Link>} />
 
-  const grantedIds = new Set((grantedNodes || []).map(n => n.id))
-  const available = allNodes.filter(n => !grantedIds.has(n.id))
-  if (!available.length) return <div className="text-xs text-ink-mut">所有节点均已授权</div>
-  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
+  useEffect(() => {
+    // Parent may already load 代理服务; only fetch if not provided.
+    if (Array.isArray(proxyServicesProp) && proxyServicesProp.length) return
+    let cancelled = false
+    api.get('/proxy-services')
+      .then(d => { if (!cancelled) setProxyServicesLocal(d?.services || []) })
+      .catch(() => { if (!cancelled) setProxyServicesLocal([]) })
+    return () => { cancelled = true }
+  }, [proxyServicesProp])
+
+  const proxyServices = (Array.isArray(proxyServicesProp) && proxyServicesProp.length)
+    ? proxyServicesProp
+    : proxyServicesLocal
+
+  const grantedIds = useMemo(
+    () => new Set((grantedNodes || []).map(n => Number(n.id))),
+    [grantedNodes],
+  )
+  const available = useMemo(
+    () => (allNodes || []).filter(n => !grantedIds.has(Number(n.id))),
+    [allNodes, grantedIds],
+  )
+  const proxyIds = useMemo(() => {
+    if (proxyNodeIds instanceof Set) return proxyNodeIds
+    return new Set((proxyNodeIds || []).map(Number))
+  }, [proxyNodeIds])
+
+  // 代理 tab = 代理服务列表视角（与「代理服务」页一致）；选中后展开为 node_id 授权。
+  const { proxyOpts, svcNodeMap } = useMemo(() => {
+    const nodeById = Object.fromEntries((allNodes || []).map(n => [Number(n.id), n]))
+    const opts = []
+    const map = {} // svc:<id> -> node_ids[]
+    for (const s of proxyServices || []) {
+      const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0 && nodeById[id])
+      if (!nids.length) continue
+      const ungranted = nids.filter(id => !grantedIds.has(id))
+      if (!ungranted.length) continue
+      const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
+      const key = `svc:${s.id}`
+      map[key] = ungranted
+      // 展示服务名（对齐代理服务列表）；多节点时补节点名
+      let label = s.name || '(未命名服务)'
+      if (ungranted.length === 1) {
+        const node = nodeById[ungranted[0]]
+        if (node?.name && node.name !== s.name) label = `${label} · ${node.name}`
+      } else {
+        label = `${label} · ${ungranted.length} 节点`
+      }
+      if (proto) label = `[${proto}] ${label}`
+      opts.push({ value: key, label })
+    }
+    if (opts.length) return { proxyOpts: opts, svcNodeMap: map }
+    // Soft fallback: physical nodes hosting any proxy instance
+    const fallback = available
+      .filter(n => proxyIds.has(Number(n.id)))
+      .map(n => ({ value: String(n.id), label: n.name }))
+    return { proxyOpts: fallback, svcNodeMap: {} }
+  }, [proxyServices, allNodes, grantedIds, available, proxyIds])
+
+  if (!allNodes?.length) {
+    return <Empty desc={<Link to="/nodes" className="text-emerald-600 text-xs font-semibold">请先创建节点</Link>} />
+  }
+  if (!available.length && !proxyOpts.length) {
+    return <div className="text-xs text-ink-mut">所有节点均已授权</div>
+  }
+
+  const resolveNodeIds = (vals) => {
+    const ids = new Set()
+    for (const v of vals || []) {
+      const s = String(v)
+      if (s.startsWith('svc:')) {
+        for (const nid of (svcNodeMap[s] || [])) ids.add(Number(nid))
+      } else {
+        const n = Number(s)
+        if (n > 0) ids.add(n)
+      }
+    }
+    return [...ids]
+  }
 
   const submit = async (e) => {
     e.preventDefault()
+    const nodeIds = resolveNodeIds(selected)
     if (!nodeIds.length) { toast('请选择节点', 'error'); return }
     setLoading(true)
     try {
-      await api.post(`/users/${userId}/grants`, { node_ids: nodeIds.map(Number), max_forwards: Number(max) })
-      toast(`已授权 ${nodeIds.length} 个节点`); setNodeIds([]); onDone()
+      await api.post(`/users/${userId}/grants`, { node_ids: nodeIds, max_forwards: Number(max) })
+      toast(`已授权 ${nodeIds.length} 个节点`); setSelected([]); onDone()
     } catch (err) { toast(err.message, 'error') } finally { setLoading(false) }
   }
   return (
@@ -196,11 +283,11 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, onDone })
           <label className="fl">节点规则数上限</label>
           <input className="input-field font-mono" type="number" min="1" value={max} onChange={e => setMax(e.target.value)} style={{ maxWidth: 160 }} />
           <label className="fl">节点 <span className="text-ink-mut font-normal text-xs">(可多选)</span></label>
-          <Select value={nodeIds} onChange={setNodeIds} placeholder="-- 选择 --" searchable multiple tabs
+          <Select value={selected} onChange={setSelected} placeholder="-- 选择 --" searchable multiple tabs
             groups={[
               { label: '单点', options: available.filter(n => n.node_type !== 'composite').map(n => ({ value: n.id, label: n.name })) },
               { label: '组合', options: available.filter(n => n.node_type === 'composite').map(n => ({ value: n.id, label: n.name })) },
-              { label: '代理', options: available.filter(n => proxyIds.has(Number(n.id))).map(n => ({ value: n.id, label: n.name })) },
+              { label: '代理', options: proxyOpts },
             ]} />
         </div>
         <button type="submit" disabled={loading} className="btn-primary text-xs">授权</button>
@@ -214,10 +301,29 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
   const [selected, setSelected] = useState(new Set())
   const [revoking, setRevoking] = useState(false)
   const [showPaste, setShowPaste] = useState(false)
+  const [proxyServices, setProxyServices] = useState([])
   const toast = useToast()
   const confirm = useConfirm()
 
-  const proxyIds = proxyNodeIds instanceof Set ? proxyNodeIds : new Set((proxyNodeIds || []).map(Number))
+  useEffect(() => {
+    let cancelled = false
+    api.get('/proxy-services')
+      .then(d => { if (!cancelled) setProxyServices(d?.services || []) })
+      .catch(() => { if (!cancelled) setProxyServices([]) })
+    return () => { cancelled = true }
+  }, [])
+
+  const proxyIds = useMemo(() => {
+    const ids = new Set(proxyNodeIds instanceof Set ? [...proxyNodeIds].map(Number) : (proxyNodeIds || []).map(Number))
+    // Prefer live 代理服务 coverage so chip/list match the 代理服务 page.
+    for (const s of proxyServices || []) {
+      for (const nid of s.deployed_node_ids || []) {
+        if (nid > 0) ids.add(Number(nid))
+      }
+    }
+    return ids
+  }, [proxyNodeIds, proxyServices])
+
   const singleNodes = nodes.filter(n => n.node_type !== 'composite')
   const compositeNodes = nodes.filter(n => n.node_type === 'composite')
   const proxyNodes = nodes.filter(n => proxyIds.has(Number(n.id)))
@@ -353,7 +459,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
         <Empty title="尚未授权任何线路" />
       )}
       <div className="p-5 border-t border-line-soft">
-        <GrantNodeForm userId={userId} allNodes={allNodes} grantedNodes={nodes} proxyNodeIds={proxyIds} onDone={onDone} />
+        <GrantNodeForm userId={userId} allNodes={allNodes} grantedNodes={nodes} proxyNodeIds={proxyIds} proxyServices={proxyServices} onDone={onDone} />
       </div>
       {showPaste && <PasteGrantsModal open={showPaste} onClose={() => setShowPaste(false)} onDone={onDone}
         allNodes={allNodes} allUsers={allUsers} preSelectedUserIds={[Number(userId)]} />}
