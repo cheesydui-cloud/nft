@@ -282,14 +282,38 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     const hostPart = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
     return `socks5://${hostPart}:${port}`
   }
-  // value 用 repo:<id>，避免同 URI 多节点冲突；选中后再写入真实 URI。
+  // value 用 repo:<id>，避免同 URI 多节点冲突；选中后写入 URI + CONNECT 目标 host:port。
+  const fmtHostPort = (host, port) => {
+    const h = String(host || '').trim()
+    const p = Number(port) || 0
+    if (!h || !p) return ''
+    return h.includes(':') && !h.startsWith('[') ? `[${h}]:${p}` : `${h}:${p}`
+  }
+  const hostPortFromSocksURI = (uri) => {
+    const s = String(uri || '').trim()
+    if (!s) return ''
+    try {
+      // URL() 对 socks5:// 可用；user:pass@ 会解析到 hostname/port
+      const u = new URL(s)
+      if (u.hostname && u.port) return fmtHostPort(u.hostname, u.port)
+      if (u.hostname && u.host.includes(':')) {
+        // 少数环境 port 为空但 host 带端口
+        return u.host
+      }
+    } catch { /* fall through */ }
+    // 兜底：取 @ 后或协议后的 host:port
+    const m = s.match(/^(?:socks5?:\/\/)?(?:[^@/]+@)?(\[[^\]]+\]|[^:/?#]+):(\d+)/i)
+    if (m) return fmtHostPort(m[1].replace(/^\[|\]$/g, ''), m[2])
+    return ''
+  }
   const repoSocksByKey = {}
   const repoSocksOptions = []
   for (const n of repoSocksNodes || []) {
     const uri = buildRepoSocksURI(n)
     if (!uri) continue
     const key = `repo:${n.id}`
-    repoSocksByKey[key] = uri
+    const connect = fmtHostPort(n.host, n.port) || hostPortFromSocksURI(uri)
+    repoSocksByKey[key] = { uri, connect, name: n.name || '' }
     const proto = String(n.protocol || 'socks5').toLowerCase() || 'socks5'
     const label = `${n.name || '(未命名)'}${n.host ? ` · ${n.host}:${n.port || ''}` : ''}`
     repoSocksOptions.push({ value: key, label: `[${proto}] ${label}` })
@@ -297,11 +321,24 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const repoSocksSelectValue = (() => {
     const cur = String(form.exit_uri || '').trim()
     if (!cur) return ''
-    for (const [k, uri] of Object.entries(repoSocksByKey)) {
-      if (uri === cur) return k
+    for (const [k, meta] of Object.entries(repoSocksByKey)) {
+      if (meta.uri === cur) return k
     }
     return ''
   })()
+  const applyRepoSocks = (key) => {
+    const meta = repoSocksByKey[key]
+    if (!meta?.uri) return
+    setForm(f => {
+      const next = { ...f, exit_uri: meta.uri }
+      // 导入时自动填 CONNECT 目标；已有目标则覆盖为该 SK5 节点地址（与仓库一致）
+      if (meta.connect) next.exit = meta.connect
+      // 名称/备注为空时用仓库节点名轻量预填
+      if (!String(f.name || '').trim() && meta.name) next.name = meta.name
+      if (!String(f.comment || '').trim() && meta.name) next.comment = meta.name
+      return next
+    })
+  }
 
   // Show protocol + node remark only — the real connection address is hidden
   // from the picker. The value stays host:port (the rule's exit target).
@@ -521,10 +558,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               <div className="space-y-2 min-w-0">
                 <Select
                   value={repoSocksSelectValue}
-                  onChange={v => {
-                    const uri = repoSocksByKey[v] || ''
-                    if (uri) set('exit_uri', uri)
-                  }}
+                  onChange={v => applyRepoSocks(v)}
                   placeholder={repoSocksOptions.length ? '-- 从落地仓库导入 --' : '落地仓库暂无 SOCKS5'}
                   searchable={repoSocksOptions.length > 0}
                   disabled={repoSocksOptions.length === 0}
@@ -534,6 +568,13 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                   className="input-field font-mono"
                   value={form.exit_uri || ''}
                   onChange={e => set('exit_uri', e.target.value)}
+                  onBlur={() => {
+                    // 手填 URI 且 CONNECT 为空时，自动识别 host:port
+                    const uri = String(form.exit_uri || '').trim()
+                    if (!uri || String(form.exit || '').trim()) return
+                    const hp = hostPortFromSocksURI(uri)
+                    if (hp) set('exit', hp)
+                  }}
                   required
                   placeholder="socks5://user:pass@proxy:1080（可导入或手填）"
                 />
