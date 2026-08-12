@@ -99,6 +99,29 @@ function UserRoute({ children }) {
   return children
 }
 
+// 用户端「线路 + 落地」双满足才可进 代理转发 / 落地 / 我的代理
+function UserForwardRoute({ children }) {
+  const { user } = useUser()
+  if (user === undefined) return <Loading />
+  if (user === null) return <Navigate to="/login" replace />
+  if (user.role === 'admin') return <Navigate to="/" replace />
+  if (!(user.has_line_grant && user.has_landing_source)) {
+    return <Navigate to="/my" replace />
+  }
+  return children
+}
+
+function ProxiesGate() {
+  const { user } = useUser()
+  if (user === undefined) return <Loading />
+  if (user === null) return <Navigate to="/login" replace />
+  // Admin keeps optional 我的代理; user needs line grant + landing.
+  if (user.role !== 'admin' && !(user.has_line_grant && user.has_landing_source)) {
+    return <Navigate to="/my" replace />
+  }
+  return <Proxies />
+}
+
 function RootRedirect() {
   const { user } = useUser()
   if (user === undefined) return <Loading />
@@ -149,13 +172,13 @@ export default function App() {
 
           {/* Regular user routes */}
           <Route path="/my" element={<UserRoute><MyDashboard /></UserRoute>} />
-          <Route path="/my/rules" element={<UserRoute><MyRules /></UserRoute>} />
-          <Route path="/my/rules/:id" element={<UserRoute><MyRuleDetail /></UserRoute>} />
-          <Route path="/my/landing" element={<UserRoute><MyLandingNodes /></UserRoute>} />
+          <Route path="/my/rules" element={<UserForwardRoute><MyRules /></UserForwardRoute>} />
+          <Route path="/my/rules/:id" element={<UserForwardRoute><MyRuleDetail /></UserForwardRoute>} />
+          <Route path="/my/landing" element={<UserForwardRoute><MyLandingNodes /></UserForwardRoute>} />
           <Route path="/my/docs" element={<UserRoute><MyDocs /></UserRoute>} />
 
-          {/* Shared routes */}
-          <Route path="/proxies" element={<ProtectedRoute><Proxies /></ProtectedRoute>} />
+          {/* Shared routes — 我的代理：管理员可进；用户须线路+落地 */}
+          <Route path="/proxies" element={<ProtectedRoute><ProxiesGate /></ProtectedRoute>} />
           <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
 
           <Route path="*" element={<NotFound />} />

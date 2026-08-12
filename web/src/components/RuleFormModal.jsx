@@ -77,28 +77,36 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     return () => { cancelled = true }
   }, [open])
 
-  // 链式 SK5：从落地仓库导入 socks5 节点（admin 可读 /node-repo）。
+  // 链式 SK5 候选：管理员从落地仓库；用户端从已分配落地（landingNodes）筛 SOCKS5。
   useEffect(() => {
     if (!open) return
+    const isSocks = (n) => {
+      const p = String(n.protocol || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const uri = String(n.uri || '').trim().toLowerCase()
+      if (p === 'socks5' || p === 'socks' || p === 'sk5' || p === 'sock') return true
+      if (uri.startsWith('socks5://') || uri.startsWith('socks://')) return true
+      const blob = `${n.name || ''} ${n.remark || ''}`.toLowerCase()
+      if ((blob.includes('socks') || blob.includes('sk5')) && n.host && n.port) return true
+      return false
+    }
+    // 用户端（showStack=false）：只用管理员分配的落地，禁止手填、不读仓库。
+    if (showStack === false) {
+      const fromLanding = (landingNodes || []).filter(isSocks).map((n, i) => ({
+        ...n,
+        id: n.id ?? `land-${n.host}-${n.port}-${i}`,
+      }))
+      setRepoSocksNodes(fromLanding)
+      return
+    }
     let cancelled = false
     api.get('/node-repo')
       .then(d => {
         if (cancelled) return
-        const isSocks = (n) => {
-          const p = String(n.protocol || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-          const uri = String(n.uri || '').trim().toLowerCase()
-          if (p === 'socks5' || p === 'socks' || p === 'sk5' || p === 'sock') return true
-          if (uri.startsWith('socks5://') || uri.startsWith('socks://')) return true
-          // 名称/备注里写了 socks 且有 host:port 也纳入（快捷添加后 protocol 偶发为空时兜底）
-          const blob = `${n.name || ''} ${n.remark || ''}`.toLowerCase()
-          if ((blob.includes('socks') || blob.includes('sk5')) && n.host && n.port) return true
-          return false
-        }
         setRepoSocksNodes((d?.nodes || []).filter(isSocks))
       })
       .catch(() => { if (!cancelled) setRepoSocksNodes([]) })
     return () => { cancelled = true }
-  }, [open])
+  }, [open, showStack, landingNodes])
 
   useEffect(() => {
     if (!open) return
@@ -208,10 +216,16 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
       }
     }
     if (isSocks) {
-      if (!form.exit_uri?.trim()) { toast('请填写 SOCKS5 代理 URI', 'error'); return }
+      if (!form.exit_uri?.trim()) {
+        toast(showStack === false
+          ? '请从列表选择 SOCKS5 落地节点'
+          : '请填写 SOCKS5 代理 URI', 'error')
+        return
+      }
       // 代理入口 + SK5：协议面为开放代理，CONNECT 可空（用 SK5 host:port 占位入库）。
       // 纯 L4+ExitProxy 路径仍要求显式 CONNECT 业务目标。
-      if (!form.exit?.trim() && !(Number(form.proxy_service_id) > 0)) {
+      // 用户端（showStack=false）不展示 CONNECT 手填，允许空并用 SK5 host:port 占位。
+      if (!form.exit?.trim() && !(Number(form.proxy_service_id) > 0) && showStack !== false) {
         toast('请填写 CONNECT 目标 host:port', 'error')
         return
       }
@@ -226,7 +240,8 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
         payload.proto = 'tcp'
         payload.mode = 'userspace'
         payload.exit_type = 'socks5'
-        if (!String(payload.exit || '').trim() && Number(payload.proxy_service_id) > 0) {
+        // 用户端不填 CONNECT：用 SK5 URI 的 host:port 占位；代理入口同理。
+        if (!String(payload.exit || '').trim()) {
           payload.exit = hostPortFromSocksURI(payload.exit_uri) || payload.exit
         }
       } else if (isPort || form.exit_type !== 'socks5') {
@@ -619,63 +634,90 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             <>
               <label className="fl">SK5 代理</label>
               <div className="space-y-2 min-w-0">
-                <Select
-                  value={repoSocksSelectValue}
-                  onChange={v => applyRepoSocks(v)}
-                  placeholder={repoSocksOptions.length ? '-- 从落地仓库导入 --' : '落地仓库暂无 SOCKS5'}
-                  searchable={repoSocksOptions.length > 0}
-                  disabled={repoSocksOptions.length === 0}
-                  options={repoSocksOptions.length ? repoSocksOptions : [{ value: '', label: '暂无 SOCKS5 节点，请先在落地仓库添加' }]}
-                />
-                <input
-                  className="input-field font-mono"
-                  value={form.exit_uri || ''}
-                  onChange={e => set('exit_uri', e.target.value)}
-                  onBlur={() => {
-                    // 手填 URI 且 CONNECT 为空时，自动识别 host:port
-                    const uri = String(form.exit_uri || '').trim()
-                    if (!uri || String(form.exit || '').trim()) return
-                    const hp = hostPortFromSocksURI(uri)
-                    if (hp) set('exit', hp)
-                  }}
-                  required
-                  placeholder="socks5://user:pass@proxy:1080（可导入或手填）"
-                />
-                <div className="text-[11px] text-ink-mut">
-                  {repoSocksOptions.length
-                    ? `可从落地仓库导入（${repoSocksOptions.length} 个 SOCKS5），也可手动填写 URI`
-                    : '落地仓库暂无 SOCKS5 节点：请到「落地仓库 → 添加节点 → SOCKS5 快捷」添加后再导入'}
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <Select
+                      value={repoSocksSelectValue}
+                      onChange={v => applyRepoSocks(v)}
+                      placeholder={repoSocksOptions.length
+                        ? (showStack === false ? '-- 选择 SOCKS5 落地 --' : '-- 从落地仓库导入 --')
+                        : (showStack === false ? '暂无可用 SOCKS5 落地' : '落地仓库暂无 SOCKS5')}
+                      searchable={repoSocksOptions.length > 0}
+                      disabled={repoSocksOptions.length === 0}
+                      options={repoSocksOptions.length
+                        ? repoSocksOptions
+                        : [{ value: '', label: showStack === false ? '暂无 SOCKS5 落地，请联系管理员分配' : '暂无 SOCKS5 节点，请先在落地仓库添加' }]}
+                    />
+                    {/* 用户端禁止手填 SK5 URI；管理员保留导入/手填 */}
+                    {showStack !== false && (
+                      <input
+                        className="input-field font-mono"
+                        value={form.exit_uri || ''}
+                        onChange={e => set('exit_uri', e.target.value)}
+                        onBlur={() => {
+                          const uri = String(form.exit_uri || '').trim()
+                          if (!uri || String(form.exit || '').trim()) return
+                          const hp = hostPortFromSocksURI(uri)
+                          if (hp) set('exit', hp)
+                        }}
+                        required
+                        placeholder="socks5://user:pass@proxy:1080（可导入或手填）"
+                      />
+                    )}
+                    <div className="text-[11px] text-ink-mut">
+                      {showStack === false
+                        ? (repoSocksOptions.length
+                          ? `请从列表选择 SOCKS5 节点（${repoSocksOptions.length} 个）`
+                          : '暂无可用 SOCKS5 节点，请联系管理员在落地中分配')
+                        : (repoSocksOptions.length
+                          ? `可从落地仓库导入（${repoSocksOptions.length} 个 SOCKS5），也可手动填写 URI`
+                          : '落地仓库暂无 SOCKS5 节点：请到「落地仓库 → 添加节点 → SOCKS5 快捷」添加后再导入')}
+                    </div>
+                  </div>
+                  {/* 用户端：测试挂在 SK5 选择旁；管理员仍在 CONNECT 行 */}
+                  {showStack === false && (
+                    <ProbeButton
+                      target={form.exit || hostPortFromSocksURI(form.exit_uri)}
+                      nodeId={tailNode?.id ?? form.node_id}
+                      disabled={!form.node_id || !(form.exit || hostPortFromSocksURI(form.exit_uri))}
+                      disabledTitle={!form.node_id ? '请先选择线路' : '请先选择 SOCKS5 节点'}
+                    />
+                  )}
                 </div>
               </div>
-              <label className="fl">
-                CONNECT 目标
-                {Number(form.proxy_service_id) > 0 && (
-                  <span className="text-ink-mut font-normal text-xs ml-1">(开放代理可留空)</span>
-                )}
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  className="input-field font-mono flex-1"
-                  value={form.exit}
-                  onChange={e => set('exit', e.target.value)}
-                  required={!(Number(form.proxy_service_id) > 0)}
-                  placeholder={Number(form.proxy_service_id) > 0
-                    ? '开放代理：可留空（客户端目标经 SK5 透传）'
-                    : 'host:port（业务目标）'}
-                />
-                <ProbeButton
-                  target={form.exit}
-                  nodeId={tailNode?.id ?? form.node_id}
-                  disabled={!form.node_id || !form.exit}
-                  disabledTitle={!form.node_id ? '请先选择线路' : '请先填写目标 host:port'}
-                />
-              </div>
-              <label className="fl"></label>
-              <div className="text-xs text-ink-mut">
-                {Number(form.proxy_service_id) > 0
-                  ? '已选「代理」入口（对齐 3x-ui）：入口协议入站 + SK5 开放出站（客户端目标透传）。CONNECT 可留空。'
-                  : '可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。'}
-              </div>
+              {showStack !== false && (
+                <>
+                  <label className="fl">
+                    CONNECT 目标
+                    {Number(form.proxy_service_id) > 0 && (
+                      <span className="text-ink-mut font-normal text-xs ml-1">(开放代理可留空)</span>
+                    )}
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      className="input-field font-mono flex-1"
+                      value={form.exit}
+                      onChange={e => set('exit', e.target.value)}
+                      required={!(Number(form.proxy_service_id) > 0)}
+                      placeholder={Number(form.proxy_service_id) > 0
+                        ? '开放代理：可留空（客户端目标经 SK5 透传）'
+                        : 'host:port（业务目标）'}
+                    />
+                    <ProbeButton
+                      target={form.exit}
+                      nodeId={tailNode?.id ?? form.node_id}
+                      disabled={!form.node_id || !form.exit}
+                      disabledTitle={!form.node_id ? '请先选择线路' : '请先填写目标 host:port'}
+                    />
+                  </div>
+                  <label className="fl"></label>
+                  <div className="text-xs text-ink-mut">
+                    {Number(form.proxy_service_id) > 0
+                      ? '已选「代理」入口（对齐 3x-ui）：入口协议入站 + SK5 开放出站（客户端目标透传）。CONNECT 可留空。'
+                      : '可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。'}
+                  </div>
+                </>
+              )}
             </>
           ) : landingEnabled ? (
             <>

@@ -17,6 +17,13 @@
         var dark = t === 'dark' || (t == null && window.matchMedia('(prefers-color-scheme: dark)').matches)
         if (dark) document.documentElement.classList.add('dark')
       })()
+      // Prefer cached panel name immediately; server also rewrites <title> on HTML.
+      (function () {
+        try {
+          var n = localStorage.getItem('nf-panel-name')
+          if (n && n.trim()) document.title = n.trim()
+        } catch (e) {}
+      })()
     </script>
   </head>
   <body>

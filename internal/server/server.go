@@ -67,29 +67,29 @@ func NewWithPaths(d *sql.DB, docsDir, dbPath string) (*Server, error) {
 	}
 	hub := NewHub(d)
 	disp := &Dispatcher{DB: d, Hub: hub}
-		s := &Server{
-			DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
-			DocsDir: docsDir, DBPath: dbPath,
-			loginLimiter: newLoginLimiter(),
-			stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
-			stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
-			stopACME: make(chan struct{}),
-			stopAll:  make(chan struct{}),
-		}
-		hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
-			s.enforcePerNodeQuota(userID, nodeID)
-			s.enforceUserQuota(userID)
-			s.enforceExitQuota(userID)
-		}
-		hub.Redispatch = s.redispatchNodes
-		s.enforcerWg.Add(5)
-		safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
-		safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
-		safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
-		safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
-		safeGo(func() { defer s.enforcerWg.Done(); s.acmeRenewEnforcer() })
-		return s, nil
+	s := &Server{
+		DB: d, Hub: hub, Dispatcher: disp, Landing: landing.NewFetcher(),
+		DocsDir: docsDir, DBPath: dbPath,
+		loginLimiter: newLoginLimiter(),
+		stopExpiry:   make(chan struct{}), stopCycle: make(chan struct{}),
+		stopLandingSync: make(chan struct{}), stopLandingExpiry: make(chan struct{}),
+		stopACME: make(chan struct{}),
+		stopAll:  make(chan struct{}),
 	}
+	hub.OnTrafficUpdate = func(userID int64, nodeID int64) {
+		s.enforcePerNodeQuota(userID, nodeID)
+		s.enforceUserQuota(userID)
+		s.enforceExitQuota(userID)
+	}
+	hub.Redispatch = s.redispatchNodes
+	s.enforcerWg.Add(5)
+	safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.landingSyncEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.landingExpiryEnforcer() })
+	safeGo(func() { defer s.enforcerWg.Done(); s.acmeRenewEnforcer() })
+	return s, nil
+}
 
 // reconcileNodeOnline aligns DB online flags with the live hub map and demotes
 // nodes whose last_seen is older than the stale TTL (假在线). Call before any
@@ -258,14 +258,14 @@ func (s *Server) Stop() {
 		s.Hub.Close()
 	}
 	close(s.stopExpiry)
-		close(s.stopCycle)
-		close(s.stopLandingSync)
-		close(s.stopLandingExpiry)
-		close(s.stopACME)
-		s.enforcerWg.Wait()
-		s.stopOnce.Do(func() { close(s.stopAll) })
-		s.asyncWg.Wait()
-	}
+	close(s.stopCycle)
+	close(s.stopLandingSync)
+	close(s.stopLandingExpiry)
+	close(s.stopACME)
+	s.enforcerWg.Wait()
+	s.stopOnce.Do(func() { close(s.stopAll) })
+	s.asyncWg.Wait()
+}
 
 // goAsync starts fn in a goroutine unless the server is already stopped.
 // It tracks the goroutine in asyncWg so Stop() can wait for it.
@@ -625,24 +625,24 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 				}
 			}
 		}
-			if resolver.IsHostname(rh.TargetHost) {
-				rule.DestHost = rh.TargetHost
-			} else {
-				rule.DestIP = rh.TargetHost
-			}
-			// SOCKS5 exit only on the final hop of a rule: intermediate hops
-			// still L4-dial the next relay listen port.
-			if r := ruleMap[rh.RuleID]; r != nil && r.ExitType == "socks5" && r.ExitURI != "" {
-				if n := hopCounts[rh.RuleID]; n > 0 && rh.Position == n-1 {
-					rule.ExitProxy = r.ExitURI
-					// SOCKS CONNECT requires the userspace dialer.
-					rule.Mode = nft.ModeUserspace
-				}
-			}
-			rules = append(rules, rule)
+		if resolver.IsHostname(rh.TargetHost) {
+			rule.DestHost = rh.TargetHost
+		} else {
+			rule.DestIP = rh.TargetHost
 		}
-		return rules
+		// SOCKS5 exit only on the final hop of a rule: intermediate hops
+		// still L4-dial the next relay listen port.
+		if r := ruleMap[rh.RuleID]; r != nil && r.ExitType == "socks5" && r.ExitURI != "" {
+			if n := hopCounts[rh.RuleID]; n > 0 && rh.Position == n-1 {
+				rule.ExitProxy = r.ExitURI
+				// SOCKS CONNECT requires the userspace dialer.
+				rule.Mode = nft.ModeUserspace
+			}
+		}
+		rules = append(rules, rule)
 	}
+	return rules
+}
 
 // computeRev returns a stable hash of the ruleset so a reconnecting
 // agent whose last_applied_rev matches can be skipped. Determinism
@@ -884,7 +884,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/my/subscription/refresh", s.apiMyRefreshSubscription)
 			r.Post("/my/subscription/toggle", s.apiMyToggleSubscription)
 			r.Get("/my/subscription/preview", s.apiMyPreviewSubscription)
-			})
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth)
@@ -900,7 +900,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/info", s.apiTokenInfo)
 	})
 
-	r.NotFound(spaHandler().ServeHTTP)
+	r.NotFound(spaHandlerWithTitle(s.panelBrandName).ServeHTTP)
 
 	return r
 }

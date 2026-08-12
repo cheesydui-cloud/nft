@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { NavLink, Navigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { resolvedDark, getStoredTheme, setStoredTheme } from '../lib/theme'
-import { hasLocalURIs, hasLocalProxies } from '../lib/landing'
+import { hasLocalProxies } from '../lib/landing'
 import { Loading } from './ui'
 import { BrandMark } from './BrandMark'
 import { LoginAnnouncementModal, clearLoginAnnouncementSession } from './LoginAnnouncementModal'
@@ -45,13 +45,19 @@ export function UserProvider({ children }) {
   useEffect(() => {
     api.get('/branding').then(d => {
       const name = (d?.panel_name || '').trim()
-      if (name) setPanelName(name)
+      if (name) {
+        setPanelName(name)
+        try { localStorage.setItem('nf-panel-name', name) } catch { /* ignore */ }
+      }
     }).catch(() => {})
   }, [])
 
   // Keep browser tab title in sync with panel_name globally (login + after login).
   useEffect(() => {
-    if (panelName) document.title = panelName
+    if (panelName) {
+      document.title = panelName
+      try { localStorage.setItem('nf-panel-name', panelName) } catch { /* ignore */ }
+    }
   }, [panelName])
 
   useEffect(() => { refreshUser() }, [refreshUser])
@@ -219,9 +225,16 @@ export function Layout({ children }) {
                   <SideLink to="/my/docs" icon={<IconBook />}>使用文档</SideLink>
                 </NavGroup>
                 <NavGroup label="转发">
-                  <SideLink to="/my/rules" icon={<IconForwards />}>代理转发</SideLink>
-                  {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>}
-                  {(hasLocalProxies(user.username) || user.has_landing_source) && <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>}
+                  {/* 须同时具备：线路授权 + 落地/直连来源（管理员用户详情两项都配齐） */}
+                  {user.has_line_grant && user.has_landing_source && (
+                    <SideLink to="/my/rules" icon={<IconForwards />}>代理转发</SideLink>
+                  )}
+                  {user.has_line_grant && user.has_landing_source && (
+                    <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>
+                  )}
+                  {user.has_line_grant && user.has_landing_source && (
+                    <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>
+                  )}
                 </NavGroup>
               </>
             )}

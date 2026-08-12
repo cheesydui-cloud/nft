@@ -80,6 +80,21 @@ func RevokeNode(d *sql.DB, userID, nodeID int64) error {
 	return err
 }
 
+// UserHasLineGrant reports whether the user has at least one line-node grant
+// (user_nodes). User-side nav (代理转发 / 落地 / 我的代理) requires this AND a
+// landing source.
+func UserHasLineGrant(d *sql.DB, userID int64) (bool, error) {
+	var n int
+	err := d.QueryRow(`SELECT 1 FROM user_nodes WHERE user_id=? LIMIT 1`, userID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func GetNodeGrant(d *sql.DB, userID, nodeID int64) (*UserNode, error) {
 	row := d.QueryRow(`SELECT user_id, node_id, max_forwards, traffic_quota_bytes, traffic_used_bytes, rate_limit_mbytes, granted_at FROM user_nodes WHERE user_id=? AND node_id=?`, userID, nodeID)
 	g := &UserNode{}
