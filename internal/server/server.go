@@ -712,6 +712,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/no-direct-exit", s.apiSetNodeNoDirectExit)
 			r.Get("/nodes/{id}/hops", s.apiListNodeHops)
 			r.Post("/nodes/{id}/hops", s.apiUpdateNodeHops)
+			r.Get("/nodes/{id}/probe-hops", s.apiProbeCompositeHops)
 			r.Post("/nodes/{id}/roles", s.apiUpdateNodeRolesMask)
 			r.Get("/nodes/{id}/bindings", s.apiListNodeBindings)
 			r.Post("/nodes/{id}/bindings", s.apiUpdateNodeBindings)

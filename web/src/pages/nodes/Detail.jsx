@@ -914,6 +914,10 @@ function CompositeHopsCard({ nodeId, hops: initHops, singleNodes, onDone }) {
   })))
   const [saving, setSaving] = useState(false)
   const [dragIdx, setDragIdx] = useState(null)
+  const [probing, setProbing] = useState(false)
+  // hopKey → { latency_ms, error, kind, target }
+  const [probeByHop, setProbeByHop] = useState({})
+  const [probeMeta, setProbeMeta] = useState(null)
   const toast = useToast()
 
   const nodeById = Object.fromEntries(singleNodes.map(n => [n.id, n]))
@@ -949,47 +953,128 @@ function CompositeHopsCard({ nodeId, hops: initHops, singleNodes, onDone }) {
     } catch (err) { toast(err.message, 'error') } finally { setSaving(false) }
   }
 
+  const probeHops = async () => {
+    if (dirty) {
+      toast('请先保存跳序再测延迟', 'error')
+      return
+    }
+    setProbing(true)
+    setProbeByHop({})
+    setProbeMeta(null)
+    try {
+      const d = await api.get(`/nodes/${nodeId}/probe-hops?target=${encodeURIComponent('1.1.1.1:443')}`)
+      if (d.error) {
+        toast(d.error, 'error')
+        setProbeMeta({ ok: false, summary: d.error })
+        return
+      }
+      const map = {}
+      for (const h of (d.hops || [])) {
+        const key = h.node_id || h.position
+        map[key] = {
+          latency_ms: h.latency_ms,
+          error: h.error,
+          kind: h.kind,
+          target: h.target,
+          node: h.node,
+        }
+      }
+      setProbeByHop(map)
+      setProbeMeta({
+        ok: !!d.ok,
+        latency_ms: d.latency_ms,
+        mode: d.mode,
+        rule_id: d.rule_id,
+        summary: d.summary,
+      })
+      if (d.ok) {
+        toast(d.mode === 'path'
+          ? `链路测通 ${d.latency_ms}ms（规则 #${d.rule_id}）`
+          : `各跳出口可达 · 合计 ${d.latency_ms}ms`)
+      } else {
+        toast('部分跳不通，见每行结果', 'error')
+      }
+    } catch (err) {
+      toast(err.message || '测延迟失败', 'error')
+    } finally {
+      setProbing(false)
+    }
+  }
+
+  const hopLatency = (r, i) => {
+    // Match by node_id first; path mode may have different physical ordering
+    // than template rows when via expansion differs — fall back to position.
+    return probeByHop[r.node_id] || probeByHop[i + 1] || null
+  }
+
   return (
     <section className={`${card} px-[26px] pt-[22px] pb-[18px]`}>
-      <div className="flex items-baseline gap-2.5 mb-1.5">
+      <div className="flex items-baseline gap-2.5 mb-1.5 flex-wrap">
         <h2 className="m-0 text-[15px] font-bold">组合节点跳序</h2>
         <span className="text-[12.5px] text-ink-mut">{rows.length} 跳</span>
+        {probeMeta && (
+          <span className={`text-[12px] font-semibold ${probeMeta.ok ? 'text-emerald-700' : 'text-red-600'}`}>
+            {probeMeta.ok
+              ? `${probeMeta.mode === 'path' ? '链路' : '出口'} ${probeMeta.latency_ms ?? '—'}ms`
+              : '探测失败'}
+            {probeMeta.rule_id ? ` · 规则 #${probeMeta.rule_id}` : ''}
+          </span>
+        )}
       </div>
       <p className="text-[12.5px] text-ink-mut mb-2.5">
         拖拽 ⠿ 调整顺序。模式作用于该跳到下一跳之间的段：线路稳定、低丢包用内核态（性能更好，支持 TCP/UDP/TCP+UDP）；
         跨境或网络不稳定、丢包高用用户态（更抗抖动，仅 TCP）。末跳模式在该组合被用作中间层时生效，被用作规则出口时由规则的出口模式覆盖。修改对此后新建的规则生效。
+        「测延迟」优先用已部署规则做段间路径探测；无规则时改为各跳独立拨公共目标（出口可达性）。
       </p>
       <div className="space-y-2">
-        {rows.map((r, i) => (
-          <div key={i}
-            draggable onDragStart={() => setDragIdx(i)} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(i)}
-            className={`flex items-center gap-2 bg-raised rounded-lg px-3 py-2 ${dragIdx === i ? 'opacity-50' : ''}`}>
-            <span className="text-ink-mut cursor-move select-none" title="拖拽排序">⠿</span>
-            <span className="text-xs text-ink-mut w-5 text-center font-mono">{i + 1}</span>
-            <Select className="flex-1" placeholder="-- 选择节点 --" searchable value={r.node_id}
-              onChange={v => {
-                const nd = nodeById[v]
-                setField(i, 'node_id', v)
-                if (nd) setField(i, 'node_name', nd.name)
-              }}
-              options={singleNodes.filter(n => n.id === Number(r.node_id) || !rows.some((rr, j) => j !== i && Number(rr.node_id) === n.id)).map(n => ({ value: n.id, label: n.name }))} />
-            {/* 每一跳（含末跳）都可配模式：末跳模式在该组合被用作中间层时生效，
-                被用作规则出口时由规则的出口模式覆盖 */}
-            <Select value={r.mode} onChange={v => setField(i, 'mode', v)} style={{ width: 120 }}
-              title={i === rows.length - 1 ? '末跳模式：作为中间层时生效；作为规则出口时由规则的出口模式覆盖' : undefined}
-              options={[{ value: 'kernel', label: 'kernel' }, { value: 'userspace', label: 'userspace' }]} />
-            {i === rows.length - 1 && (
-              <span className="text-[11px] text-ink-mut shrink-0 cursor-help" title="末跳模式：作为中间层时生效；作为规则出口时由规则的出口模式覆盖">末</span>
-            )}
-            {rows.length > 2 && (
-              <button type="button" onClick={() => removeHop(i)} className="btn-danger-sm text-xs px-1.5">×</button>
-            )}
-          </div>
-        ))}
+        {rows.map((r, i) => {
+          const pr = hopLatency(r, i)
+          return (
+            <div key={i}
+              draggable onDragStart={() => setDragIdx(i)} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(i)}
+              className={`flex items-center gap-2 bg-raised rounded-lg px-3 py-2 ${dragIdx === i ? 'opacity-50' : ''}`}>
+              <span className="text-ink-mut cursor-move select-none" title="拖拽排序">⠿</span>
+              <span className="text-xs text-ink-mut w-5 text-center font-mono">{i + 1}</span>
+              <Select className="flex-1" placeholder="-- 选择节点 --" searchable value={r.node_id}
+                onChange={v => {
+                  const nd = nodeById[v]
+                  setField(i, 'node_id', v)
+                  if (nd) setField(i, 'node_name', nd.name)
+                }}
+                options={singleNodes.filter(n => n.id === Number(r.node_id) || !rows.some((rr, j) => j !== i && Number(rr.node_id) === n.id)).map(n => ({ value: n.id, label: n.name }))} />
+              <Select value={r.mode} onChange={v => setField(i, 'mode', v)} style={{ width: 120 }}
+                title={i === rows.length - 1 ? '末跳模式：作为中间层时生效；作为规则出口时由规则的出口模式覆盖' : undefined}
+                options={[{ value: 'kernel', label: 'kernel' }, { value: 'userspace', label: 'userspace' }]} />
+              {i === rows.length - 1 && (
+                <span className="text-[11px] text-ink-mut shrink-0 cursor-help" title="末跳模式：作为中间层时生效；作为规则出口时由规则的出口模式覆盖">末</span>
+              )}
+              <span className="min-w-[72px] text-right shrink-0" title={pr?.target || ''}>
+                {pr ? (
+                  pr.error
+                    ? <span className="text-[11px] text-red-600 font-semibold">x</span>
+                    : <span className="text-[11px] font-mono font-semibold text-emerald-700">{pr.latency_ms}ms</span>
+                ) : (
+                  <span className="text-[11px] text-ink-mut">—</span>
+                )}
+              </span>
+              {rows.length > 2 && (
+                <button type="button" onClick={() => removeHop(i)} className="btn-danger-sm text-xs px-1.5">×</button>
+              )}
+            </div>
+          )
+        })}
       </div>
-      <div className="flex items-center gap-3 pt-3">
+      {probeMeta?.summary && (
+        <p className="text-[11.5px] text-ink-mut mt-2 mb-0">{probeMeta.summary}</p>
+      )}
+      <div className="flex items-center gap-3 pt-3 flex-wrap">
         <button type="button" onClick={addHop} className="btn-secondary text-xs">+ 添加一跳</button>
         <button onClick={save} disabled={saving || !dirty} className="btn-primary">保存</button>
+        <button type="button" onClick={probeHops} disabled={probing || dirty}
+          className="btn-secondary text-xs"
+          title={dirty ? '请先保存跳序' : '逐跳测延迟'}>
+          {probing ? '测延迟…' : '测延迟'}
+        </button>
       </div>
     </section>
   )

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"nft/internal/db"
 	"nft/internal/wsproto"
 )
@@ -40,10 +42,15 @@ type probeResult struct {
 }
 
 type hopProbe struct {
-	Node    string `json:"node"`
-	Target  string `json:"target"`
-	Latency int    `json:"latency_ms"`
-	Error   string `json:"error,omitempty"`
+	Node     string `json:"node"`
+	NodeID   int64  `json:"node_id,omitempty"`
+	Position int    `json:"position,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Target   string `json:"target"`
+	Latency  int    `json:"latency_ms"`
+	Error    string `json:"error,omitempty"`
+	// Kind: path = dial next hop listen/target; egress = dial shared public target.
+	Kind string `json:"kind,omitempty"`
 }
 
 func (s *Server) probeEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +309,177 @@ func (s *Server) probeChainEndpoint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	json.NewEncoder(w).Encode(probeResult{OK: allOK, Latency: total, Hops: results})
+}
+
+// apiProbeCompositeHops measures per-hop latency for a composite node template.
+// GET /api/nodes/{id}/probe-hops?target=1.1.1.1:443
+//
+// Prefer a live rule that uses this composite as entry (path mode: each physical
+// hop dials its deployed next target/listen). Without a rule, fall back to
+// egress mode: every child dials the same public target (connectivity only;
+// not true inter-hop path RTT).
+func (s *Server) apiProbeCompositeHops(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		json.NewEncoder(w).Encode(probeResult{Error: "invalid node id"})
+		return
+	}
+	n, err := db.GetNode(s.DB, id)
+	if err != nil || n == nil {
+		json.NewEncoder(w).Encode(probeResult{Error: "node not found"})
+		return
+	}
+	if n.NodeType != "composite" {
+		json.NewEncoder(w).Encode(probeResult{Error: "仅组合节点支持跳序测延迟"})
+		return
+	}
+	if u := userFromCtx(r.Context()); u != nil && u.Role != "admin" {
+		if g, _ := db.CheckNodeAccess(s.DB, u.ID, id); g == nil {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(probeResult{Error: "无权操作该节点"})
+			return
+		}
+	}
+
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		target = "1.1.1.1:443"
+	}
+	if _, _, err := net.SplitHostPort(target); err != nil {
+		// bare host → assume :443
+		target = net.JoinHostPort(target, "443")
+	}
+
+	// Prefer a rule that has this composite as entry (rules.node_id).
+	ruleID := int64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("rule_id")); raw != "" {
+		ruleID, _ = strconv.ParseInt(raw, 10, 64)
+	}
+	if ruleID == 0 {
+		_ = s.DB.QueryRow(`SELECT id FROM rules WHERE node_id=? AND disabled=0 ORDER BY id DESC LIMIT 1`, id).Scan(&ruleID)
+	}
+	if ruleID > 0 {
+		// Reuse probe-chain path: physical hops dial their next targets.
+		ruleHops, err := db.ListRuleHops(s.DB, ruleID)
+		if err == nil && len(ruleHops) > 0 {
+			type probeTask struct {
+				idx    int
+				nodeID int64
+				name   string
+				target string
+				mode   string
+			}
+			var tasks []probeTask
+			for i, h := range ruleHops {
+				t := net.JoinHostPort(h.TargetHost, strconv.Itoa(h.TargetPort))
+				name := fmt.Sprintf("#%d", h.NodeID)
+				if nn, e := db.GetNode(s.DB, h.NodeID); e == nil {
+					name = nn.Name
+				}
+				tasks = append(tasks, probeTask{idx: i, nodeID: h.NodeID, name: name, target: t, mode: h.Mode})
+			}
+			results := make([]hopProbe, len(tasks))
+			var wg sync.WaitGroup
+			for i, t := range tasks {
+				wg.Add(1)
+				go func(i int, t probeTask) {
+					defer wg.Done()
+					hp := hopProbe{
+						Node: t.name, NodeID: t.nodeID, Position: i + 1,
+						Mode: t.mode, Target: t.target, Kind: "path",
+					}
+					ack, err := s.Hub.SendProbe(t.nodeID, t.target)
+					if err != nil {
+						hp.Error = err.Error()
+					} else if !ack.OK {
+						if hp.Error = ack.Error; hp.Error == "" {
+							hp.Error = "不通"
+						}
+					} else {
+						hp.Latency = ack.Latency
+					}
+					results[i] = hp
+				}(i, t)
+			}
+			wg.Wait()
+			total := 0
+			allOK := true
+			for i := range results {
+				if results[i].Error != "" {
+					allOK = false
+				} else {
+					total += results[i].Latency
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok":         allOK,
+				"latency_ms": total,
+				"hops":       results,
+				"mode":       "path",
+				"rule_id":    ruleID,
+				"target":     target,
+				"summary":    fmt.Sprintf("按规则 #%d 物理链路逐跳探测", ruleID),
+			})
+			return
+		}
+	}
+
+	// Fallback: egress probe every child → same public target.
+	hops, err := db.ListNodeHops(s.DB, id)
+	if err != nil || len(hops) == 0 {
+		json.NewEncoder(w).Encode(probeResult{Error: "no hops", Target: target})
+		return
+	}
+	results := make([]hopProbe, len(hops))
+	var wg sync.WaitGroup
+	for i, h := range hops {
+		wg.Add(1)
+		go func(i int, h *db.NodeHop) {
+			defer wg.Done()
+			name := fmt.Sprintf("#%d", h.HopNodeID)
+			if nn, e := db.GetNode(s.DB, h.HopNodeID); e == nil {
+				name = nn.Name
+			}
+			mode := h.Mode
+			if mode == "" {
+				mode = "userspace"
+			}
+			hp := hopProbe{
+				Node: name, NodeID: h.HopNodeID, Position: i + 1,
+				Mode: mode, Target: target, Kind: "egress",
+			}
+			ack, perr := s.Hub.SendProbe(h.HopNodeID, target)
+			if perr != nil {
+				hp.Error = perr.Error()
+			} else if !ack.OK {
+				if hp.Error = ack.Error; hp.Error == "" {
+					hp.Error = "不通"
+				}
+			} else {
+				hp.Latency = ack.Latency
+			}
+			results[i] = hp
+		}(i, h)
+	}
+	wg.Wait()
+	total := 0
+	allOK := true
+	for i := range results {
+		if results[i].Error != "" {
+			allOK = false
+		} else {
+			total += results[i].Latency
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":         allOK,
+		"latency_ms": total,
+		"hops":       results,
+		"mode":       "egress",
+		"target":     target,
+		"summary":    "无已部署规则：各跳独立拨测公共目标（非段间路径 RTT）",
+	})
 }
 
 // localTLSProbe runs the same TLS dest checks from the panel process (admin-only path).
