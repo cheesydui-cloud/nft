@@ -203,7 +203,12 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     }
     if (isSocks) {
       if (!form.exit_uri?.trim()) { toast('请填写 SOCKS5 代理 URI', 'error'); return }
-      if (!form.exit?.trim()) { toast('请填写 CONNECT 目标 host:port', 'error'); return }
+      // 代理入口 + SK5：协议面为开放代理，CONNECT 可空（用 SK5 host:port 占位入库）。
+      // 纯 L4+ExitProxy 路径仍要求显式 CONNECT 业务目标。
+      if (!form.exit?.trim() && !(Number(form.proxy_service_id) > 0)) {
+        toast('请填写 CONNECT 目标 host:port', 'error')
+        return
+      }
       if (form.proto !== 'tcp') { toast('SOCKS5 出口仅支持 TCP', 'error'); return }
     }
     if (tailNoDirect) { toast(`节点 ${tailNode.name} 禁止直接转发，必须在其后选择线路层`, 'error'); return }
@@ -215,6 +220,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
         payload.proto = 'tcp'
         payload.mode = 'userspace'
         payload.exit_type = 'socks5'
+        if (!String(payload.exit || '').trim() && Number(payload.proxy_service_id) > 0) {
+          payload.exit = hostPortFromSocksURI(payload.exit_uri) || payload.exit
+        }
       } else if (isPort || form.exit_type !== 'socks5') {
         payload.exit_type = 'direct'
         payload.exit_uri = ''
@@ -529,7 +537,11 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <Select value="userspace" disabled style={{ width: 160 }}
                       options={[{ value: 'userspace', label: '用户态' }]} />
-                    <span className="text-xs text-ink-mut">SOCKS5 出口强制用户态 TCP（末跳经 SK5 CONNECT 到目标）</span>
+                    <span className="text-xs text-ink-mut">
+                      {Number(form.proxy_service_id) > 0
+                        ? '代理入口 + SK5：入口协议核心出站走开放 SOCKS（非 nft 直转）'
+                        : 'SOCKS5 出口强制用户态 TCP（末跳经 SK5 CONNECT 到目标）'}
+                    </span>
                   </div>
                 </>
               )
@@ -606,14 +618,21 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                     : '落地仓库暂无 SOCKS5 节点：请到「落地仓库 → 添加节点 → SOCKS5 快捷」添加后再导入'}
                 </div>
               </div>
-              <label className="fl">CONNECT 目标</label>
+              <label className="fl">
+                CONNECT 目标
+                {Number(form.proxy_service_id) > 0 && (
+                  <span className="text-ink-mut font-normal text-xs ml-1">(开放代理可留空)</span>
+                )}
+              </label>
               <div className="flex items-center gap-3">
                 <input
                   className="input-field font-mono flex-1"
                   value={form.exit}
                   onChange={e => set('exit', e.target.value)}
-                  required
-                  placeholder="host:port（业务目标）"
+                  required={!(Number(form.proxy_service_id) > 0)}
+                  placeholder={Number(form.proxy_service_id) > 0
+                    ? '开放代理：可留空（客户端目标经 SK5 透传）'
+                    : 'host:port（业务目标）'}
                 />
                 <ProbeButton
                   target={form.exit}
@@ -624,7 +643,9 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
               </div>
               <label className="fl"></label>
               <div className="text-xs text-ink-mut">
-                可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。
+                {Number(form.proxy_service_id) > 0
+                  ? '已选「代理」入口：入口为该协议入站，出站经 SK5 做开放代理（客户端 DNS/SNI 目标透传）。CONNECT 仅兼容字段，留空即可。'
+                  : '可从落地仓库导入 SOCKS5 节点，或手动填写 URI。末跳用户态先连 SK5，再对目标做 SOCKS CONNECT。仅 TCP。'}
               </div>
             </>
           ) : landingEnabled ? (

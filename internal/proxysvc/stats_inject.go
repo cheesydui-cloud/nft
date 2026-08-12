@@ -3,6 +3,9 @@ package proxysvc
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 )
 
 // InjectXrayStatsAPI adds stats + gRPC StatsService on 127.0.0.1:apiPort so the
@@ -103,5 +106,78 @@ func InjectSingBoxClashAPI(cfg []byte, apiPort int) ([]byte, error) {
 		"secret": "",
 	}
 	m["experimental"] = exp
+	return json.MarshalIndent(m, "", "  ")
+}
+
+
+// InjectSingBoxSocksOutbound replaces direct-out with a SOCKS5 outbound and
+// points route.final at it. Used for rule-scoped protocol entry (SS/anytls/… + SK5 exit).
+// socksURI is socks5://[user:pass@]host:port.
+func InjectSingBoxSocksOutbound(cfg []byte, socksURI string) ([]byte, error) {
+	socksURI = strings.TrimSpace(socksURI)
+	if socksURI == "" {
+		return cfg, nil
+	}
+	u, err := url.Parse(socksURI)
+	if err != nil {
+		return nil, fmt.Errorf("socks uri: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "socks5" && scheme != "socks" {
+		return nil, fmt.Errorf("socks scheme %q", u.Scheme)
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	if host == "" || portStr == "" {
+		return nil, fmt.Errorf("socks missing host:port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("socks port invalid")
+	}
+	ob := map[string]any{
+		"type":        "socks",
+		"tag":         "sk5-out",
+		"server":      host,
+		"server_port": port,
+		"version":     "5",
+	}
+	if u.User != nil {
+		user := u.User.Username()
+		pass, _ := u.User.Password()
+		if user != "" {
+			ob["username"] = user
+			ob["password"] = pass
+		}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(cfg, &m); err != nil {
+		return nil, err
+	}
+	// Replace / append outbounds: keep non-direct, drop old sk5-out/direct-out as final.
+	outs, _ := m["outbounds"].([]any)
+	filtered := make([]any, 0, len(outs)+1)
+	for _, o := range outs {
+		om, ok := o.(map[string]any)
+		if !ok {
+			filtered = append(filtered, o)
+			continue
+		}
+		tag, _ := om["tag"].(string)
+		if tag == "direct-out" || tag == "sk5-out" {
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+	filtered = append([]any{ob}, filtered...)
+	// Keep a blackhole-less direct as fallback? No — all traffic via SK5.
+	m["outbounds"] = filtered
+
+	route, _ := m["route"].(map[string]any)
+	if route == nil {
+		route = map[string]any{}
+	}
+	route["final"] = "sk5-out"
+	m["route"] = route
 	return json.MarshalIndent(m, "", "  ")
 }

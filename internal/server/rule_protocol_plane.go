@@ -20,10 +20,33 @@ func ruleCoreInstanceID(ruleID int64) int64 {
 	return 2_000_000_000 + ruleID
 }
 
+// protocolEntryProtocols are proxy-service protocols that can own the rule
+// entry port as a real inbound (client speaks that protocol; core outbounds
+// through exit_uri SOCKS as an open proxy).
+func protocolEntryProtocols() map[string]bool {
+	return map[string]bool{
+		"vless":       true,
+		"shadowsocks": true,
+		"ss":          true,
+		"socks5":      true,
+		"socks":       true,
+		"anytls":      true,
+		"naive":       true,
+		"naiveproxy":  true,
+	}
+}
+
 // ruleUsesProtocolEntry reports whether the rule should run a real protocol
-// inbound (VLESS/SS/…) on the entry port instead of raw L4 nft/userspace.
-// Product: 代理 tab pick + SOCKS5 exit = client speaks the proxy-service
-// protocol; core outbound CONNECTs through exit_uri to exit_host:exit_port.
+// inbound on the entry port instead of raw L4 nft/userspace.
+//
+// Product (链式 代理 tab + SK5 出口):
+//
+//	Client --(入口协议 VLESS/SS/…)--> entry core inbound
+//	     --(SOCKS5 open proxy via exit_uri)--> Internet
+//
+// CONNECT 目标 (exit_host:exit_port) is NOT used as a fixed tunnel for the
+// protocol plane: clients need full proxy semantics (DNS/SNI destinations).
+// Fixed CONNECT remains only for the legacy L4 + ExitProxy path.
 func ruleUsesProtocolEntry(r *db.Rule) bool {
 	if r == nil {
 		return false
@@ -31,12 +54,29 @@ func ruleUsesProtocolEntry(r *db.Rule) bool {
 	if r.ProxyServiceID <= 0 {
 		return false
 	}
+	if len(r.ViaNodeIDs) > 0 {
+		return false // multi-hop stays L4
+	}
 	return strings.EqualFold(strings.TrimSpace(r.ExitType), "socks5") &&
 		strings.TrimSpace(r.ExitURI) != ""
 }
 
+func protocolEntryCore(proto string) string {
+	switch strings.ToLower(strings.TrimSpace(proto)) {
+	case "vless":
+		return "xray"
+	case "mieru":
+		return "mieru"
+	default:
+		return "sing-box"
+	}
+}
+
+func protocolEntrySupported(proto string) bool {
+	return protocolEntryProtocols()[strings.ToLower(strings.TrimSpace(proto))]
+}
+
 // deployRuleProtocolPlane pushes a rule-scoped core config to the entry node.
-// Currently VLESS (xray) only; other protocols fall back to L4+ExitProxy.
 func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if s == nil || r == nil || !ruleUsesProtocolEntry(r) {
 		return nil
@@ -46,18 +86,11 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 		return fmt.Errorf("代理服务 #%d 不存在", r.ProxyServiceID)
 	}
 	proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
-	if proto != "vless" {
-		// Non-VLESS: keep legacy L4 + ExitProxy; caller should not skip L4.
-		return fmt.Errorf("协议入口暂仅支持 VLESS（当前 %s）", svc.Protocol)
+	if !protocolEntrySupported(proto) {
+		return fmt.Errorf("协议入口暂不支持 %s", svc.Protocol)
 	}
 	if r.EntryListenPort <= 0 {
 		return fmt.Errorf("规则入口端口未分配")
-	}
-	// Multi-hop L4 chains are not protocol-entry end-to-end; still allow deploy
-	// on entry when vias empty. When vias present, protocol plane would bypass
-	// intermediate nodes — refuse and leave L4+ExitProxy.
-	if len(r.ViaNodeIDs) > 0 {
-		return fmt.Errorf("VLESS 协议入口暂不支持途经节点，请用单跳")
 	}
 	node, err := db.GetNode(s.DB, r.NodeID)
 	if err != nil || node == nil {
@@ -75,7 +108,11 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
 		return err
 	}
-	if err := s.ensureCoreOnNodeForce(node, svc.Protocol, proxysvc.NeedsVLESSEnc(cfg)); err != nil {
+	forceCore := false
+	if proto == "vless" && proxysvc.NeedsVLESSEnc(cfg) {
+		forceCore = true
+	}
+	if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
 		return err
 	}
 	shareHost := proxysvc.ShareHostFromConfig(cfg)
@@ -85,22 +122,26 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 			shareHost = h
 		}
 	}
+	core := strings.TrimSpace(svc.Core)
+	if core == "" {
+		core = protocolEntryCore(proto)
+	}
 	instID := ruleCoreInstanceID(r.ID)
 	if s.Hub == nil || !s.Hub.IsOnline(r.NodeID) {
 		return fmt.Errorf("入口节点离线，无法部署协议入口")
 	}
+	// Open SOCKS outbound: do NOT set OutboundRedirect* — client destinations
+	// must pass through the SK5 (otherwise "测通但没网").
 	ack, err := s.Hub.SendProxyServiceApply(r.NodeID, wsproto.ProxyServiceApply{
-		InstanceID:           instID,
-		ServiceID:            svc.ID,
-		Protocol:             svc.Protocol,
-		Core:                 svc.Core,
-		ListenPort:           r.EntryListenPort,
-		ShareHost:            shareHost,
-		Name:                 fmt.Sprintf("%s#r%d", svc.Name, r.ID),
-		Config:               cfg,
-		OutboundSocks:        strings.TrimSpace(r.ExitURI),
-		OutboundRedirectHost: strings.TrimSpace(r.ExitHost),
-		OutboundRedirectPort: r.ExitPort,
+		InstanceID:    instID,
+		ServiceID:     svc.ID,
+		Protocol:      svc.Protocol,
+		Core:          core,
+		ListenPort:    r.EntryListenPort,
+		ShareHost:     shareHost,
+		Name:          fmt.Sprintf("%s#r%d", svc.Name, r.ID),
+		Config:        cfg,
+		OutboundSocks: strings.TrimSpace(r.ExitURI),
 	})
 	if err != nil {
 		return err
@@ -123,15 +164,17 @@ func (s *Server) stopRuleProtocolPlane(r *db.Rule) {
 	if s == nil || r == nil || r.ID <= 0 || r.NodeID <= 0 {
 		return
 	}
-	// Always try stop when proxy_service_id was set (may have been protocol plane).
-	if r.ProxyServiceID <= 0 && !strings.EqualFold(r.ExitType, "socks5") {
+	if r.ProxyServiceID <= 0 {
 		return
 	}
 	proto := "vless"
 	core := "xray"
 	if svc, err := db.GetProxyService(s.DB, r.ProxyServiceID); err == nil && svc != nil {
 		proto = svc.Protocol
-		core = svc.Core
+		core = strings.TrimSpace(svc.Core)
+		if core == "" {
+			core = protocolEntryCore(proto)
+		}
 	}
 	if s.Hub == nil || !s.Hub.IsOnline(r.NodeID) {
 		return
@@ -155,14 +198,9 @@ func (s *Server) syncRuleProtocolPlane(r *db.Rule) {
 		s.stopRuleProtocolPlane(r)
 		return
 	}
-	if len(r.ViaNodeIDs) > 0 {
-		// Fall back to L4 + ExitProxy for multi-hop.
-		s.stopRuleProtocolPlane(r)
-		return
-	}
-	// Only VLESS is implemented; if service is not VLESS, leave L4 path alone.
 	svc, err := db.GetProxyService(s.DB, r.ProxyServiceID)
-	if err != nil || svc == nil || !strings.EqualFold(svc.Protocol, "vless") {
+	if err != nil || svc == nil || !protocolEntrySupported(svc.Protocol) {
+		s.stopRuleProtocolPlane(r)
 		return
 	}
 	if err := s.deployRuleProtocolPlane(r); err != nil {
@@ -170,16 +208,7 @@ func (s *Server) syncRuleProtocolPlane(r *db.Rule) {
 	}
 }
 
-// protocolEntrySupported is true when the proxy service can own the entry port.
-func protocolEntrySupported(svc *db.ProxyService) bool {
-	if svc == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(svc.Protocol), "vless")
-}
-
-// resyncProtocolPlanesOnNode re-deploys VLESS+SK5 protocol planes whose entry
-// node is nodeID (e.g. after agent reconnect / ruleset push).
+// resyncProtocolPlanesOnNode re-deploys protocol planes whose entry node is nodeID.
 func (s *Server) resyncProtocolPlanesOnNode(nodeID int64) {
 	if s == nil || nodeID <= 0 {
 		return
@@ -196,7 +225,7 @@ func (s *Server) resyncProtocolPlanesOnNode(nodeID int64) {
 			continue
 		}
 		svc, err := db.GetProxyService(s.DB, r.ProxyServiceID)
-		if err != nil || svc == nil || !strings.EqualFold(svc.Protocol, "vless") {
+		if err != nil || svc == nil || !protocolEntrySupported(svc.Protocol) {
 			continue
 		}
 		if err := s.deployRuleProtocolPlane(r); err != nil {

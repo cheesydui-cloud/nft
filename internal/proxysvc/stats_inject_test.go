@@ -84,3 +84,31 @@ func mustJSON(v any) json.RawMessage {
 	}
 	return b
 }
+
+func TestInjectSingBoxSocksOutbound(t *testing.T) {
+	base := []byte(`{
+		"inbounds": [{"type":"shadowsocks","tag":"ss-in"}],
+		"outbounds": [{"type":"direct","tag":"direct-out"}],
+		"route": {"final":"direct-out"}
+	}`)
+	out, err := InjectSingBoxSocksOutbound(base, "socks5://u:p@proxy.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "sk5-out") {
+		t.Fatalf("missing sk5-out: %s", s)
+	}
+	if !strings.Contains(s, "proxy.example") {
+		t.Fatalf("missing server: %s", s)
+	}
+	if strings.Contains(s, `"tag": "direct-out"`) || strings.Contains(s, `"tag":"direct-out"`) {
+		// indented may have spaces
+		if strings.Contains(s, "direct-out") && strings.Contains(s, `"final": "direct-out"`) {
+			t.Fatalf("final still direct-out: %s", s)
+		}
+	}
+	if !strings.Contains(s, `"final": "sk5-out"`) && !strings.Contains(s, `"final":"sk5-out"`) {
+		t.Fatalf("final not sk5-out: %s", s)
+	}
+}

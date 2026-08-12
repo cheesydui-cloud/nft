@@ -133,7 +133,7 @@ func TestClassifyExit(t *testing.T) {
 	})
 
 	t.Run("protocol-entry VLESS+SK5 uses VLESS share on entry", func(t *testing.T) {
-		// Data plane: xray VLESS inbound on entry + SOCKS outbound to exit_uri.
+		// Data plane: xray VLESS inbound + open SOCKS outbound via exit_uri.
 		// Client link is the VLESS share rewritten to entry host:port.
 		it := ruleListItem{
 			Rule: &db.Rule{
@@ -158,6 +158,35 @@ func TestClassifyExit(t *testing.T) {
 		}
 		if it.ExitURI != "socks5://alice:***@proxy.example:1080" {
 			t.Errorf("exit_uri = %q, want redacted", it.ExitURI)
+		}
+	})
+
+	t.Run("protocol-entry SS+SK5 uses shadowsocks share even if exit matches landing index", func(t *testing.T) {
+		// Exit host:port may appear in landing index (SK5 host imported as node).
+		// Protocol entry must still show entry protocol, not landing.
+		it := ruleListItem{
+			Rule: &db.Rule{
+				NodeID: 7, ProxyServiceID: 9,
+				ExitHost: "1.2.3.4", ExitPort: 443, // matches idx landing key
+				ExitType: "socks5",
+				ExitURI:  "socks5://alice:s3cret@1.2.3.4:1080",
+			},
+			Entry: "relay.example:10002",
+			Exit:  "1.2.3.4:443",
+		}
+		share := "ss://YWVzLTI1Ni1nY206cGFzcw==@9.9.9.9:8388#ss1"
+		it.classifyExitWithShare(idx, true, "shadowsocks", share, "SS测")
+		if it.LandingProtocol != "shadowsocks" {
+			t.Errorf("landing_protocol = %q, want shadowsocks (not landing vless)", it.LandingProtocol)
+		}
+		if it.ExitKind == "landing" {
+			t.Errorf("exit_kind = landing, want custom for protocol-entry")
+		}
+		if it.LandingName != "SS测" {
+			t.Errorf("landing_name = %q, want SS测", it.LandingName)
+		}
+		if !strings.Contains(it.RelayURI, "relay.example:10002") {
+			t.Errorf("relay_uri = %q, want rewritten to entry", it.RelayURI)
 		}
 	})
 

@@ -177,14 +177,16 @@ func (s *Server) fillRuleChains(items []ruleListItem, nodesByID map[int64]*db.No
 //
 // Client-facing link (copy/QR) must match the data plane:
 //
-//  1. Landing exit match → rewrite that landing's share URI to the rule entry
-//     host:port. Client speaks the landing protocol; L4 on the entry tunnels
-//     bytes to the real landing host:port.
-//  2. Protocol-entry (proxy_service_id + exit_type=socks5 + VLESS service) →
-//     entry port is a real VLESS inbound; relay_uri is the proxy-service share
-//     rewritten to entry host:port. Core outbound CONNECTs through exit_uri.
-//  3. Plain exit_type=socks5 (no protocol entry) → rewrite exit_uri authority
-//     to the rule entry host:port (L4 + last-hop ExitProxy path).
+//  1. Protocol-entry (proxy_service_id + exit_type=socks5 + supported entry
+//     protocol, single-hop) → entry port is a real inbound of that protocol;
+//     relay_uri is the proxy-service share rewritten to entry host:port.
+//     Core outbound is open SOCKS via exit_uri (not fixed CONNECT tunnel).
+//     This wins over landing-index match on exit host:port — the client never
+//     speaks the landing/SK5 protocol on the entry.
+//  2. Landing exit match (direct L4 tunnel to a landing node) → rewrite that
+//     landing's share URI to the rule entry host:port.
+//  3. Plain exit_type=socks5 without protocol entry → L4 + last-hop ExitProxy;
+//     rewrite exit_uri authority to entry (socks5 client link).
 //  4. proxy_service_id also supplies display name for 线路 labels.
 //
 // ExitURI is always redacted in the JSON response after RelayURI is built from
@@ -194,16 +196,38 @@ func (it *ruleListItem) classifyExit(idx map[string]landing.Node, withURI bool) 
 }
 
 // classifyExitWithShare is classifyExit plus optional entry proxy-service
-// metadata. When shareProto is vless and the rule is protocol-entry, relay_uri
-// uses the VLESS share rewritten onto the entry (real inbound).
+// metadata. Protocol-entry uses the entry share on the entry port.
 func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withURI bool, shareProto, shareURI, shareName string) {
 	it.ExitKind = "custom"
 	relayHost, relayPort, entryOK := splitEntry(it.Entry)
+	sp := strings.ToLower(strings.TrimSpace(shareProto))
+	// Normalize ss alias for tags.
+	if sp == "ss" {
+		sp = "shadowsocks"
+	}
+	if sp == "socks" {
+		sp = "socks5"
+	}
+	if sp == "naiveproxy" {
+		sp = "naive"
+	}
 	protocolEntry := it.Rule != nil && ruleUsesProtocolEntry(it.Rule) &&
-		len(it.Rule.ViaNodeIDs) == 0 &&
-		strings.EqualFold(strings.TrimSpace(shareProto), "vless") &&
+		protocolEntrySupported(sp) &&
 		strings.TrimSpace(shareURI) != ""
-	if node, ok := idx[it.Exit]; ok {
+
+	// 1) Protocol entry first — do not let landing-index on CONNECT/SK5 host
+	// steal the client-facing protocol tag/URI.
+	if protocolEntry {
+		it.LandingProtocol = sp
+		if shareName != "" {
+			it.LandingName = shareName
+		}
+		if withURI && entryOK {
+			if u, err := landing.RewriteEndpoint(shareURI, relayHost, relayPort); err == nil {
+				it.RelayURI = u
+			}
+		}
+	} else if node, ok := idx[it.Exit]; ok {
 		it.ExitKind = "landing"
 		it.LandingName = node.Name
 		it.LandingProtocol = node.Protocol
@@ -211,17 +235,6 @@ func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withU
 		it.LandingExpiresAt = node.ExpiresAt
 		if withURI && entryOK {
 			if u, err := landing.RewriteEndpoint(node.URI, relayHost, relayPort); err == nil {
-				it.RelayURI = u
-			}
-		}
-	} else if protocolEntry {
-		// Real VLESS inbound on entry: client link is the service share @ entry.
-		it.LandingProtocol = strings.ToLower(strings.TrimSpace(shareProto))
-		if shareName != "" {
-			it.LandingName = shareName
-		}
-		if withURI && entryOK {
-			if u, err := landing.RewriteEndpoint(shareURI, relayHost, relayPort); err == nil {
 				it.RelayURI = u
 			}
 		}
@@ -239,7 +252,7 @@ func (it *ruleListItem) classifyExitWithShare(idx map[string]landing.Node, withU
 		}
 	} else {
 		// Direct custom exit: optional display hint from 代理 tab pick.
-		if p := strings.TrimSpace(shareProto); p != "" {
+		if p := strings.TrimSpace(sp); p != "" {
 			it.LandingProtocol = p
 		}
 		if shareName != "" && it.LandingName == "" {

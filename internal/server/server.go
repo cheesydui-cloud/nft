@@ -548,10 +548,9 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 				}
 				protoBySvc[r.ProxyServiceID] = proto
 			}
-			// Protocol plane is single-hop end-to-end (VLESS in + SOCKS out).
-			// Multi-hop falls back to L4 + ExitProxy on the last hop.
-			if proto == "vless" && hopCounts[rh.RuleID] <= 1 {
-				continue // xray owns entry_listen_port
+			// Protocol plane owns entry_listen_port (core inbound + open SOCKS out).
+			if protocolEntrySupported(proto) && hopCounts[rh.RuleID] <= 1 {
+				continue
 			}
 		}
 		rule := nft.Rule{

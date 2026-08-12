@@ -234,6 +234,14 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 	if err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
 	}
+	// Rule-scoped SK5 exit: open SOCKS outbound (client destinations pass through).
+	if uri := strings.TrimSpace(req.OutboundSocks); uri != "" {
+		patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
+		if perr != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
+		}
+		cfgBytes = patched
+	}
 	// Clash API on loopback for agent traffic sampling.
 	if apiPort, perr := pickLoopbackPort(); perr == nil {
 		if injected, ierr := proxysvc.InjectSingBoxClashAPI(cfgBytes, apiPort); ierr == nil {
