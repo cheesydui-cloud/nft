@@ -209,7 +209,7 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	}
 	transports := cfg.Transports
 	if len(transports) == 0 {
-		transports = []string{"TCP", "UDP"}
+		transports = []string{"TCP"}
 	}
 
 	serverCfg := map[string]any{
@@ -242,19 +242,46 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", cfgPath)
 	_ = os.Chmod(cfgPath, 0o640)
 
-	// Official order: mita run (daemon/RPC) → apply config → mita start (listen).
-	// prepare installs /usr/local/bin/mita + user/dirs/unit (bare cache path is not enough).
-	if err := ensureMitaDaemon(mitaPath); err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
-	}
 	// After prepare, always talk to the system binary.
 	if p := resolveMitaBinary(); p != "" {
 		mitaPath = p
 	}
 
-	// Unchanged republish (hello / 同步节点) must not mita stop+start —
-	// that tears down every live UDP/TCP session for a few minutes.
+	// Unchanged republish must not touch a live daemon. ensureMitaDaemon
+	// used to run first and treat a slow `mita status` as dead, then
+	// systemctl restart — that dropped every client for minutes.
 	if cfgUnchanged && mitaProxyListening(mitaPath) {
+		return wsproto.ProxyServiceApplyAck{
+			OK:          true,
+			DryRun:      false,
+			CoreVersion: probeCoreVersion(mitaPath),
+		}
+	}
+
+	// Official order: mita run (daemon/RPC) → apply config → mita start (listen).
+	// prepare installs /usr/local/bin/mita + user/dirs/unit (bare cache path is not enough).
+	if err := ensureMitaDaemon(mitaPath); err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
+	}
+	if p := resolveMitaBinary(); p != "" {
+		mitaPath = p
+	}
+
+	// Config file unchanged: only make sure listen is up. Never apply+stop.
+	if cfgUnchanged {
+		if mitaProxyListening(mitaPath) {
+			return wsproto.ProxyServiceApplyAck{
+				OK:          true,
+				DryRun:      false,
+				CoreVersion: probeCoreVersion(mitaPath),
+			}
+		}
+		if err := mitaProxyStart(mitaPath); err != nil {
+			return wsproto.ProxyServiceApplyAck{
+				OK:    false,
+				Error: "mita 配置未变但未能进入监听: " + err.Error() + "; " + diagnoseMitaStart(mitaPath),
+			}
+		}
 		return wsproto.ProxyServiceApplyAck{
 			OK:          true,
 			DryRun:      false,
@@ -321,7 +348,6 @@ func mitaPortBindings(port int, transports []string) []map[string]any {
 	if len(out) == 0 {
 		out = []map[string]any{
 			{"port": port, "protocol": "TCP"},
-			{"port": port, "protocol": "UDP"},
 		}
 	}
 	return out

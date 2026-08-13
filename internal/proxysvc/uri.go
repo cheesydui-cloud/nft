@@ -543,7 +543,10 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 				c.ListenPort = DefaultMieruListenPort
 			}
 			if len(c.Transports) == 0 {
-				c.Transports = []string{"TCP", "UDP"}
+				// TCP-only default: UDP share makes Clash/some clients
+				// sit on UDP, which dies behind NAT while panel TCP
+				// probe still looks green. Operators can still tick UDP.
+				c.Transports = []string{"TCP"}
 			}
 			if c.Username == "" {
 				c.Username = "u" + randomHex(4)

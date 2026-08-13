@@ -68,8 +68,12 @@ func TestNeedRewrite(t *testing.T) {
 
 func TestMitaPortBindingsStillOK(t *testing.T) {
 	b := mitaPortBindings(8443, nil)
-	if len(b) != 2 {
-		t.Fatalf("%+v", b)
+	if len(b) != 1 || b[0]["protocol"] != "TCP" {
+		t.Fatalf("empty transports default to TCP, got %+v", b)
+	}
+	both := mitaPortBindings(8443, []string{"TCP", "UDP"})
+	if len(both) != 2 {
+		t.Fatalf("explicit TCP+UDP: %+v", both)
 	}
 }
 

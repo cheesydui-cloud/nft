@@ -45,7 +45,31 @@ func TestEnsureSecretsAndBuildSS(t *testing.T) {
 	}
 }
 
-	func TestEnsureSecretsAndBuildMieru(t *testing.T) {
+	func TestEnsureSecretsMieruDefaultsTCP(t *testing.T) {
+		raw, err := EnsureSecrets("mieru", json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c MieruConfig
+		if err := json.Unmarshal(raw, &c); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Transports) != 1 || strings.ToUpper(c.Transports[0]) != "TCP" {
+			t.Fatalf("default transports = %v, want [TCP]", c.Transports)
+		}
+		uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(uri, "protocol=TCP") {
+			t.Fatalf("share missing TCP: %s", uri)
+		}
+		if strings.Contains(uri, "protocol=UDP") {
+			t.Fatalf("default share must not advertise UDP: %s", uri)
+		}
+	}
+
+		func TestEnsureSecretsAndBuildMieru(t *testing.T) {
 		raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
 		if err != nil {
 			t.Fatal(err)

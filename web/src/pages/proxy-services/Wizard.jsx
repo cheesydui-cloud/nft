@@ -76,7 +76,7 @@ function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, chi
 const TEMPLATES = [
 	  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
 	  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
-	  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，TCP/UDP 双传输' },
+	  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，默认 TCP（可选 UDP）' },
 	  { protocol: 'socks5', core: 'sing-box', title: 'SOCKS5', desc: '标准 SOCKS5 服务端 · sing-box · 可给规则/客户端当上游' },
 	  { protocol: 'anytls', core: 'sing-box', title: 'AnyTLS', desc: 'TLS 隧道 · sing-box ≥1.12（协议原版推荐实现）' },
 	  { protocol: 'naive', core: 'sing-box', title: 'NaiveProxy', desc: 'HTTP/2·3 代理 · sing-box 协议兼容（非 Caddy 原版前端）' },
@@ -134,15 +134,15 @@ const emptySS = () => ({
   sniffing: true,
 })
 
-	const emptyMieru = () => ({
-		  listen_port: 8964,
-		  share_host: '',
-		  transports: ['TCP', 'UDP'],
-		  traffic_pattern: '',
-		  user_hint_is_mandatory: false,
-		  username: '',
-		  password: '',
-		})
+		const emptyMieru = () => ({
+			  listen_port: 8964,
+			  share_host: '',
+			  transports: ['TCP'],
+			  traffic_pattern: '',
+			  user_hint_is_mandatory: false,
+			  username: '',
+			  password: '',
+			})
 
 	const emptySocks5 = () => ({
 	  listen_port: 1080,
@@ -1244,7 +1244,7 @@ export default function ProxyServiceWizard() {
 
               {protocol === 'mieru' && (
                 <div className="border-t border-line pt-4 space-y-3">
-                  <FormSection title="传输" hint="至少勾选一种；TCP + UDP 双开更稳。">
+                  <FormSection title="传输" hint="默认 TCP（稳定，适合直播）。UDP 抗探测，但过 NAT 容易超时；客户端一次只能走一种。">
                     <div className="flex gap-4">
                       {['TCP', 'UDP'].map(tr => {
                         const on = (config.transports || []).includes(tr)

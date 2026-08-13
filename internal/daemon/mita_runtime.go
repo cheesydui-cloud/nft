@@ -246,6 +246,14 @@ func mitaRPCReady(mitaPath string) bool {
 	return err == nil
 }
 
+// mitaUnitHealthy is true when systemd says mita is active. A timed-out
+// `mita status` must not be treated as "daemon dead" — the RPC can stall
+// under load while the proxy is still serving. Restarting the unit then
+// drops every live TCP/UDP session.
+func mitaUnitHealthy() bool {
+	return unitActive("mita")
+}
+
 // ensureMitaDaemon brings up the mita management daemon (RPC) if needed.
 func ensureMitaDaemon(mitaPath string) error {
 	// Prefer system binary path once prepared.
@@ -257,6 +265,12 @@ func ensureMitaDaemon(mitaPath string) error {
 		return fmt.Errorf("未找到 mita 二进制")
 	}
 	if mitaRPCReady(path) {
+		return nil
+	}
+	// Status probe failed (timeout / busy RPC). If the unit is still
+	// active, leave it — systemctl restart would kill live sessions.
+	if mitaUnitHealthy() {
+		log.Printf("mita: status probe failed but unit is active; not restarting")
 		return nil
 	}
 
@@ -408,7 +422,9 @@ func mitaProxyStop(mitaPath string) {
 func mitaProxyListening(mitaPath string) bool {
 	out, err := runCmdTimeout(6*time.Second, mitaPath, "status")
 	if err != nil {
-		return false
+		// Timeout / RPC busy: do not report "down". A false negative here
+		// used to force apply + mita stop/start on every republish.
+		return mitaUnitHealthy()
 	}
 	return mitaStatusIsRunning(out)
 }
