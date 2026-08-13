@@ -380,8 +380,10 @@ func EnableIPForward() error {
 	return os.WriteFile(conf, []byte(body), 0o644)
 }
 
-// ResolveHosts walks rules; for any rule with DestHost set it asks r to look
-// up the IPv4 and writes it into a copy. Returns:
+// ResolveHosts walks rules; for any rule with DestHost set it asks r for
+// all addresses and writes a DestIP into a copy. An existing DestIP is
+// kept when it is still in the lookup set so multi-A landings do not
+// flip every refresh. Returns:
 //   - out: the resolved rule slice (callers should use this in nft.Apply)
 //   - changed: true when at least one DestIP differs from the input
 //   - err: aggregated lookup failure (non-nil when at least one host failed to
@@ -424,23 +426,12 @@ func ResolveHostsOpts(ctx context.Context, rules []Rule, r *resolver.Resolver, b
 			// Literal already handled above; never treat an IP as a hostname.
 			continue
 		}
-		var ip string
-		var err error
-		switch {
-		case blockV6 && !blockV4:
-			ip, err = r.LookupIPv4(ctx, out[i].DestHost)
-		case blockV4 && !blockV6:
-			ip, err = r.LookupIPv6(ctx, out[i].DestHost)
-		default:
-			// Prefer A (same as historical L4), then AAAA so an
-			// IPv6-only landing still works. Panel probe uses
-			// dual-stack Dial and would otherwise look "通" while
-			// IPv4-only resolve leaves DestIP empty.
-			ip, err = r.LookupIPv4(ctx, out[i].DestHost)
-			if err != nil {
-				ip, err = r.LookupIPv6(ctx, out[i].DestHost)
-			}
+		addrs, err := r.LookupAll(ctx, out[i].DestHost)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", out[i].DestHost, err))
+			continue
 		}
+		ip, err := pickResolvedIP(addrs, out[i].DestIP, blockV4, blockV6)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", out[i].DestHost, err))
 			continue
@@ -454,4 +445,68 @@ func ResolveHostsOpts(ctx context.Context, rules []Rule, r *resolver.Resolver, b
 		return out, changed, fmt.Errorf("dns: %s", strings.Join(errs, "; "))
 	}
 	return out, changed, nil
+}
+
+// pickResolvedIP keeps the current DestIP when it is still in the lookup
+// set (and allowed by the family lock). Multi-A landings otherwise flip
+// every DNS refresh, which delete+recreates the nft table and drops live
+// streams. Only the first matching A (then AAAA) is used when there is
+// no sticky candidate.
+func pickResolvedIP(addrs []string, current string, blockV4, blockV6 bool) (string, error) {
+	var firstA, firstAAAA string
+	curOK := false
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			continue
+		}
+		v6 := ip.To4() == nil
+		if v6 {
+			if blockV6 {
+				continue
+			}
+			canon := ip.String()
+			if firstAAAA == "" {
+				firstAAAA = canon
+			}
+			if current != "" && ipsEqual(current, canon) {
+				curOK = true
+			}
+			continue
+		}
+		if blockV4 {
+			continue
+		}
+		canon := ip.To4().String()
+		if firstA == "" {
+			firstA = canon
+		}
+		if current != "" && ipsEqual(current, canon) {
+			curOK = true
+		}
+	}
+	if curOK {
+		return current, nil
+	}
+	if firstA != "" {
+		return firstA, nil
+	}
+	if firstAAAA != "" {
+		return firstAAAA, nil
+	}
+	if blockV6 && !blockV4 {
+		return "", resolver.ErrNoIPv4
+	}
+	if blockV4 && !blockV6 {
+		return "", resolver.ErrNoIPv6
+	}
+	return "", fmt.Errorf("no usable address")
+}
+
+func ipsEqual(a, b string) bool {
+	ia, ib := net.ParseIP(a), net.ParseIP(b)
+	if ia == nil || ib == nil {
+		return a == b
+	}
+	return ia.Equal(ib)
 }

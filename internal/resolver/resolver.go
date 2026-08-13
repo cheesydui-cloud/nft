@@ -76,6 +76,16 @@ func New() *Resolver {
 	}
 }
 
+// LookupAll returns every address for host (A and AAAA), applying Timeout.
+func (r *Resolver) LookupAll(ctx context.Context, host string) ([]string, error) {
+	if r.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
+		defer cancel()
+	}
+	return r.Lookup(ctx, host)
+}
+
 func (r *Resolver) LookupIPv4(ctx context.Context, host string) (string, error) {
 	if r.Timeout > 0 {
 		var cancel context.CancelFunc

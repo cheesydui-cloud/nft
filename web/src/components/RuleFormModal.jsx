@@ -495,12 +495,12 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     : []
 
   return (
-    <Modal open={open} onClose={onClose} title={title}>
+    <Modal open={open} onClose={onClose} title={title} wide>
       <form onSubmit={submit} className="space-y-[22px]">
         {allowTypeSwitch && (
-          <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
-            <label className="fl">规则类型</label>
-            <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-5 gap-y-3 items-start">
+            <label className="fl pt-2">规则类型</label>
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
               {[['port', '端口转发'], ['chain', '链式转发']].map(([key, label]) => (
                 <button key={key} type="button" onClick={() => switchLocalVariant(key)}
                   className={`chip-btn ${localVariant === key ? 'is-active' : ''}`}>{label}</button>
@@ -508,8 +508,8 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             </div>
           </div>
         )}
-        <div className="grid grid-cols-[120px_1fr] gap-6 items-center">
-          <label className="fl">选择线路</label>
+        <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-5 gap-y-3 items-start">
+          <label className="fl pt-2">选择线路</label>
           <Select
             value={entrySelectValue}
             onChange={pickEntry}
@@ -521,7 +521,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
           />
           {!isPort && viaLevels.map(({ level, cands, chosen, mustVia }) => (
             <Fragment key={level}>
-              <label className="fl">{level === 0 ? '线路层' : `线路层 ${level + 1}`}</label>
+              <label className="fl pt-2">{level === 0 ? '线路层' : `线路层 ${level + 1}`}</label>
               <Select value={chosen ?? ''} onChange={v => pickVia(level, v)} placeholder={mustVia ? '-- 选择线路层 --' : '直接转发'}
                 options={[...(mustVia ? [] : [{ value: '', label: '直接转发' }]), ...cands.map(nodeOption)]} />
             </Fragment>
@@ -549,14 +549,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
           )}
           {users && users.length > 0 && (
             <>
-              <label className="fl">所属用户</label>
+              <label className="fl pt-2">所属用户</label>
               <Select value={form.owner_id} onChange={v => set('owner_id', Number(v))} placeholder="-- 选择用户 --" searchable
                 options={users.map(u => ({ value: u.id, label: u.username }))} />
             </>
           )}
-          <label className="fl">名称</label>
+          <label className="fl pt-2">名称</label>
           <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="规则名称" />
-          <label className="fl">协议</label>
+          <label className="fl pt-2">协议</label>
           <Select
             value={isSocks ? 'tcp' : form.proto}
             onChange={v => set('proto', v)}
@@ -577,41 +577,41 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             if (isSocks) {
               return (
                 <>
-                  <label className="fl">{composite ? '出口段模式' : '转发模式'}</label>
-                  <div className="flex items-center gap-2.5 flex-wrap">
+                  <label className="fl pt-2">{composite ? '出口段模式' : '转发模式'}</label>
+                  <div className="min-w-0 space-y-1.5">
                     <Select value="userspace" disabled style={{ width: 160 }}
                       options={[{ value: 'userspace', label: '用户态' }]} />
-                    <span className="text-xs text-ink-mut">
+                    <p className="text-xs text-ink-mut leading-relaxed">
                       {Number(form.proxy_service_id) > 0
                         ? '代理入口：核心 inbound 走入口协议；出站为开放 SOCKS（3x-ui 链式，非 nft 直转）'
                         : 'SOCKS5 出口强制用户态 TCP（末跳经 SK5 CONNECT 到目标）'}
-                    </span>
+                    </p>
                   </div>
                 </>
               )
             }
             return (
               <>
-                <label className="fl">{composite ? '出口段模式' : '转发模式'}</label>
-                <div className="flex items-center gap-2.5 flex-wrap">
+                <label className="fl pt-2">{composite ? '出口段模式' : '转发模式'}</label>
+                <div className="min-w-0 space-y-1.5">
                   <Select value={form.mode || 'kernel'} onChange={v => set('mode', v)} style={{ width: 160 }}
                     options={[{ value: 'kernel', label: '内核态' }, { value: 'userspace', label: '用户态' }]} />
-                  <span className="text-xs text-ink-mut">
+                  <p className="text-xs text-ink-mut leading-relaxed">
                     {composite
                       ? '仅作用于最后一跳 → 目标。线路稳定、低丢包时用内核态（性能更好）；跨境或网络不稳定、丢包高时用用户态（更抗抖动）。用户态仅 TCP，UDP 自动走内核态'
                       : '线路稳定、低丢包时用内核态（性能更好，支持 TCP/UDP）；跨境或网络不稳定、丢包高时用用户态（更抗抖动，仅 TCP，UDP 自动走内核态）'}
-                  </span>
+                  </p>
                 </div>
               </>
             )
           })()}
-          <label className="fl">端口设置 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+          <label className="fl pt-2">端口设置 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
           <input className="input-field font-mono" type="number" min="1" max="65535" value={form.entry_port} onChange={e => set('entry_port', e.target.value)}
             placeholder="留空自动分配" style={{ maxWidth: 200 }} />
 
           {isChain && (
             <>
-              <label className="fl">出口类型</label>
+              <label className="fl pt-2">出口类型</label>
               <Select
                 value={form.exit_type || 'direct'}
                 onChange={v => setForm(f => ({
@@ -632,7 +632,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
 
           {isSocks ? (
             <>
-              <label className="fl">SK5 代理</label>
+              <label className="fl pt-2">SK5 代理</label>
               <div className="space-y-2 min-w-0">
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0 space-y-2">
@@ -676,26 +676,28 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                   </div>
                   {/* 用户端：测试挂在 SK5 选择旁；管理员仍在 CONNECT 行 */}
                   {showStack === false && (
-                    <ProbeButton
-                      target={form.exit || hostPortFromSocksURI(form.exit_uri)}
-                      nodeId={tailNode?.id ?? form.node_id}
-                      disabled={!form.node_id || !(form.exit || hostPortFromSocksURI(form.exit_uri))}
-                      disabledTitle={!form.node_id ? '请先选择线路' : '请先选择 SOCKS5 节点'}
-                    />
+                    <span className="shrink-0">
+                      <ProbeButton
+                        target={form.exit || hostPortFromSocksURI(form.exit_uri)}
+                        nodeId={tailNode?.id ?? form.node_id}
+                        disabled={!form.node_id || !(form.exit || hostPortFromSocksURI(form.exit_uri))}
+                        disabledTitle={!form.node_id ? '请先选择线路' : '请先选择 SOCKS5 节点'}
+                      />
+                    </span>
                   )}
                 </div>
               </div>
               {showStack !== false && (
                 <>
-                  <label className="fl">
+                  <label className="fl pt-2">
                     CONNECT 目标
                     {Number(form.proxy_service_id) > 0 && (
                       <span className="text-ink-mut font-normal text-xs ml-1">(开放代理可留空)</span>
                     )}
                   </label>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <input
-                      className="input-field font-mono flex-1"
+                      className="input-field font-mono flex-1 min-w-0"
                       value={form.exit}
                       onChange={e => set('exit', e.target.value)}
                       required={!(Number(form.proxy_service_id) > 0)}
@@ -703,12 +705,14 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                         ? '开放代理：可留空（客户端目标经 SK5 透传）'
                         : 'host:port（业务目标）'}
                     />
-                    <ProbeButton
-                      target={form.exit}
-                      nodeId={tailNode?.id ?? form.node_id}
-                      disabled={!form.node_id || !form.exit}
-                      disabledTitle={!form.node_id ? '请先选择线路' : '请先填写目标 host:port'}
-                    />
+                    <span className="shrink-0">
+                      <ProbeButton
+                        target={form.exit}
+                        nodeId={tailNode?.id ?? form.node_id}
+                        disabled={!form.node_id || !form.exit}
+                        disabledTitle={!form.node_id ? '请先选择线路' : '请先填写目标 host:port'}
+                      />
+                    </span>
                   </div>
                   <label className="fl"></label>
                   <div className="text-xs text-ink-mut">
@@ -721,8 +725,8 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             </>
           ) : landingEnabled ? (
             <>
-              <label className="fl">落地IP</label>
-              <div className="flex items-center gap-3">
+              <label className="fl pt-2">落地IP</label>
+              <div className="flex items-center gap-3 min-w-0">
                 {landingOptions.length ? (
                   <Select value={form.exit} onChange={v => {
                     const node = (landingNodes || []).find(n => `${n.host}:${n.port}` === v)
@@ -738,16 +742,18 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                       // green on panel TCP probe but clients miss UDP.
                       proto: mieru && f.proto === 'tcp' ? 'tcp+udp' : f.proto,
                     }))
-                  }} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1" />
+                  }} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1 min-w-0" />
                 ) : (
-                  <div className="text-xs text-ink-mut flex-1">尚无可用落地IP，请联系管理员分配落地节点或订阅来源。</div>
+                  <div className="text-xs text-ink-mut flex-1 min-w-0">尚无可用落地IP，请联系管理员分配落地节点或订阅来源。</div>
                 )}
-                <ProbeButton
-                  target={form.exit}
-                  nodeId={tailNode?.id ?? form.node_id}
-                  disabled={!form.node_id || !form.exit}
-                  disabledTitle={!form.node_id ? '请先选择线路' : '请先选择落地IP'}
-                />
+                <span className="shrink-0">
+                  <ProbeButton
+                    target={form.exit}
+                    nodeId={tailNode?.id ?? form.node_id}
+                    disabled={!form.node_id || !form.exit}
+                    disabledTitle={!form.node_id ? '请先选择线路' : '请先选择落地IP'}
+                  />
+                </span>
               </div>
               {Number(form.proxy_service_id) > 0 && (
                 <>
@@ -760,20 +766,22 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
             </>
           ) : (
             <>
-              <label className="fl">落地IP</label>
-              <div className="flex items-center gap-3">
-                <input className="input-field font-mono flex-1" value={form.exit} onChange={e => set('exit', e.target.value)} required placeholder="host:port" />
-                <ProbeButton
-                  target={form.exit}
-                  nodeId={tailNode?.id ?? form.node_id}
-                  disabled={!form.node_id || !form.exit}
-                  disabledTitle={!form.node_id ? '请先选择线路' : '请先填写落地 host:port'}
-                />
+              <label className="fl pt-2">落地IP</label>
+              <div className="flex items-center gap-3 min-w-0">
+                <input className="input-field font-mono flex-1 min-w-0" value={form.exit} onChange={e => set('exit', e.target.value)} required placeholder="host:port" />
+                <span className="shrink-0">
+                  <ProbeButton
+                    target={form.exit}
+                    nodeId={tailNode?.id ?? form.node_id}
+                    disabled={!form.node_id || !form.exit}
+                    disabledTitle={!form.node_id ? '请先选择线路' : '请先填写落地 host:port'}
+                  />
+                </span>
               </div>
             </>
           )}
 
-          <label className="fl">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
+          <label className="fl pt-2">备注 <span className="text-ink-mut font-normal text-xs">(可选)</span></label>
           <input className="input-field" value={form.comment} onChange={e => set('comment', e.target.value)} placeholder="备注" />
         </div>
         <div className="flex items-center gap-3 pt-4 border-t border-line-soft">

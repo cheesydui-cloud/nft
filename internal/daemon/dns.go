@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"sync/atomic"
@@ -75,11 +77,29 @@ func rulesDiffer(a, b []nft.Rule) bool {
 		return true
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if dataplaneKey(a[i]) != dataplaneKey(b[i]) {
 			return true
 		}
 	}
 	return false
+}
+
+// dataplaneKey is the fields that actually change nft DNAT / userspace
+// listeners. Comment, owner labels and hop counts must not rebuild the
+// table — nft.Apply delete+recreates inet nft_forward and drops conntrack.
+func dataplaneKey(r nft.Rule) string {
+	return strings.Join([]string{
+		r.Proto,
+		strconv.Itoa(r.SrcPort),
+		r.DestIP,
+		r.DestHost,
+		strconv.Itoa(r.DestPort),
+		r.EffectiveMode(),
+		strconv.Itoa(r.BandwidthMbps),
+		strconv.FormatInt(r.ShapeGroup, 10),
+		strconv.Itoa(r.RateMBytes),
+		r.ExitProxy,
+	}, "\x1f")
 }
 
 // dnsInterval honours NFT_FORWARD_DNS_INTERVAL for parity with the previous

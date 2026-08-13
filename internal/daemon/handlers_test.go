@@ -479,6 +479,24 @@ func TestCreateRule_RejectsSyntacticallyInvalidHost(t *testing.T) {
 	}
 }
 
+func TestRulesDifferIgnoresMetadata(t *testing.T) {
+	a := []nft.Rule{{
+		Proto: "tcp", SrcPort: 80, DestIP: "203.0.113.7", DestPort: 443,
+		Comment: "old", RuleName: "n1", OwnerName: "u1", HopCount: 1,
+	}}
+	b := []nft.Rule{{
+		Proto: "tcp", SrcPort: 80, DestIP: "203.0.113.7", DestPort: 443,
+		Comment: "new", RuleName: "n2", OwnerName: "u2", HopCount: 3,
+	}}
+	if rulesDiffer(a, b) {
+		t.Fatal("comment/owner/hop must not rebuild the data plane")
+	}
+	b[0].DestIP = "203.0.113.8"
+	if !rulesDiffer(a, b) {
+		t.Fatal("DestIP change must rebuild")
+	}
+}
+
 func TestRefreshReAppliesWhenIPChanges(t *testing.T) {
 	d := newTestDaemon(t)
 	fake := d.dp.(*fakeDataplane)
@@ -697,17 +715,17 @@ func TestCounterSamples_DeltasAndReset(t *testing.T) {
 
 func TestParseRuleID(t *testing.T) {
 	cases := []struct {
-		in   string
-		id   int64
-		ok   bool
+		in string
+		id int64
+		ok bool
 	}{
 		{"5", 5, true},
 		{"123", 123, true},
-		{"0", 0, false},      // zero not valid
-		{"", 0, false},       // empty
-		{"abc", 0, false},    // hex
+		{"0", 0, false},        // zero not valid
+		{"", 0, false},         // empty
+		{"abc", 0, false},      // hex
 		{"abcd1234", 0, false}, // hex
-		{"-1", 0, false},     // negative
+		{"-1", 0, false},       // negative
 	}
 	for _, tc := range cases {
 		got, ok := parseRuleID(tc.in)

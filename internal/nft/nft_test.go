@@ -362,6 +362,41 @@ func TestResolveHostsOptsPrefersAWhenV6Blocked(t *testing.T) {
 	}
 }
 
+func TestResolveHostsStickyKeepsExistingIP(t *testing.T) {
+	r := &resolver.Resolver{
+		Lookup: func(ctx context.Context, host string) ([]string, error) {
+			return []string{"203.0.113.20", "203.0.113.7", "2001:db8::1"}, nil
+		},
+	}
+	rules := []Rule{{Proto: "tcp", SrcPort: 80, DestHost: "multi.example", DestIP: "203.0.113.7", DestPort: 80}}
+	out, changed, err := ResolveHosts(context.Background(), rules, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected changed=false when current DestIP is still in the set")
+	}
+	if out[0].DestIP != "203.0.113.7" {
+		t.Fatalf("sticky IP lost, got %q", out[0].DestIP)
+	}
+}
+
+func TestResolveHostsStickyMovesWhenOldIPGone(t *testing.T) {
+	r := &resolver.Resolver{
+		Lookup: func(ctx context.Context, host string) ([]string, error) {
+			return []string{"203.0.113.20", "2001:db8::1"}, nil
+		},
+	}
+	rules := []Rule{{Proto: "tcp", SrcPort: 80, DestHost: "multi.example", DestIP: "203.0.113.7", DestPort: 80}}
+	out, changed, err := ResolveHosts(context.Background(), rules, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || out[0].DestIP != "203.0.113.20" {
+		t.Fatalf("want first remaining A, got changed=%v ip=%q", changed, out[0].DestIP)
+	}
+}
+
 func TestResolveHostsFallsBackToAAAA(t *testing.T) {
 	r := &resolver.Resolver{
 		Lookup: func(ctx context.Context, host string) ([]string, error) {
