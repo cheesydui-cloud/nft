@@ -31,37 +31,28 @@ export default function NodeList() {
   const [sort, setSort] = useState({ col: null, dir: null })
   const [speedSnap, setSpeedSnap] = useState(null)
   const [pinMode, setPinMode] = useState(null)
+  // 原始流量默认隐藏，减列宽噪音
+  const [showRawTraffic, setShowRawTraffic] = useState(() => localStorage.getItem('nodes.showRaw') === '1')
   const pinRef = useRef(null)
   const pinClickGuard = useRef(false)
   const listRef = useRef(null)
 
   useEffect(() => { localStorage.setItem('nodes.tab', tab) }, [tab])
   useEffect(() => { sessionStorage.setItem('nodes.search', search) }, [search])
+  useEffect(() => { localStorage.setItem('nodes.showRaw', showRawTraffic ? '1' : '0') }, [showRawTraffic])
   useEffect(() => { setSelected(new Set()) }, [tab])
 
-  const load = () => {
-    setLoading(true)
-    setError('')
-    api.get('/nodes').then(setData).catch(err => setError(err?.message || '加载失败')).finally(() => setLoading(false))
+  const load = (silent = false) => {
+    if (!silent) { setLoading(true); setError('') }
+    api.get('/nodes').then(setData).catch(err => {
+      if (!silent) setError(err?.message || '加载失败')
+    }).finally(() => { if (!silent) setLoading(false) })
   }
-  useEffect(load, [])
+  useEffect(() => { load() }, [])
 
   const resyncAll = async () => {
     if (!(await confirm({ title: '同步所有节点', message: '向所有节点重新推送转发规则？', confirmText: '同步' }))) return
-    try { await api.post('/nodes/resync-all'); toast('已发起同步'); load() } catch (err) { toast(err.message, 'error') }
-  }
-
-  const upgradeAll = async () => {
-    if (!(await confirm({ title: '升级所有节点', message: '向所有在线节点推送 agent 升级（后台执行，可稍后刷新查看版本）？', confirmText: '升级' }))) return
-    try {
-      const res = await api.post('/nodes/upgrade-all')
-      const n = res?.queued ?? res?.upgraded
-      const ver = res?.version ? ` → ${res.version}` : ''
-      toast(typeof n === 'number' ? `已排队升级 ${n} 个节点${ver}` : '已发起升级')
-      // Soft refresh after a few seconds so version labels start moving.
-      setTimeout(load, 4000)
-      load()
-    } catch (err) { toast(err.message, 'error') }
+    try { await api.post('/nodes/resync-all'); toast('已发起同步'); load(true) } catch (err) { toast(err.message, 'error') }
   }
 
   const deleteNode = async (node) => {
@@ -71,6 +62,14 @@ export default function NodeList() {
 
   const resyncNode = async (id) => {
     try { await api.post(`/nodes/${id}/resync`); toast('已发起同步') } catch (err) { toast(err.message, 'error') }
+  }
+
+  const upgradeNode = async (id) => {
+    try {
+      const res = await api.post(`/nodes/${id}/upgrade`)
+      toast(res?.version ? `已排队升级 → ${res.version}` : '已排队升级')
+      setTimeout(() => load(true), 4000)
+    } catch (err) { toast(err.message, 'error') }
   }
 
   if (loading && !data) return <Layout><Loading /></Layout>
@@ -94,9 +93,85 @@ export default function NodeList() {
   const { single: singleNodes, composite: compositeNodes, landing: landingNodes } = partitionRouteNodes(nodes)
   const tabNodes = tab === 'composite' ? compositeNodes : tab === 'landing' ? landingNodes : singleNodes
   const q = search.trim().toLowerCase()
-  const filtered0 = !q ? tabNodes : tabNodes.filter(n => (n.name || '').toLowerCase().includes(q))
+  const nodeMatchesSearch = (n) => {
+    if (!q) return true
+    if (String(n.id) === q || `#${n.id}` === q) return true
+    if ((n.name || '').toLowerCase().includes(q)) return true
+    if ((n.address || '').toLowerCase().includes(q)) return true
+    if ((n.relay_host || '').toLowerCase().includes(q)) return true
+    if ((n.relay_host_v6 || '').toLowerCase().includes(q)) return true
+    return false
+  }
+  const filtered0 = tabNodes.filter(nodeMatchesSearch)
 
-  // 「原始流量」列只在单点 tab 渲染：带着它的排序切去组合/落地 tab 时清掉。
+  const outdatedNodes = nodes.filter(n =>
+    n.node_type !== 'composite' && !n.disabled && isAgentOutdated(n)
+  )
+  const outdatedOnline = outdatedNodes.filter(n => n.online === 1)
+
+  const upgradeOutdated = async () => {
+    if (!outdatedOnline.length) {
+      toast(outdatedNodes.length ? '落后节点均不在线，无法升级' : '没有需要升级的节点', 'error')
+      return
+    }
+    if (!(await confirm({
+      title: '升级落后节点',
+      message: `向 ${outdatedOnline.length} 台在线且版本落后的节点推送 agent${latest_agent_version ? ` → ${latest_agent_version}` : ''}（后台执行）？`,
+      confirmText: '升级',
+    }))) return
+    try {
+      let ok = 0
+      const errs = []
+      for (const n of outdatedOnline) {
+        try {
+          await api.post(`/nodes/${n.id}/upgrade`)
+          ok++
+        } catch (err) {
+          errs.push(`${n.name}: ${err.message}`)
+        }
+      }
+      toast(errs.length ? `已排队 ${ok} 台，失败 ${errs.length}` : `已排队升级 ${ok} 台${latest_agent_version ? ` → ${latest_agent_version}` : ''}`, errs.length ? 'error' : undefined)
+      setTimeout(() => load(true), 4000)
+      load(true)
+    } catch (err) { toast(err.message, 'error') }
+  }
+
+  const batchResync = async () => {
+    const ids = [...selected].filter(id => {
+      const n = nodes.find(x => x.id === id)
+      return n && n.node_type !== 'composite'
+    })
+    if (!ids.length) { toast('所选中无实体节点可同步', 'error'); return }
+    if (!(await confirm({ title: '同步选中节点', message: `向 ${ids.length} 个节点重新推送规则？`, confirmText: '同步' }))) return
+    try {
+      for (const id of ids) await api.post(`/nodes/${id}/resync`)
+      toast(`已发起同步 ${ids.length} 个`)
+      load(true)
+    } catch (err) { toast(err.message, 'error') }
+  }
+
+  const batchUpgrade = async () => {
+    const targets = [...selected]
+      .map(id => nodes.find(x => x.id === id))
+      .filter(n => n && n.node_type !== 'composite' && !n.disabled && n.online === 1 && isAgentOutdated(n))
+    if (!targets.length) {
+      toast('选中项中没有「在线且版本落后」的节点', 'error')
+      return
+    }
+    if (!(await confirm({
+      title: '升级选中落后节点',
+      message: `将升级 ${targets.length} 台：${targets.map(t => t.name).join('、')}`,
+      confirmText: '升级',
+    }))) return
+    try {
+      for (const n of targets) await api.post(`/nodes/${n.id}/upgrade`)
+      toast(`已排队升级 ${targets.length} 台`)
+      setTimeout(() => load(true), 4000)
+      load(true)
+    } catch (err) { toast(err.message, 'error') }
+  }
+
+  // 「原始流量」列默认隐藏；排序带着 raw 切 tab 时清掉。
   const switchTab = (key) => {
     setTab(key)
     if (key !== 'single') setSort(s => s.col === 'rawtraffic' ? { col: null, dir: null } : s)
@@ -207,19 +282,37 @@ export default function NodeList() {
     if (zone) moveToEdge(idx, zone)
   }
 
+  const showRawCol = showRawTraffic && tab === 'single'
+
   return (
     <Layout>
       <div className="h-full flex flex-col">
-      <PageHeader title="线路监控" count={nodes.length} unit="个" />
+      <PageHeader
+        title="节点管理"
+        count={nodes.length}
+        unit="个"
+        badge={latest_agent_version ? (
+          <span className="inline-flex items-center gap-2 text-[12.5px] text-ink-mut flex-wrap">
+            <span>agent 最新 <span className="font-mono font-semibold text-ink-soft">{latest_agent_version}</span></span>
+            {outdatedNodes.length > 0 && (
+              <Badge color="amber">落后 {outdatedNodes.length} 台{outdatedOnline.length < outdatedNodes.length ? ` · 在线 ${outdatedOnline.length}` : ''}</Badge>
+            )}
+          </span>
+        ) : null}
+      />
 
-      {/* Node list */}
       <Panel fill>
         <PanelToolbar>
-          <SearchInput value={search} onChange={setSearch} placeholder="搜索节点名称…" />
-          {latest_agent_version && <span className="text-xs text-ink-mut whitespace-nowrap">agent {latest_agent_version}</span>}
+          <SearchInput value={search} onChange={setSearch} placeholder="搜索名称 / IP / 线路地址 / ID…" />
           <ToolbarActions className="hidden md:flex">
             <ToolbarButton onClick={resyncAll} secondary>同步所有</ToolbarButton>
-            <ToolbarButton onClick={upgradeAll} secondary>一键升级全部</ToolbarButton>
+            <ToolbarButton
+              onClick={upgradeOutdated}
+              secondary
+              title={outdatedOnline.length ? `升级 ${outdatedOnline.length} 台在线落后节点` : '无在线落后节点'}
+            >
+              升级落后{outdatedOnline.length ? ` (${outdatedOnline.length})` : ''}
+            </ToolbarButton>
             <ToolbarButton onClick={() => setShowComposite(true)} secondary>＋ 组合节点</ToolbarButton>
             <ToolbarButton onClick={() => setShowAdd(true)}>＋ 添加节点</ToolbarButton>
           </ToolbarActions>
@@ -227,19 +320,42 @@ export default function NodeList() {
         <div className="flex items-center flex-wrap gap-1.5 px-[22px] py-2.5 border-b border-line-soft">
           {[['single', '单点', singleNodes.length], ['composite', '组合', compositeNodes.length], ['landing', '落地', landingNodes.length]].map(([key, label, n]) => (
             <button key={key} onClick={() => switchTab(key)}
+              title={key === 'landing' ? '手动归入「落地」分组的节点（与落地仓库无关）' : undefined}
               className={`chip-btn ${tab === key ? 'is-active' : ''}`}>{label} {n}</button>
           ))}
+          {tab === 'single' && (
+            <button type="button" onClick={() => setShowRawTraffic(v => !v)}
+              className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                showRawTraffic
+                  ? 'border-emerald-300 text-emerald-700 bg-emerald-50'
+                  : 'border-line text-ink-mut hover:bg-raised'
+              }`}>
+              {showRawTraffic ? '隐藏原始流量' : '显示原始流量'}
+            </button>
+          )}
+          {!draggable && (
+            <span className="text-[11px] text-ink-mut">排序/搜索中不可拖拽调序</span>
+          )}
           {selected.size > 0 && (
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+              <span className="text-[12px] text-ink-mut">已选 {selected.size}</span>
+              <button type="button" onClick={batchResync}
+                className="text-ink-soft text-xs font-semibold px-2.5 py-1 rounded border border-line hover:bg-raised">
+                同步
+              </button>
+              <button type="button" onClick={batchUpgrade}
+                className="text-ink-soft text-xs font-semibold px-2.5 py-1 rounded border border-line hover:bg-raised">
+                升级落后
+              </button>
               {tab === 'landing' ? (
                 <button type="button" onClick={() => batchListGroup('')}
                   className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">
-                  移回单点/组合 ({selected.size})
+                  移回单点/组合
                 </button>
               ) : (
                 <button type="button" onClick={() => batchListGroup('landing')}
                   className="text-emerald-600 text-xs font-semibold px-3 py-1 rounded border border-emerald-200 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20">
-                  移入落地 ({selected.size})
+                  移入落地
                 </button>
               )}
             </div>
@@ -251,12 +367,11 @@ export default function NodeList() {
         ) : tabNodes.length === 0 ? (
           <Empty
             title={tab === 'composite' ? '暂无组合节点' : tab === 'landing' ? '暂无落地节点' : '暂无单点节点'}
-            desc={tab === 'composite' ? '点击右上角「组合节点」创建。' : tab === 'landing' ? '在「单点」或「组合」勾选节点后点「移入落地」。' : '点击右上角「添加节点」创建。'}
+            desc={tab === 'composite' ? '点击右上角「组合节点」创建。' : tab === 'landing' ? '在「单点」或「组合」勾选后点「移入落地」。此分组与「落地仓库」无关。' : '点击右上角「添加节点」创建。'}
           />
         ) : filtered.length === 0 ? (
-          <Empty title="无匹配节点" desc="试试别的关键词。" />
+          <Empty title="无匹配节点" desc="可搜名称、连接 IP、线路地址或节点 ID。" />
         ) : (<>
-          {/* Desktop table */}
           {!isMobile && <div ref={listRef} className="relative">
           <table className="tbl">
             <thead><tr>
@@ -265,16 +380,19 @@ export default function NodeList() {
                   checked={filtered.length > 0 && filtered.every(n => selected.has(n.id))}
                   onChange={toggleAll} />
               </th>
-              <th className="w-14">ID</th><th>名称</th><th>IP 栈</th><th>版本</th><th>最近同步</th><th>状态</th>
+              <th>名称</th>
+              <th title="用户/上游连业务端口用的 IP 或域名">线路地址</th>
+              <th>版本</th>
+              <th>状态</th>
               <th className="cursor-pointer select-none" onClick={() => cycleSort('traffic')}
                 title="按授权记账的当期用量：单向计费节点只计上行，随用户流量周期重置清零">
                 <span className="inline-flex items-center">流量<SortArrow col="traffic" sort={sort} /></span>
               </th>
-              {tab === 'single' && <th className="cursor-pointer select-none" onClick={() => cycleSort('rawtraffic')}
+              {showRawCol && <th className="cursor-pointer select-none" onClick={() => cycleSort('rawtraffic')}
                 title="节点实际转发的累计字节（上行+下行），不乘倍率、不随重置清零">
                 <span className="inline-flex items-center">原始流量<SortArrow col="rawtraffic" sort={sort} /></span>
               </th>}
-              <th className="cursor-pointer select-none min-w-[170px]" onClick={() => cycleSort('speed')}>
+              <th className="cursor-pointer select-none min-w-[140px]" onClick={() => cycleSort('speed')}>
                 <span className="inline-flex items-center">速度<SortArrow col="speed" sort={sort} /></span>
               </th>
               <th className="text-right">操作</th>
@@ -292,33 +410,46 @@ export default function NodeList() {
                   <td onClick={e => e.stopPropagation()}>
                     <input type="checkbox" className="accent-emerald-600" checked={selected.has(n.id)} onChange={() => toggleOne(n.id)} />
                   </td>
-                  <td className="font-mono text-xs text-ink-mut">
-                    {draggable && <span className="text-ink-mut mr-1 select-none cursor-move" title="拖拽排序"
-                      draggable onDragStart={() => setDragIndex(i)}>⠿</span>}#{n.id}
-                  </td>
                   <td>
-                    <span className="inline-flex items-center gap-2 font-semibold text-emerald-600">
+                    <span className="inline-flex items-center gap-2 font-semibold text-emerald-600 flex-wrap">
+                      {draggable && (
+                        <span className="text-ink-mut select-none cursor-move font-normal" title="拖拽排序"
+                          draggable onDragStart={e => { e.stopPropagation(); setDragIndex(i) }}
+                          onClick={e => e.stopPropagation()}>⠿</span>
+                      )}
                       <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]' : 'bg-gray-400 shadow-[0_0_0_3px_rgba(154,163,176,0.16)]'}`} />
+                      <span className="font-mono text-[11px] text-ink-mut font-normal">#{n.id}</span>
                       {n.name}
+                      <NodeStackBadge node={n} />
                       {isLandingListGroup(n) && <Badge color="amber">落地</Badge>}
                       <NodeBillingBadges node={n} />
                     </span>
                   </td>
-                  <td>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <NodeStackBadge node={n} />
-                    </div>
+                  <td className="font-mono text-xs max-w-[200px]" onClick={e => e.stopPropagation()}>
+                    {n.node_type === 'composite' ? (
+                      <span className="text-ink-mut">—</span>
+                    ) : n.relay_host ? (
+                      <CopyText text={n.relay_host}>
+                        <span className="text-ink-soft truncate inline-block max-w-[180px] align-bottom" title={n.relay_host}>
+                          {n.relay_host}
+                        </span>
+                      </CopyText>
+                    ) : (
+                      <span className="text-amber-600 font-semibold">未设置</span>
+                    )}
                   </td>
                   <td className="font-mono text-xs">
-                    <span className={isAgentOutdated(n) ? 'text-red-600' : ''}>{displayAgentVersion(n)}</span>
+                    <span className={isAgentOutdated(n) ? 'text-red-600 font-semibold' : ''}>{displayAgentVersion(n)}</span>
                   </td>
-                  <td className="font-mono text-xs text-ink-soft">
-                    {fmtTime(n.last_apply_at?.Valid ? n.last_apply_at.Int64 : null)}
+                  <td>
+                    <NodeStatus node={n} />
+                    {n.node_type !== 'composite' && n.last_apply_at?.Valid && n.online === 1 && !nullStr(n.last_error) && (
+                      <div className="text-[10.5px] text-ink-mut mt-0.5 font-mono">{fmtTime(n.last_apply_at.Int64)}</div>
+                    )}
                   </td>
-                  <td><NodeStatus node={n} /></td>
                   <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_traffic[n.id] || 0)}</td>
-                  {tab === 'single' && <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_raw_traffic[n.id] || 0)}</td>}
-                  <td className="font-mono text-xs whitespace-nowrap min-w-[170px]">
+                  {showRawCol && <td className="font-mono text-xs text-ink-mut">{fmtBytes(node_raw_traffic[n.id] || 0)}</td>}
+                  <td className="font-mono text-xs whitespace-nowrap min-w-[140px]">
                     {speeds[n.id] ? (
                       <>
                         <span className="text-emerald-600">↑{fmtSpeed(speeds[n.id].up)}</span>
@@ -326,11 +457,16 @@ export default function NodeList() {
                         <span className="text-emerald-600">↓{fmtSpeed(speeds[n.id].down)}</span>
                       </>
                     ) : (
-                      <span className="text-ink-mut">--</span>
+                      <span className="text-ink-mut">—</span>
                     )}
                   </td>
                   <td className="text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                    <div className="flex gap-2 justify-end">
+                    <div className="flex gap-1.5 justify-end">
+                      {n.node_type !== 'composite' && isAgentOutdated(n) && n.online === 1 && !n.disabled && (
+                        <button type="button" onClick={() => upgradeNode(n.id)} title="升级此节点" className="icon-btn text-amber-700" >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                        </button>
+                      )}
                       {n.node_type !== 'composite' && <button onClick={() => resyncNode(n.id)} title="重新同步" className="icon-btn">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
                       </button>}
@@ -353,7 +489,6 @@ export default function NodeList() {
             </div>
           )}
           </div>}
-          {/* Mobile cards */}
           {isMobile && <div>
             {filtered.map(n => (
               <div key={n.id} className="mobile-card">
@@ -362,6 +497,7 @@ export default function NodeList() {
                   <Link to={`/nodes/${n.id}`} className="flex-1 min-w-0 flex items-center justify-between no-underline text-ink">
                   <span className="inline-flex items-center gap-2 font-semibold text-emerald-600 flex-wrap">
                     <span className={`w-1.5 h-1.5 rounded-full flex-none ${!n.disabled && n.online === 1 ? 'bg-green-500' : 'bg-gray-400'}`} />
+                    <span className="font-mono text-[11px] text-ink-mut font-normal">#{n.id}</span>
                     {n.name}
                     {isLandingListGroup(n) && <Badge color="amber">落地</Badge>}
                     <NodeBillingBadges node={n} />
@@ -370,12 +506,14 @@ export default function NodeList() {
                   </Link>
                 </div>
                 <Link to={`/nodes/${n.id}`} className="block no-underline text-ink">
+                <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap mb-1">
+                  {n.relay_host
+                    ? <span className="font-mono truncate max-w-full">{n.relay_host}</span>
+                    : n.node_type !== 'composite' && <span className="text-amber-600">线路地址未设置</span>}
+                  {isAgentOutdated(n) && <span className="text-red-600 font-mono">{displayAgentVersion(n)}</span>}
+                </div>
                 <div className="flex items-center gap-2 text-xs text-ink-soft flex-wrap">
                   <span className="font-mono text-ink-mut">{fmtBytes(node_traffic[n.id] || 0)}</span>
-                  {n.node_type !== 'composite' && <>
-                    <span className="text-ink-mut">·</span>
-                    <span className="font-mono text-ink-mut">原始 {fmtBytes(node_raw_traffic[n.id] || 0)}</span>
-                  </>}
                   {speeds[n.id] && <>
                     <span className="text-ink-mut">·</span>
                     <span className="font-mono text-emerald-600">↑{fmtSpeed(speeds[n.id].up)}</span>
