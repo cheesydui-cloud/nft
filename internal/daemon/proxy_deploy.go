@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -148,6 +149,7 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 			_ = err2
 		}
 	}
+	evictForeignListeners(port)
 	if err := restartDetached(pidPath, logPath, xrayPath, "run", "-c", cfgPath); err != nil {
 		// Fallback flag form.
 		if err2 := restartDetached(pidPath, logPath, xrayPath, "-config", cfgPath); err2 != nil {
@@ -307,6 +309,7 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 			Error: fmt.Sprintf("sing-box 配置校验失败: %v (%s)", err, truncateOut(out)),
 		}
 	}
+	evictForeignListeners(port)
 	if err := restartDetached(pidPath, logPath, boxPath, "run", "-c", cfgPath); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "启动 sing-box 失败: " + err.Error()}
 	}
@@ -551,6 +554,212 @@ func waitListenHint(port int, d time.Duration) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("port %d not observed listening within %s", port, d)
+}
+
+// evictForeignListeners stops third-party / leftover cores occupying port so
+// a panel publish can bind. Panel-managed instance-*.pid processes are kept
+// (restartDetached replaces those). Typical leftovers: 3x-ui xray, official
+// sing-box unit, another mita, nginx on 443, or a crashed orphan.
+func evictForeignListeners(port int) {
+	if port < 1 || port > 65535 {
+		return
+	}
+	keep := panelManagedListenPIDs()
+	// Competing systemd proxy units (not nft-managed mita).
+	for _, unit := range []string{
+		"xray", "xray.service",
+		"sing-box", "sing-box.service", "singbox",
+		"v2ray", "v2ray.service",
+		"x-ui", "x-ui.service", "3x-ui", "3x-ui.service",
+	} {
+		if !unitActive(strings.TrimSuffix(unit, ".service")) && !unitActive(unit) {
+			continue
+		}
+		name := strings.TrimSuffix(unit, ".service")
+		_, _ = runCmdTimeout(8*time.Second, "systemctl", "stop", name)
+	}
+	for _, pid := range pidsListeningOnPort(port) {
+		if pid <= 1 {
+			continue
+		}
+		if keep[pid] {
+			continue
+		}
+		// Never kill the agent itself.
+		if pid == os.Getpid() {
+			continue
+		}
+		log.Printf("proxy: evicting pid %d from port %d for panel publish", pid, port)
+		killPID(pid)
+	}
+}
+
+func panelManagedListenPIDs() map[int]bool {
+	out := map[int]bool{}
+	base := coreStateDir()
+	for _, sub := range []string{"xray", "sing-box", "mieru"} {
+		matches, _ := filepath.Glob(filepath.Join(base, sub, "instance-*.pid"))
+		for _, p := range matches {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+			if err != nil || n <= 1 {
+				continue
+			}
+			out[n] = true
+		}
+	}
+	return out
+}
+
+func parseSSListenPIDs(ssOut string, port int) []int {
+	needle := ":" + strconv.Itoa(port)
+	seen := map[int]bool{}
+	var pids []int
+	for _, line := range strings.Split(ssOut, "\n") {
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		// Avoid matching :443 inside :4430 — require port at addr end or before space.
+		if !ssLineHasPort(line, port) {
+			continue
+		}
+		for _, tok := range strings.Split(line, "pid=") {
+			if tok == line {
+				continue
+			}
+			num := tok
+			if i := strings.IndexAny(num, ",)"); i >= 0 {
+				num = num[:i]
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(num))
+			if err != nil || n <= 1 || seen[n] {
+				continue
+			}
+			seen[n] = true
+			pids = append(pids, n)
+		}
+	}
+	return pids
+}
+
+func ssLineHasPort(line string, port int) bool {
+	// ss columns look like 0.0.0.0:8388 or [::]:8388 or *:8388
+	want := ":" + strconv.Itoa(port)
+	for _, f := range strings.Fields(line) {
+		if strings.HasSuffix(f, want) {
+			return true
+		}
+		// [::1]:8388 already covered by HasSuffix
+	}
+	return false
+}
+
+func pidsListeningOnPort(port int) []int {
+	seen := map[int]bool{}
+	var pids []int
+	add := func(n int) {
+		if n <= 1 || seen[n] {
+			return
+		}
+		seen[n] = true
+		pids = append(pids, n)
+	}
+	// ss -lntp / -lnup : users:("xray",pid=123,fd=8)
+	for _, args := range [][]string{
+		{"-lntp"},
+		{"-lnup"},
+	} {
+		out, err := runCmdTimeout(3*time.Second, "ss", args...)
+		if err != nil {
+			continue
+		}
+		for _, n := range parseSSListenPIDs(out, port) {
+			add(n)
+		}
+	}
+	out, err := runCmdTimeout(3*time.Second, "lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t")
+	if err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			n, err := strconv.Atoi(strings.TrimSpace(line))
+			if err == nil {
+				add(n)
+			}
+		}
+	}
+	out, err = runCmdTimeout(3*time.Second, "fuser", fmt.Sprintf("%d/tcp", port))
+	if err == nil {
+		for _, f := range strings.Fields(out) {
+			n, err := strconv.Atoi(f)
+			if err == nil {
+				add(n)
+			}
+		}
+	}
+	return pids
+}
+
+func killPID(pid int) {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			return
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	_ = proc.Signal(syscall.SIGKILL)
+}
+
+// resetMitaStoreForPanelReplace stops the proxy, wipes on-disk mita settings
+// that `apply` would otherwise merge with, then brings the RPC daemon back.
+// Official apply cannot delete users/ports; wiping the store is the only
+// replace. Panel desired.json is applied immediately after this returns.
+func resetMitaStoreForPanelReplace(mitaPath string) error {
+	if strings.TrimSpace(mitaPath) == "" {
+		mitaPath = resolveMitaBinary()
+	}
+	if mitaPath != "" {
+		mitaProxyStop(mitaPath)
+	}
+	_, _ = runCmdTimeout(15*time.Second, "systemctl", "stop", "mita")
+	// Common official / nft-managed store locations. Metrics stay (traffic
+	// history); server.json / config blobs hold leftover users+ports.
+	globs := []string{
+		"/etc/mita/*",
+		"/var/lib/mita/*",
+		"/var/lib/mita/store/*",
+		"/var/lib/mita/config/*",
+	}
+	for _, g := range globs {
+		matches, _ := filepath.Glob(g)
+		for _, p := range matches {
+			base := filepath.Base(p)
+			low := strings.ToLower(base)
+			if strings.Contains(low, "metrics") {
+				continue
+			}
+			if strings.HasSuffix(low, ".pb") || strings.HasSuffix(low, ".json") ||
+				strings.Contains(low, "server") || strings.Contains(low, "config") ||
+				strings.Contains(low, "setting") || strings.Contains(low, "store") {
+				_ = os.Remove(p)
+			}
+		}
+	}
+	// Recreate empty dirs with correct owner so `mita run` can start.
+	if err := ensureMitaRuntimeDirs(); err != nil {
+		return err
+	}
+	if mitaPath != "" {
+		return ensureMitaDaemon(mitaPath)
+	}
+	return nil
 }
 
 func portLikelyListening(port int) bool {

@@ -148,6 +148,39 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+func TestUnionUserNamesAndForeignDescribe(t *testing.T) {
+	raw := []byte(`{"users":[{"name":"panelu","password":"x"}]}`)
+	want := unionUserNames(raw)
+	if !want["panelu"] || len(want) != 1 {
+		t.Fatalf("union users = %v", want)
+	}
+	if mitaDescribeHasForeignUser(`name: panelu`, want) {
+		t.Fatal("panel user is not foreign")
+	}
+	if !mitaDescribeHasForeignUser(`      name: oldofficial`, want) {
+		t.Fatal("old official user should be foreign")
+	}
+}
+
+func TestParseSSListenPIDs(t *testing.T) {
+	out := `State Recv-Q Send-Q Local Address:Port Peer Address:Port
+LISTEN 0 4096 0.0.0.0:8388 0.0.0.0:* users:(("xray",pid=4242,fd=8))
+LISTEN 0 4096 *:443 *:* users:(("nginx",pid=99,fd=6))
+LISTEN 0 4096 [::]:8388 [::]:* users:(("xray",pid=4242,fd=9))
+`
+	got := parseSSListenPIDs(out, 8388)
+	if len(got) != 1 || got[0] != 4242 {
+		t.Fatalf("8388 pids = %v, want [4242]", got)
+	}
+	got443 := parseSSListenPIDs(out, 443)
+	if len(got443) != 1 || got443[0] != 99 {
+		t.Fatalf("443 pids = %v, want [99]", got443)
+	}
+	if n := parseSSListenPIDs(out, 1080); len(n) != 0 {
+		t.Fatalf("1080 should be empty, got %v", n)
+	}
+}
+
 func TestMergeMitaInstanceConfigsUnionsUsersAndPorts(t *testing.T) {
 	dir := t.TempDir()
 	a := []byte(`{"portBindings":[{"port":8964,"protocol":"TCP"}],"users":[{"name":"u1","password":"p1"}],"loggingLevel":"INFO"}`)

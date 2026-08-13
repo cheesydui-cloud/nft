@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,6 +153,14 @@ func xraySupportsVlessEnc(path string) bool {
 // handleProxyServiceApply deploys one proxy-service instance on this host.
 // mieru → mita; vless → xray; ss/socks5/anytls/naive → sing-box.
 func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+	// Same VPS: panel publish owns the listen port. Foreign xray/sing-box/
+	// 3x-ui / leftover mita must yield so the new inbound actually binds
+	// and old share links on that port die.
+	if p := req.ListenPort; p > 0 {
+		evictForeignListeners(p)
+	} else if p := proxysvc.ListenPortFromConfig(req.Config); p > 0 {
+		evictForeignListeners(p)
+	}
 	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
 	switch proto {
 	case "mieru":
@@ -266,10 +275,13 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		mitaPath = p
 	}
 
-	// Unchanged republish must not touch a live daemon. ensureMitaDaemon
-	// used to run first and treat a slow `mita status` as dead, then
-	// systemctl restart — that dropped every client for minutes.
-	if cfgUnchanged && mitaProxyListening(mitaPath) {
+	// Leftover official users/ports survive `apply` (merge). If the live
+	// daemon still has accounts the panel does not own, force replace.
+	needReplace := mitaHasForeignUsers(mitaPath, unionUserNames(unionRaw))
+
+	// Unchanged republish must not touch a live daemon — unless foreign
+	// leftovers are still serving (old share links would stay valid).
+	if cfgUnchanged && !needReplace && mitaProxyListening(mitaPath) {
 		return wsproto.ProxyServiceApplyAck{
 			OK:          true,
 			DryRun:      false,
@@ -286,8 +298,8 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		mitaPath = p
 	}
 
-	// Config file unchanged: only make sure listen is up. Never apply+stop.
-	if cfgUnchanged {
+	// Config file unchanged and no leftovers: only make sure listen is up.
+	if cfgUnchanged && !needReplace {
 		if mitaProxyListening(mitaPath) {
 			return wsproto.ProxyServiceApplyAck{
 				OK:          true,
@@ -306,6 +318,13 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 			DryRun:      false,
 			CoreVersion: probeCoreVersion(mitaPath),
 		}
+	}
+
+	// Official `mita apply` MERGES. Leftover users/ports from a previous
+	// official install stay valid unless we wipe store then apply the
+	// panel union as the first (only) config.
+	if err := resetMitaStoreForPanelReplace(mitaPath); err != nil {
+		log.Printf("mita: reset store before apply: %v", err)
 	}
 
 	// apply the union of all local instance fragments (desired state).
@@ -497,6 +516,75 @@ func handleProxyServiceStop(req wsproto.ProxyServiceStop) wsproto.ProxyServiceSt
 // mergeMitaInstanceConfigs unions every instance-*.json under dir into one
 // mita server config (portBindings + users). Same username keeps the last
 // password seen (deterministic by filename sort).
+func unionUserNames(unionRaw []byte) map[string]bool {
+	var peek struct {
+		Users []map[string]string `json:"users"`
+	}
+	_ = json.Unmarshal(unionRaw, &peek)
+	out := map[string]bool{}
+	for _, u := range peek.Users {
+		if n := strings.TrimSpace(u["name"]); n != "" {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// mitaHasForeignUsers is true when `mita get users` lists an account that
+// is not in the panel union (leftover official / other-panel install).
+func mitaHasForeignUsers(mitaPath string, want map[string]bool) bool {
+	if mitaPath == "" || len(want) == 0 {
+		return false
+	}
+	out, err := runCmdTimeout(6*time.Second, mitaPath, "get", "users")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return false
+	}
+	live := parseMitaUsersTable(out)
+	if len(live) == 0 {
+		// describe config as fallback (some builds print users there).
+		desc, err := runCmdTimeout(6*time.Second, mitaPath, "describe", "config")
+		if err != nil {
+			return false
+		}
+		return mitaDescribeHasForeignUser(desc, want)
+	}
+	for name := range live {
+		if !want[name] {
+			return true
+		}
+	}
+	return false
+}
+
+func mitaDescribeHasForeignUser(desc string, want map[string]bool) bool {
+	// Heuristic: lines like `name: olduser` / `"name": "olduser"`.
+	for _, line := range strings.Split(desc, "\n") {
+		s := strings.TrimSpace(line)
+		low := strings.ToLower(s)
+		if !strings.Contains(low, "name") {
+			continue
+		}
+		// skip hostnames / file names
+		if strings.Contains(low, "server") || strings.Contains(low, "file") {
+			continue
+		}
+		for _, sep := range []string{`": "`, `":"`, ": "} {
+			if i := strings.Index(s, sep); i >= 0 {
+				name := strings.Trim(s[i+len(sep):], `" ,`)
+				name = strings.TrimSpace(name)
+				if name != "" && !want[name] && !strings.Contains(name, ".") && !strings.Contains(name, "/") {
+					// only treat as user if it looks like an account token
+					if len(name) >= 2 && len(name) <= 64 {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func mergeMitaInstanceConfigs(dir string) ([]byte, error) {
 	matches, err := filepath.Glob(filepath.Join(dir, "instance-*.json"))
 	if err != nil {
@@ -588,6 +676,7 @@ func reapplyMitaAfterInstanceRemoved(dir string) {
 	if len(peek.Users) == 0 && len(peek.PortBindings) == 0 {
 		_ = os.Remove(filepath.Join(dir, "desired.json"))
 		mitaProxyStop(mitaPath)
+		_ = resetMitaStoreForPanelReplace(mitaPath)
 		return
 	}
 	unionPath := filepath.Join(dir, "desired.json")
@@ -596,6 +685,9 @@ func reapplyMitaAfterInstanceRemoved(dir string) {
 	}
 	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", unionPath)
 	_ = os.Chmod(unionPath, 0o640)
+	if err := resetMitaStoreForPanelReplace(mitaPath); err != nil {
+		log.Printf("mita: reset store after instance removed: %v", err)
+	}
 	if err := ensureMitaDaemon(mitaPath); err != nil {
 		return
 	}
