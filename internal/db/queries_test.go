@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNodeLastWarningRoundTrip(t *testing.T) {
 	d := openTestDB(t)
@@ -122,6 +125,61 @@ func TestListNodesForUserCarriesRoles(t *testing.T) {
 	}
 	if nodes[0].Roles != NodeRoleVia {
 		t.Fatalf("roles want %d, got %d", NodeRoleVia, nodes[0].Roles)
+	}
+}
+
+func TestEffectiveRelayHosts(t *testing.T) {
+	v4, v6 := EffectiveRelayHosts("1.1.1.1", "2001:db8::1", false, true)
+	if v4 != "1.1.1.1" || v6 != "" {
+		t.Fatalf("sticky v6 should hide v6 only, got %q %q", v4, v6)
+	}
+	v4, v6 = EffectiveRelayHosts("1.1.1.1", "2001:db8::1", true, false)
+	if v4 != "" || v6 != "2001:db8::1" {
+		t.Fatalf("sticky v4 should hide v4 only, got %q %q", v4, v6)
+	}
+}
+
+func TestRegenerateRuleIgnoresStickyDisabledFamily(t *testing.T) {
+	d := openTestDB(t)
+	n, err := CreateNode(d, "dual", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
+	_ = UpdateNodeRelayHostV6(d, n.ID, "2001:db8::1")
+	if err := SetNodeRelayV6Disabled(d, n.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Rule{NodeID: n.ID, Name: "keep-addr", Proto: "tcp", ExitHost: "9.9.9.9", ExitPort: 443}
+	tx, _ := d.Begin()
+	id, err := CreateRule(tx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ID = id
+	entry, entryV6, _, err := RegenerateRule(tx, r, []HopInput{{NodeID: n.ID, Mode: "userspace", ViaNodeID: n.ID}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if r.EntryFamily != "v4" {
+		t.Fatalf("entry_family = %q, want v4 while v6 sticky-disabled", r.EntryFamily)
+	}
+	if !strings.HasPrefix(entry, "1.1.1.1:") {
+		t.Fatalf("entry = %q, want 1.1.1.1:", entry)
+	}
+	if entryV6 != "" {
+		t.Fatalf("entry_v6 = %q, want empty while v6 sticky-disabled", entryV6)
+	}
+	got, _ := GetNode(d, n.ID)
+	if got.RelayHostV6 != "2001:db8::1" {
+		t.Fatalf("stored relay_host_v6 = %q, want kept", got.RelayHostV6)
+	}
+	if !got.RelayV6Disabled {
+		t.Fatal("relay_v6_disabled should stay set")
 	}
 }
 

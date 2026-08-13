@@ -388,15 +388,52 @@ func EnableIPForward() error {
 //     resolve, but out still contains the best-effort state — failed entries
 //     keep their previous DestIP so live traffic isn't torn down by DNS hiccups)
 func ResolveHosts(ctx context.Context, rules []Rule, r *resolver.Resolver) ([]Rule, bool, error) {
+	return ResolveHostsOpts(ctx, rules, r, false, false)
+}
+
+// ResolveHostsOpts is ResolveHosts with an address-family lock. blockV6 skips
+// AAAA and refuses a leftover IPv6 DestIP so kernel DNAT cannot exit on that
+// stack. blockV4 is the inverse (rare: v6-only egress).
+func ResolveHostsOpts(ctx context.Context, rules []Rule, r *resolver.Resolver, blockV4, blockV6 bool) ([]Rule, bool, error) {
 	out := make([]Rule, len(rules))
 	copy(out, rules)
 	changed := false
 	var errs []string
 	for i := range out {
-		if out[i].DestHost == "" {
-			continue
+		if out[i].DestIP != "" {
+			if blockV6 && IsIPv6(out[i].DestIP) {
+				errs = append(errs, fmt.Sprintf("%s: egress IPv6 disabled", out[i].DestIP))
+				if out[i].DestHost == "" {
+					out[i].DestHost = out[i].DestIP
+				}
+				out[i].DestIP = ""
+				changed = true
+			} else if blockV4 && !IsIPv6(out[i].DestIP) {
+				errs = append(errs, fmt.Sprintf("%s: egress IPv4 disabled", out[i].DestIP))
+				if out[i].DestHost == "" {
+					out[i].DestHost = out[i].DestIP
+				}
+				out[i].DestIP = ""
+				changed = true
+			}
 		}
-		ip, err := r.LookupIPv4(ctx, out[i].DestHost)
+			if out[i].DestHost == "" {
+				continue
+			}
+			if lit := net.ParseIP(out[i].DestHost); lit != nil {
+				// Literal already handled above; never treat an IP as a hostname.
+				continue
+			}
+			var ip string
+			var err error
+			switch {
+			case blockV6 && !blockV4:
+				ip, err = r.LookupIPv4(ctx, out[i].DestHost)
+			case blockV4 && !blockV6:
+				ip, err = r.LookupIPv6(ctx, out[i].DestHost)
+			default:
+				ip, err = r.LookupIPv4(ctx, out[i].DestHost)
+			}
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", out[i].DestHost, err))
 			continue

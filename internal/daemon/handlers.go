@@ -50,9 +50,9 @@ type Daemon struct {
 	connectFile          string
 	allowInsecureConnect bool
 	portRange            string
-	declaredRelayHost    string
-	declaredRelayHostV6  string
-	dialer               atomic.Pointer[Dialer]
+		declaredRelayHost    string
+		declaredRelayHostV6  string
+		dialer               atomic.Pointer[Dialer]
 
 	// reconcileMu serializes the data-plane reconcile/close calls against the
 	// DNS refresh and write paths. setOwnerRuleset reconciles while holding
@@ -212,14 +212,26 @@ func (d *Daemon) handleApplyRuleset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body struct {
-		Rules []nft.Rule `json:"rules"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	warning, err := d.SetPanelRuleset(r.Context(), "", body.Rules)
+		var body struct {
+			Rules         []nft.Rule `json:"rules"`
+			BlockEgressV4 *bool      `json:"block_egress_v4"`
+			BlockEgressV6 *bool      `json:"block_egress_v6"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.BlockEgressV4 != nil || body.BlockEgressV6 != nil {
+			v4, v6 := blockEgressV4.Load(), blockEgressV6.Load()
+			if body.BlockEgressV4 != nil {
+				v4 = *body.BlockEgressV4
+			}
+			if body.BlockEgressV6 != nil {
+				v6 = *body.BlockEgressV6
+			}
+			applyEgressPolicy(v4, v6)
+		}
+		warning, err := d.SetPanelRuleset(r.Context(), "", body.Rules)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

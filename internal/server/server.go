@@ -81,7 +81,8 @@ func NewWithPaths(d *sql.DB, docsDir, dbPath string) (*Server, error) {
 		s.enforceUserQuota(userID)
 		s.enforceExitQuota(userID)
 	}
-	hub.Redispatch = s.redispatchNodes
+		hub.Redispatch = s.redispatchNodes
+		hub.RepublishProxy = s.republishProxyInstancesOnNode
 	s.enforcerWg.Add(5)
 	safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
 	safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })

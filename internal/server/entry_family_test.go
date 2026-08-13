@@ -147,3 +147,48 @@ func TestEntryFamilyDerived(t *testing.T) {
 		}
 	})
 }
+
+// Sticky family disable keeps the stored address so the title-bar toggles
+// stay visible after disable → enable. RegenerateRule ignores the disabled
+// family even though the string is still on the node.
+func TestRelayFamilyDisableKeepsAddress(t *testing.T) {
+	d := openDB(t)
+	n, _ := db.CreateNode(d, "dual", "", "")
+	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
+	_ = db.UpdateNodeRelayHostV6(d, n.ID, "2001:db8::1")
+
+	cookie := loginAsAdmin(t, d)
+	s := newServer(t, d)
+
+	post := func(disabled bool) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"family": "v6", "disabled": disabled})
+		req := newTestRequest("POST", "/api/nodes/"+strconv.FormatInt(n.ID, 10)+"/relay-family", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(true); rec.Code != http.StatusOK {
+		t.Fatalf("disable status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := db.GetNode(d, n.ID)
+	if !got.RelayV6Disabled {
+		t.Fatal("want relay_v6_disabled after disable")
+	}
+	if got.RelayHostV6 != "2001:db8::1" {
+		t.Fatalf("relay_host_v6 = %q, want kept", got.RelayHostV6)
+	}
+
+	if rec := post(false); rec.Code != http.StatusOK {
+		t.Fatalf("enable status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ = db.GetNode(d, n.ID)
+	if got.RelayV6Disabled {
+		t.Fatal("relay_v6_disabled should clear on enable")
+	}
+	if got.RelayHostV6 != "2001:db8::1" {
+		t.Fatalf("relay_host_v6 = %q after enable, want kept", got.RelayHostV6)
+	}
+}

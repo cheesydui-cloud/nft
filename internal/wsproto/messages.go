@@ -137,10 +137,15 @@ type ProxyServiceApply struct {
 		OutboundShareURI string `json:"outbound_share_uri,omitempty"`
 		// OutboundRedirectHost/Port force a fixed CONNECT target through the SOCKS
 		// (rule exit_host:exit_port). Empty host = open proxy via SOCKS.
-		// Used only when no OutboundShareURI / OutboundSocks open proxy.
-		OutboundRedirectHost string `json:"outbound_redirect_host,omitempty"`
-		OutboundRedirectPort int    `json:"outbound_redirect_port,omitempty"`
-	}
+			// Used only when no OutboundShareURI / OutboundSocks open proxy.
+			OutboundRedirectHost string `json:"outbound_redirect_host,omitempty"`
+			OutboundRedirectPort int    `json:"outbound_redirect_port,omitempty"`
+			// BlockEgressV4/V6 force the core to resolve and dial only the
+			// remaining family (xray UseIPv4/UseIPv6, sing-box ipv4_only /
+			// ipv6_only, mita dns.dualStack ONLY_IPv*). Empty = dual-stack.
+			BlockEgressV4 bool `json:"block_egress_v4,omitempty"`
+			BlockEgressV6 bool `json:"block_egress_v6,omitempty"`
+		}
 
 // ProxyServiceApplyAck is the agent response after attempting deploy.
 type ProxyServiceApplyAck struct {
@@ -190,17 +195,25 @@ type CoreInstallAck struct {
 // HelloAck is the panel's response to Hello. Error == "" means the
 // node_token was accepted and NodeID/Name are populated; a non-empty
 // Error means the daemon should not proceed (token revoked or unknown).
-type HelloAck struct {
-	NodeID   int64  `json:"node_id,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Error    string `json:"error,omitempty"`
-	PoolSize int    `json:"pool_size,omitempty"`
-}
+	type HelloAck struct {
+		NodeID   int64  `json:"node_id,omitempty"`
+		Name     string `json:"name,omitempty"`
+		Error    string `json:"error,omitempty"`
+		PoolSize int    `json:"pool_size,omitempty"`
+		// BlockEgressV4/V6 tell the agent this node must not dial that family
+		// (userspace relay + kernel IPv6 dests). Mirrors nodes.relay_*_disabled.
+		BlockEgressV4 bool `json:"block_egress_v4,omitempty"`
+		BlockEgressV6 bool `json:"block_egress_v6,omitempty"`
+	}
 
-type ApplyRuleset struct {
-	Rev   string     `json:"rev"`
-	Rules []nft.Rule `json:"rules"`
-}
+	type ApplyRuleset struct {
+		Rev   string     `json:"rev"`
+		Rules []nft.Rule `json:"rules"`
+		// Same meaning as HelloAck; sent on every apply so a live agent
+		// picks up a panel toggle without waiting for reconnect.
+		BlockEgressV4 bool `json:"block_egress_v4,omitempty"`
+		BlockEgressV6 bool `json:"block_egress_v6,omitempty"`
+	}
 
 // ApplyAck is the agent's response to apply_ruleset. Peers must
 // disambiguate success vs failure using OK *and* Error together:
@@ -359,9 +372,12 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-type ConfigUpdate struct {
-	PoolSize int `json:"pool_size"`
-}
+	type ConfigUpdate struct {
+		PoolSize int `json:"pool_size"`
+		// Pointers so a pool_size-only broadcast does not reset egress policy.
+		BlockEgressV4 *bool `json:"block_egress_v4,omitempty"`
+		BlockEgressV6 *bool `json:"block_egress_v6,omitempty"`
+	}
 
 // PanelRedirect asks an agent to switch its control-plane connect URL (panel
 // host migration). PanelURL may be https://… or wss://…/v1/agents; agents

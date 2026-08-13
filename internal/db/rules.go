@@ -689,9 +689,13 @@ func RegenerateRule(tx DBTX, r *Rule, hops []HopInput, avoid map[int64]int) (str
 		seen[hop.NodeID] = true
 
 		var name, relay, relayV6, portRange string
-		if err := tx.QueryRow(`SELECT name, relay_host, relay_host_v6, port_range FROM nodes WHERE id=?`, hop.NodeID).Scan(&name, &relay, &relayV6, &portRange); err != nil {
+		var v4Disabled, v6Disabled int
+		if err := tx.QueryRow(`SELECT name, relay_host, relay_host_v6, port_range, COALESCE(relay_v4_disabled,0), COALESCE(relay_v6_disabled,0) FROM nodes WHERE id=?`, hop.NodeID).Scan(&name, &relay, &relayV6, &portRange, &v4Disabled, &v6Disabled); err != nil {
 			return "", "", nil, fmt.Errorf("节点 %d 不存在", hop.NodeID)
 		}
+		// Sticky-disabled families stay stored on the node (so enable can
+		// restore them) but must not participate in entry_family or hop dials.
+		relay, relayV6 = EffectiveRelayHosts(relay, relayV6, v4Disabled == 1, v6Disabled == 1)
 		// At least one family must be set. V4-only is the common case; v6-only
 		// is allowed after an operator sticky-disables IPv4 on a dual-stack node.
 		if relay == "" && relayV6 == "" {

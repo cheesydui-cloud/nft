@@ -20,16 +20,20 @@ func dialUpstream(addr string, exitProxy ...string) (net.Conn, error) {
 	if len(exitProxy) > 0 {
 		proxy = strings.TrimSpace(exitProxy[0])
 	}
-	if proxy == "" {
-		c, err := net.DialTimeout("tcp", addr, dialTimeout)
-		if err != nil {
-			return nil, err
+		if proxy == "" {
+			network, err := egressNetwork(addr)
+			if err != nil {
+				return nil, err
+			}
+			c, err := net.DialTimeout(network, addr, dialTimeout)
+			if err != nil {
+				return nil, err
+			}
+			setKeepAlive(c)
+			return c, nil
 		}
-		setKeepAlive(c)
-		return c, nil
+		return dialViaSOCKS5(proxy, addr)
 	}
-	return dialViaSOCKS5(proxy, addr)
-}
 
 func dialViaSOCKS5(proxyURI, target string) (net.Conn, error) {
 	u, err := url.Parse(proxyURI)
@@ -45,9 +49,13 @@ func dialViaSOCKS5(proxyURI, target string) (net.Conn, error) {
 	if proxyHost == "" || proxyPort == "" {
 		return nil, fmt.Errorf("socks5 uri missing host:port")
 	}
-	proxyAddr := net.JoinHostPort(proxyHost, proxyPort)
+		proxyAddr := net.JoinHostPort(proxyHost, proxyPort)
 
-	c, err := net.DialTimeout("tcp", proxyAddr, dialTimeout)
+		network, nerr := egressNetwork(proxyAddr)
+		if nerr != nil {
+			return nil, nerr
+		}
+		c, err := net.DialTimeout(network, proxyAddr, dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("socks5 dial proxy: %w", err)
 	}

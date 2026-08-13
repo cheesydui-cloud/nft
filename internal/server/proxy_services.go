@@ -481,16 +481,22 @@ func (s *Server) applyProxyInstance(nodeID int64, svc *db.ProxyService, inst *db
 	if s.Hub == nil || !s.Hub.IsOnline(nodeID) {
 		return applyOutcome{OK: false, Error: "节点离线", DryRun: true}
 	}
-	ack, err := s.Hub.SendProxyServiceApply(nodeID, wsproto.ProxyServiceApply{
-		InstanceID: inst.ID,
-		ServiceID:  svc.ID,
-		Protocol:   svc.Protocol,
-		Core:       svc.Core,
-		ListenPort: port,
-		ShareHost:  shareHost,
-		Name:       svc.Name,
-		Config:     cfg,
-	})
+		blockV4, blockV6 := false, false
+		if n, err := db.GetNode(s.DB, nodeID); err == nil && n != nil {
+			blockV4, blockV6 = n.RelayV4Disabled, n.RelayV6Disabled
+		}
+		ack, err := s.Hub.SendProxyServiceApply(nodeID, wsproto.ProxyServiceApply{
+			InstanceID:    inst.ID,
+			ServiceID:     svc.ID,
+			Protocol:      svc.Protocol,
+			Core:          svc.Core,
+			ListenPort:    port,
+			ShareHost:     shareHost,
+			Name:          svc.Name,
+			Config:        cfg,
+			BlockEgressV4: blockV4,
+			BlockEgressV6: blockV6,
+		})
 	if err != nil {
 		return applyOutcome{OK: false, Error: err.Error(), DryRun: true}
 	}

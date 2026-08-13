@@ -32,23 +32,23 @@ func (d *Dispatcher) Dispatch(nodeID int64, rules []nft.Rule, rev string) (strin
 	if err != nil {
 		return "", err
 	}
-	if n.NodeType == "self" {
-		send := d.SendLocal
-		if send == nil {
-			send = sendLocalDefault
+		if n.NodeType == "self" {
+			send := d.SendLocal
+			if send == nil {
+				return sendLocalDefault(rules, n.RelayV4Disabled, n.RelayV6Disabled)
+			}
+			return send(rules)
 		}
-		return send(rules)
+		if d.Hub == nil {
+			return "", fmt.Errorf("hub not wired; cannot dispatch to remote node %d", nodeID)
+		}
+		return d.Hub.SendApplyRuleset(nodeID, rules, rev)
 	}
-	if d.Hub == nil {
-		return "", fmt.Errorf("hub not wired; cannot dispatch to remote node %d", nodeID)
-	}
-	return d.Hub.SendApplyRuleset(nodeID, rules, rev)
-}
 
-func sendLocalDefault(rules []nft.Rule) (string, error) {
-	c, err := daemonclient.New(daemonclient.DefaultSocketPath)
-	if err != nil {
-		return "", err
+	func sendLocalDefault(rules []nft.Rule, blockV4, blockV6 bool) (string, error) {
+		c, err := daemonclient.New(daemonclient.DefaultSocketPath)
+		if err != nil {
+			return "", err
+		}
+		return c.ApplyRulesetOpts(rules, &blockV4, &blockV6)
 	}
-	return c.ApplyRuleset(rules)
-}

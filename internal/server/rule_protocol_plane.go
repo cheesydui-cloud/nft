@@ -140,16 +140,18 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	//   socks5 → open SOCKS (client destinations pass through exit_uri)
 	//   direct + landing share (ss/vless/…) → real protocol outbound
 	//   direct + bare host:port only → freedom redirect (L4-like tunnel)
-	apply := wsproto.ProxyServiceApply{
-		InstanceID: instID,
-		ServiceID:  svc.ID,
-		Protocol:   svc.Protocol,
-		Core:       core,
-		ListenPort: r.EntryListenPort,
-		ShareHost:  shareHost,
-		Name:       fmt.Sprintf("%s#r%d", svc.Name, r.ID),
-		Config:     cfg,
-	}
+		apply := wsproto.ProxyServiceApply{
+			InstanceID:    instID,
+			ServiceID:     svc.ID,
+			Protocol:      svc.Protocol,
+			Core:          core,
+			ListenPort:    r.EntryListenPort,
+			ShareHost:     shareHost,
+			Name:          fmt.Sprintf("%s#r%d", svc.Name, r.ID),
+			Config:        cfg,
+			BlockEgressV4: node.RelayV4Disabled,
+			BlockEgressV6: node.RelayV6Disabled,
+		}
 	exitType := strings.ToLower(strings.TrimSpace(r.ExitType))
 	if exitType == "socks5" {
 		uri := strings.TrimSpace(r.ExitURI)

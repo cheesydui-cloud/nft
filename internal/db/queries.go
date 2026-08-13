@@ -58,38 +58,38 @@ type Node struct {
 	// to connect. It must never be serialized to user-facing responses (a granted
 	// user could otherwise impersonate the node). json:"-" makes leaking it opt-in:
 	// the admin node-detail endpoint re-adds it explicitly via nodeWithSecret.
-	Secret              string         `json:"-"`
-RelayHost           string         `json:"relay_host"`
-		RelayHostV6         string         `json:"relay_host_v6"`
-		RelayHostDeclared   bool           `json:"relay_host_declared"`
-		RelayHostV6Declared bool           `json:"relay_host_v6_declared"`
-		// RelayV4Disabled / RelayV6Disabled sticky-disable a family: the
-		// matching relay host stays empty and hello auto-fill will not re-seed
-		// it. Used to force dual-stack nodes to v4-only or v6-only without the
-		// agent undoing the clear on reconnect.
-		RelayV4Disabled bool `json:"relay_v4_disabled"`
-		RelayV6Disabled bool `json:"relay_v6_disabled"`
-	Online              int            `json:"online"`
-	AgentVersion        string         `json:"agent_version"`
-	AgentSHA            string         `json:"agent_sha"`
+	Secret              string `json:"-"`
+	RelayHost           string `json:"relay_host"`
+	RelayHostV6         string `json:"relay_host_v6"`
+	RelayHostDeclared   bool   `json:"relay_host_declared"`
+	RelayHostV6Declared bool   `json:"relay_host_v6_declared"`
+	// RelayV4Disabled / RelayV6Disabled sticky-disable a family for both
+	// entry (address is kept but ignored; hello / daemon --relay-host*
+	// will not overwrite it) and egress (cores + userspace dial + DNS
+	// skip that stack).
+	RelayV4Disabled bool   `json:"relay_v4_disabled"`
+	RelayV6Disabled bool   `json:"relay_v6_disabled"`
+	Online          int    `json:"online"`
+	AgentVersion    string `json:"agent_version"`
+	AgentSHA        string `json:"agent_sha"`
 	// AgentArch is the GOARCH reported by the agent hello (amd64/arm64/…).
 	// Empty until the first hello after migration 0060.
-	AgentArch string `json:"agent_arch,omitempty"`
-	LastSeen  *int64 `json:"last_seen,omitempty"`
-	LastApplyAt         sql.NullInt64  `json:"last_apply_at"`
-	LastError           sql.NullString `json:"last_error"`
-	LastWarning         string         `json:"last_warning"`
-	Disabled            bool           `json:"disabled"`
-	LocalMigratedAt     *int64         `json:"local_migrated_at,omitempty"`
-	PortRange           string         `json:"port_range"`
-	SortOrder           int64          `json:"sort_order"`
-	CreatedAt           int64          `json:"created_at"`
-	LastUpgradeAt       sql.NullInt64  `json:"last_upgrade_at"`
-	LastUpgradeVersion  string         `json:"last_upgrade_version,omitempty"`
-	LastUpgradeStatus   string         `json:"last_upgrade_status,omitempty"`
-	LastUpgradeError    string         `json:"last_upgrade_error,omitempty"`
-	RateMultiplier      float64        `json:"rate_multiplier"`
-	Unidirectional      bool           `json:"unidirectional"`
+	AgentArch          string         `json:"agent_arch,omitempty"`
+	LastSeen           *int64         `json:"last_seen,omitempty"`
+	LastApplyAt        sql.NullInt64  `json:"last_apply_at"`
+	LastError          sql.NullString `json:"last_error"`
+	LastWarning        string         `json:"last_warning"`
+	Disabled           bool           `json:"disabled"`
+	LocalMigratedAt    *int64         `json:"local_migrated_at,omitempty"`
+	PortRange          string         `json:"port_range"`
+	SortOrder          int64          `json:"sort_order"`
+	CreatedAt          int64          `json:"created_at"`
+	LastUpgradeAt      sql.NullInt64  `json:"last_upgrade_at"`
+	LastUpgradeVersion string         `json:"last_upgrade_version,omitempty"`
+	LastUpgradeStatus  string         `json:"last_upgrade_status,omitempty"`
+	LastUpgradeError   string         `json:"last_upgrade_error,omitempty"`
+	RateMultiplier     float64        `json:"rate_multiplier"`
+	Unidirectional     bool           `json:"unidirectional"`
 	// NoDirectExit forbids the node from terminating a rule chain: it cannot
 	// launch the exit segment, so a rule entering here must cascade into at
 	// least one more middle layer.
@@ -121,13 +121,13 @@ RelayHost           string         `json:"relay_host"`
 	CFSync       bool   `json:"cf_sync"`
 	CFZoneID     string `json:"cf_zone_id"`
 	CFRecordName string `json:"cf_record_name"`
-		CFLastSyncAt int64  `json:"cf_last_sync_at"`
-		CFLastError  string `json:"cf_last_error"`
-		CFLastIP     string `json:"cf_last_ip"`
-		// ListGroup is the admin node-list bucket. Empty = default (单点/组合 by
-		// node_type). "landing" = 落地 tab only (manual move in/out).
-		ListGroup string `json:"list_group"`
-	}
+	CFLastSyncAt int64  `json:"cf_last_sync_at"`
+	CFLastError  string `json:"cf_last_error"`
+	CFLastIP     string `json:"cf_last_ip"`
+	// ListGroup is the admin node-list bucket. Empty = default (单点/组合 by
+	// node_type). "landing" = 落地 tab only (manual move in/out).
+	ListGroup string `json:"list_group"`
+}
 
 // NodeChildHop is one member of a composite node's chain, resolved to its
 // physical child node's name and type for display. Mode is the segment mode the
@@ -140,28 +140,28 @@ type NodeChildHop struct {
 }
 
 type Rule struct {
-	ID              int64         `json:"id"`
-	NodeID          int64         `json:"node_id"`
-	OwnerID         sql.NullInt64 `json:"owner_id"`
-	Name            string        `json:"name"`
-	Proto           string        `json:"proto"`
-	ExitHost        string        `json:"exit_host"`
-	ExitPort        int           `json:"exit_port"`
+	ID       int64         `json:"id"`
+	NodeID   int64         `json:"node_id"`
+	OwnerID  sql.NullInt64 `json:"owner_id"`
+	Name     string        `json:"name"`
+	Proto    string        `json:"proto"`
+	ExitHost string        `json:"exit_host"`
+	ExitPort int           `json:"exit_port"`
 	// ExitType is "direct" (default L4 to exit_host:exit_port) or "socks5"
 	// (userspace CONNECT via ExitURI to that target).
 	ExitType string `json:"exit_type"`
 	// ExitURI is the SOCKS5 proxy URI (socks5://user:pass@host:port) when
 	// ExitType is socks5. Empty for direct exits. Passwords live in this URI;
 	// list/detail APIs may redact credentials before returning to the client.
-	ExitURI         string        `json:"exit_uri,omitempty"`
+	ExitURI string `json:"exit_uri,omitempty"`
 	// ProxyServiceID is the proxy_services.id chosen on the 代理 tab (0 if the
 	// entry was picked as a plain node). Used for list labels and client-facing
 	// relay_uri rewrite; hops still use NodeID only.
-	ProxyServiceID  int64         `json:"proxy_service_id,omitempty"`
-	EntryListenPort int           `json:"entry_listen_port"`
-	Comment         string        `json:"comment"`
-	Disabled        bool          `json:"disabled"`
-	CreatedAt       int64         `json:"created_at"`
+	ProxyServiceID  int64  `json:"proxy_service_id,omitempty"`
+	EntryListenPort int    `json:"entry_listen_port"`
+	Comment         string `json:"comment"`
+	Disabled        bool   `json:"disabled"`
+	CreatedAt       int64  `json:"created_at"`
 	// EntryFamily selects which of the entry node's relay addresses the entry
 	// endpoint advertises: "v4" (default), "v6", or "both". Validated and
 	// resolved against the entry node's relay_host/relay_host_v6 in RegenerateRule.
@@ -688,11 +688,13 @@ func resolveCompositeRelayStack(nodes []*Node, hops []*NodeHop) {
 			continue
 		}
 		if first := byID[chain[0].HopNodeID]; first != nil {
-			n.EntryRelayHost = first.RelayHost
-			n.EntryRelayHostV6 = first.RelayHostV6
+			v4, v6 := EffectiveRelayHosts(first.RelayHost, first.RelayHostV6, first.RelayV4Disabled, first.RelayV6Disabled)
+			n.EntryRelayHost = v4
+			n.EntryRelayHostV6 = v6
 		}
 		if last := byID[chain[len(chain)-1].HopNodeID]; last != nil {
-			n.ExitRelayHostV6 = last.RelayHostV6
+			_, v6 := EffectiveRelayHosts(last.RelayHost, last.RelayHostV6, last.RelayV4Disabled, last.RelayV6Disabled)
+			n.ExitRelayHostV6 = v6
 		}
 	}
 }
@@ -856,6 +858,20 @@ func SetNodeRelayHostV6Declared(d *sql.DB, id int64, declared bool) error {
 	}
 	_, err := d.Exec(`UPDATE nodes SET relay_host_v6_declared=? WHERE id=?`, v, id)
 	return err
+}
+
+// EffectiveRelayHosts returns the relay addresses that are actually usable
+// for entry / hop targeting. A sticky-disabled family is treated as empty
+// even when the stored address is still present (so disable/enable can keep
+// the address and still drop that stack from rules).
+func EffectiveRelayHosts(relay, relayV6 string, v4Disabled, v6Disabled bool) (string, string) {
+	if v4Disabled {
+		relay = ""
+	}
+	if v6Disabled {
+		relayV6 = ""
+	}
+	return relay, relayV6
 }
 
 // SetNodeRelayV4Disabled sticky-disables (or re-enables) the v4 relay family.

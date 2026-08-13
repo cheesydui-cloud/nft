@@ -59,6 +59,9 @@ type Hub struct {
 	// Redispatch re-pushes kernel state to a set of nodes after the hub
 	// mutates rule state on their behalf. Keeps the hub transport-only.
 	Redispatch func(nodeIDs []int64)
+	// RepublishProxy, when set, re-applies published proxy cores on a node
+	// so they pick up the current egress-family lock after reconnect.
+	RepublishProxy func(nodeID int64)
 
 	mu         sync.RWMutex
 	conns      map[int64]*agentConn
@@ -206,7 +209,13 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 			poolSize = n
 		}
 	}
-	ackPayload, _ := json.Marshal(wsproto.HelloAck{NodeID: node.ID, Name: node.Name, PoolSize: poolSize})
+	ackPayload, _ := json.Marshal(wsproto.HelloAck{
+		NodeID:        node.ID,
+		Name:          node.Name,
+		PoolSize:      poolSize,
+		BlockEgressV4: node.RelayV4Disabled,
+		BlockEgressV6: node.RelayV6Disabled,
+	})
 	if err := writeEnvelope(ctx, ws, wsproto.Envelope{Type: wsproto.TypeHelloAck, ID: helloEnv.ID, Payload: ackPayload}); err != nil {
 		ws.Close(websocket.StatusInternalError, "ack write failed")
 		return
@@ -235,6 +244,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// the kernel state converges on reconnect instead of drifting until the next
 	// mutation. The rev check keeps this a no-op when the node is already in sync.
 	h.reconcileOnConnect(node.ID, hello.LastAppliedRev)
+	if h.RepublishProxy != nil && (node.RelayV4Disabled || node.RelayV6Disabled) {
+		go h.RepublishProxy(node.ID)
+	}
 	// If an admin started a panel host migration, late-connecting agents still
 	// on the old panel get redirected once they hello here.
 	h.maybePushPendingRedirect(node.ID)
@@ -477,7 +489,13 @@ func (h *Hub) SendApplyRuleset(nodeID int64, rules []nft.Rule, rev string) (stri
 		ac.pendMu.Unlock()
 	}()
 
-	payload, _ := json.Marshal(wsproto.ApplyRuleset{Rev: rev, Rules: rules})
+	blockV4, blockV6 := false, false
+	if h.DB != nil {
+		if n, err := db.GetNode(h.DB, nodeID); err == nil && n != nil {
+			blockV4, blockV6 = n.RelayV4Disabled, n.RelayV6Disabled
+		}
+	}
+	payload, _ := json.Marshal(wsproto.ApplyRuleset{Rev: rev, Rules: rules, BlockEgressV4: blockV4, BlockEgressV6: blockV6})
 	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeApplyRuleset, ID: id, Payload: payload})
 
 	select {
@@ -572,7 +590,6 @@ func (h *Hub) SendProxyServiceApply(nodeID int64, req wsproto.ProxyServiceApply)
 	}
 }
 
-
 // SendProxyServiceStop asks the agent to tear down a core instance.
 func (h *Hub) SendProxyServiceStop(nodeID int64, req wsproto.ProxyServiceStop) (wsproto.ProxyServiceStopAck, error) {
 	h.mu.RLock()
@@ -608,7 +625,6 @@ func (h *Hub) SendProxyServiceStop(nodeID int64, req wsproto.ProxyServiceStop) (
 		return wsproto.ProxyServiceStopAck{}, errors.New("connection closed")
 	}
 }
-
 
 func (h *Hub) IsConnected(nodeID int64) bool {
 	h.mu.RLock()
@@ -660,6 +676,17 @@ func (h *Hub) SendProbeEx(nodeID int64, req wsproto.Probe) (wsproto.ProbeAck, er
 	case <-ac.closed:
 		return wsproto.ProbeAck{}, errors.New("connection closed")
 	}
+}
+
+func (h *Hub) SendConfigUpdate(nodeID int64, cu wsproto.ConfigUpdate) {
+	h.mu.RLock()
+	ac, ok := h.conns[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return
+	}
+	payload, _ := json.Marshal(cu)
+	ac.enqueueWrite(wsproto.Envelope{Type: wsproto.TypeConfigUpdate, Payload: payload})
 }
 
 func (h *Hub) BroadcastConfigUpdate(poolSize int) {
@@ -1179,8 +1206,8 @@ func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, observedIP, probedV
 		}
 	}
 
-	// Operator sticky-disable wins over auto-seed: keep the family empty so a
-	// dual-stack node forced to v4-only / v6-only does not get refilled on hello.
+	// Operator sticky-disable wins over auto-seed: do not refill an empty
+	// family. A kept address is left as-is; RegenerateRule ignores it.
 	if node.RelayHost == "" && declaredV4 == "" && !node.RelayV4Disabled {
 		// Prefer public agent probe, then connectIP, then observed peer, then private.
 		v4 := pickV4(probedV4, connectIP, observedIP)
@@ -1760,7 +1787,6 @@ func (h *Hub) applyProxyCounters(nodeID int64, samples []wsproto.ProxyCounterSam
 	_ = tx.Rollback()
 	return false, errMsg
 }
-
 
 // applyRuleHopEdit folds a node-reported edit to its hop in ruleID back
 // into the rule skeleton and re-dispatches every node the regeneration

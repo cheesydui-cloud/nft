@@ -319,12 +319,50 @@ func TestResolveHostsKeepsOldIPOnError(t *testing.T) {
 	if changed {
 		t.Fatal("expected changed=false on failure")
 	}
-	if out[0].DestIP != "203.0.113.7" {
-		t.Fatalf("stale IP should be preserved, got %q", out[0].DestIP)
+		if out[0].DestIP != "203.0.113.7" {
+			t.Fatalf("stale IP should be preserved, got %q", out[0].DestIP)
+		}
 	}
-}
 
-func TestEffectiveMode(t *testing.T) {
+	func TestResolveHostsOptsDropsIPv6WhenBlocked(t *testing.T) {
+		r := &resolver.Resolver{
+			Lookup: func(ctx context.Context, host string) ([]string, error) {
+				return []string{"2001:db8::1", "203.0.113.9"}, nil
+			},
+		}
+		rules := []Rule{{Proto: "tcp", SrcPort: 80, DestIP: "2001:db8::2", DestPort: 80}}
+		out, changed, err := ResolveHostsOpts(context.Background(), rules, r, false, true)
+		if err == nil {
+			t.Fatal("expected error for stripped IPv6 dest")
+		}
+		if !changed {
+			t.Fatal("expected DestIP cleared")
+		}
+		if out[0].DestIP != "" {
+			t.Fatalf("IPv6 dest should be stripped, got %q", out[0].DestIP)
+		}
+		if out[0].DestHost != "2001:db8::2" {
+			t.Fatalf("literal should move to DestHost, got %q", out[0].DestHost)
+		}
+	}
+
+	func TestResolveHostsOptsPrefersAWhenV6Blocked(t *testing.T) {
+		r := &resolver.Resolver{
+			Lookup: func(ctx context.Context, host string) ([]string, error) {
+				return []string{"2001:db8::1", "203.0.113.9"}, nil
+			},
+		}
+		rules := []Rule{{Proto: "tcp", SrcPort: 80, DestHost: "dual.example", DestPort: 80}}
+		out, changed, err := ResolveHostsOpts(context.Background(), rules, r, false, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed || out[0].DestIP != "203.0.113.9" {
+			t.Fatalf("want A record, got changed=%v ip=%q", changed, out[0].DestIP)
+		}
+	}
+
+	func TestEffectiveMode(t *testing.T) {
 	cases := []struct {
 		in   string
 		want string

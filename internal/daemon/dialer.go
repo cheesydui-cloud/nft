@@ -560,9 +560,10 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 	d.nodeName = ha.Name
 	d.nodeMu.Unlock()
 
-	if ha.PoolSize > 0 && d.cfg.OnConfigUpdate != nil {
-		d.cfg.OnConfigUpdate(ha.PoolSize)
-	}
+		applyEgressPolicy(ha.BlockEgressV4, ha.BlockEgressV6)
+		if ha.PoolSize > 0 && d.cfg.OnConfigUpdate != nil {
+			d.cfg.OnConfigUpdate(ha.PoolSize)
+		}
 
 	// Migrate local tui rules to the server on first connect so they become
 	// server-managed. On success, the callback clears the tui segment locally.
@@ -670,11 +671,12 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 			lastRead = time.Now()
 			switch env.Type {
 			case wsproto.TypeApplyRuleset:
-				var ar wsproto.ApplyRuleset
-				if err := json.Unmarshal(env.Payload, &ar); err != nil {
-					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
-					continue
-				}
+					var ar wsproto.ApplyRuleset
+					if err := json.Unmarshal(env.Payload, &ar); err != nil {
+						log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+						continue
+					}
+					applyEgressPolicy(ar.BlockEgressV4, ar.BlockEgressV6)
 				// Keep the original v0.58.0 behaviour: apply synchronously so
 				// apply_ack is written immediately after OnApply returns. Long
 				// applies (many rules, slow DNS, port binds) can exceed the
@@ -747,15 +749,25 @@ func (d *Dialer) runOnce(ctx context.Context) (helloAcked bool, err error) {
 				// reset is implicit; readOne uses fresh deadline each call
 			case wsproto.TypeError:
 				log.Printf("dialer: server error frame: %s", string(env.Payload))
-			case wsproto.TypeConfigUpdate:
-				var cu wsproto.ConfigUpdate
-				if err := json.Unmarshal(env.Payload, &cu); err != nil {
-					log.Printf("dialer: unmarshal %s: %v", env.Type, err)
-					continue
-				}
-				if d.cfg.OnConfigUpdate != nil {
-					d.cfg.OnConfigUpdate(cu.PoolSize)
-				}
+				case wsproto.TypeConfigUpdate:
+					var cu wsproto.ConfigUpdate
+					if err := json.Unmarshal(env.Payload, &cu); err != nil {
+						log.Printf("dialer: unmarshal %s: %v", env.Type, err)
+						continue
+					}
+					if cu.BlockEgressV4 != nil || cu.BlockEgressV6 != nil {
+						v4, v6 := blockEgressV4.Load(), blockEgressV6.Load()
+						if cu.BlockEgressV4 != nil {
+							v4 = *cu.BlockEgressV4
+						}
+						if cu.BlockEgressV6 != nil {
+							v6 = *cu.BlockEgressV6
+						}
+						applyEgressPolicy(v4, v6)
+					}
+					if cu.PoolSize > 0 && d.cfg.OnConfigUpdate != nil {
+						d.cfg.OnConfigUpdate(cu.PoolSize)
+					}
 			case wsproto.TypePanelRedirect:
 				var pr wsproto.PanelRedirect
 				if err := json.Unmarshal(env.Payload, &pr); err != nil {

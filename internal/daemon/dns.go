@@ -6,9 +6,26 @@ import (
 	"os"
 	"time"
 
+	"sync/atomic"
+
+	"nft/internal/forward"
 	"nft/internal/nft"
 	"nft/internal/resolver"
 )
+
+// blockEgressV4/V6 are the last panel-pushed egress lock (hello / apply /
+// config_update). DNS resolve and userspace dials both read these.
+var (
+	blockEgressV4 atomic.Bool
+	blockEgressV6 atomic.Bool
+)
+
+// applyEgressPolicy stores the lock and mirrors it into the userspace dialer.
+func applyEgressPolicy(blockV4, blockV6 bool) {
+	blockEgressV4.Store(blockV4)
+	blockEgressV6.Store(blockV6)
+	forward.SetEgressPolicy(blockV4, blockV6)
+}
 
 // resolveFunc is the apply-time DNS resolver. Production points it at
 // nft.ResolveHosts backed by a long-lived resolver.Resolver so positive
@@ -20,7 +37,7 @@ type resolveFunc func(ctx context.Context, rules []nft.Rule) ([]nft.Rule, bool, 
 
 func defaultResolver(r *resolver.Resolver) resolveFunc {
 	return func(ctx context.Context, rules []nft.Rule) ([]nft.Rule, bool, error) {
-		return nft.ResolveHosts(ctx, rules, r)
+		return nft.ResolveHostsOpts(ctx, rules, r, blockEgressV4.Load(), blockEgressV6.Load())
 	}
 }
 

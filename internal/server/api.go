@@ -21,6 +21,7 @@ import (
 	"nft/internal/db"
 	"nft/internal/landing"
 	"nft/internal/resolver"
+	"nft/internal/wsproto"
 )
 
 // --- JSON helpers ---
@@ -1120,10 +1121,12 @@ func (s *Server) apiSetNodeRelayHostV6(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiSetNodeRelayFamilyDisabled sticky-disables or re-enables one IP family
-// on a dual-stack node. Disable clears that family's relay host, sets the
-// sticky flag so hello will not re-seed it, and rewires rules so entry
-// family / hop targets drop the disabled stack. Enable only clears the
-// sticky flag; the next agent hello (or a manual relay-host set) refills.
+// on a dual-stack node. Disable keeps the stored relay address (so the
+// title-bar toggles stay visible and enable can restore instantly) but
+// forbids that stack for entry + outbound (cores / userspace / DNS). Hello
+// and daemon --relay-host* will not overwrite a sticky-disabled family.
+// Enable clears the flag, rewires rules back onto the kept address, and
+// republishes.
 func (s *Server) apiSetNodeRelayFamilyDisabled(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())
 	id, err := urlParamInt64(r, "id")
@@ -1168,22 +1171,8 @@ func (s *Server) apiSetNodeRelayFamilyDisabled(w http.ResponseWriter, r *http.Re
 				return
 			}
 		}
-		// Daemon-declared hosts cannot be cleared from the panel.
-		if family == "v4" && node.RelayHostDeclared {
-			jsonErr(w, http.StatusConflict, "IPv4 中继由节点 daemon 的 --relay-host 管理，无法从面板禁用；请去掉该参数后重启 agent")
-			return
-		}
-		if family == "v6" && node.RelayHostV6Declared {
-			jsonErr(w, http.StatusConflict, "IPv6 中继由节点 daemon 的 --relay-host-v6 管理，无法从面板禁用；请去掉该参数后重启 agent")
-			return
-		}
-
 		if family == "v4" {
 			if err := db.SetNodeRelayV4Disabled(s.DB, id, true); err != nil {
-				jsonErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			if err := db.UpdateNodeRelayHost(s.DB, id, ""); err != nil {
 				jsonErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -1193,21 +1182,10 @@ func (s *Server) apiSetNodeRelayFamilyDisabled(w http.ResponseWriter, r *http.Re
 				jsonErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			if err := db.UpdateNodeRelayHostV6(s.DB, id, ""); err != nil {
-				jsonErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
 			db.WriteAudit(s.DB, u.ID, "node.disable_relay_v6", strconv.FormatInt(id, 10), "")
 		}
-		// Rewire so entry_family / hop targets drop the disabled stack.
-		// "both" → remaining family; pure-family rules that need the cleared
-		// stack fail regenerate with a clear error (operator must move them).
-		ruleIDs, _ := db.RulesReferencingNode(s.DB, id)
-		if len(ruleIDs) > 0 {
-			s.apiRewireRules(ruleIDs)
-		}
 	} else {
-		// Re-enable: clear sticky flag only. Hello / manual set will refill.
+		// Re-enable: clear sticky flag. The stored address is reused immediately.
 		if family == "v4" {
 			if err := db.SetNodeRelayV4Disabled(s.DB, id, false); err != nil {
 				jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -1222,7 +1200,48 @@ func (s *Server) apiSetNodeRelayFamilyDisabled(w http.ResponseWriter, r *http.Re
 			db.WriteAudit(s.DB, u.ID, "node.enable_relay_v6", strconv.FormatInt(id, 10), "")
 		}
 	}
+	// Rewire so entry_family / hop targets drop (or restore) the stack.
+	// "both" ↔ remaining family; a rule that still needs a now-disabled
+	// family fails regenerate with a clear error (operator must move it).
+	ruleIDs, _ := db.RulesReferencingNode(s.DB, id)
+	if len(ruleIDs) > 0 {
+		s.apiRewireRules(ruleIDs)
+	}
+	s.pushNodeEgressPolicy(id)
+	s.republishProxyInstancesOnNode(id)
+	_ = s.apiDispatch(id)
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+// pushNodeEgressPolicy tells a live agent to lock/unlock outbound families
+// immediately (does not wait for the next apply_ruleset).
+func (s *Server) pushNodeEgressPolicy(nodeID int64) {
+	if s.Hub == nil {
+		return
+	}
+	n, err := db.GetNode(s.DB, nodeID)
+	if err != nil || n == nil {
+		return
+	}
+	v4, v6 := n.RelayV4Disabled, n.RelayV6Disabled
+	s.Hub.SendConfigUpdate(nodeID, wsproto.ConfigUpdate{BlockEgressV4: &v4, BlockEgressV6: &v6})
+}
+
+// republishProxyInstancesOnNode re-applies every proxy service on nodeID so
+// cores (xray / sing-box / mita) pick up the current egress-family lock.
+func (s *Server) republishProxyInstancesOnNode(nodeID int64) {
+	insts, err := db.ListProxyInstancesOnNode(s.DB, nodeID)
+	if err != nil {
+		return
+	}
+	seen := map[int64]bool{}
+	for _, it := range insts {
+		if it == nil || it.ServiceID <= 0 || seen[it.ServiceID] {
+			continue
+		}
+		seen[it.ServiceID] = true
+		s.publishProxyToNodes(it.ServiceID, []int64{nodeID}, false)
+	}
 }
 
 // validateNodeCF checks CF fields against the node's relay_host (stable domain).
@@ -1877,6 +1896,8 @@ func (s *Server) apiResyncNode(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.pushNodeEgressPolicy(id)
+	s.republishProxyInstancesOnNode(id)
 	jsonOK(w, map[string]any{"ok": true})
 }
 
@@ -2206,20 +2227,20 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	komariURL, _ := db.GetSetting(s.DB, "komari_url")
 	acmeEmail, _ := db.GetSetting(s.DB, "acme_email")
-		jsonOK(w, map[string]any{
-			"panel_url": panelURL, "panel_name": panelName,
-			"show_rate_to_user": showRate == "1", "pool_size": poolSize,
-			"cf_token_configured": cfConfigured,
-			"cf_token_prefix":     cfPrefix,
-			"cf_zone_name":        cfZone,
-			"cf_ttl":              cfTTL,
-			"komari_url":          komariURL,
-			"acme_email":          acmeEmail,
-			"panel_logo":          s.panelLogoConfigured(),
-			"panel_logo_url":      s.brandingLogoURL(),
-			"panel_logo_rev":      s.panelLogoRev(),
-		})
-	}
+	jsonOK(w, map[string]any{
+		"panel_url": panelURL, "panel_name": panelName,
+		"show_rate_to_user": showRate == "1", "pool_size": poolSize,
+		"cf_token_configured": cfConfigured,
+		"cf_token_prefix":     cfPrefix,
+		"cf_zone_name":        cfZone,
+		"cf_ttl":              cfTTL,
+		"komari_url":          komariURL,
+		"acme_email":          acmeEmail,
+		"panel_logo":          s.panelLogoConfigured(),
+		"panel_logo_url":      s.brandingLogoURL(),
+		"panel_logo_rev":      s.panelLogoRev(),
+	})
+}
 
 func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())

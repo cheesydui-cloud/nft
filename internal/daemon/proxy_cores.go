@@ -212,13 +212,16 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		transports = []string{"TCP", "UDP"}
 	}
 
-	serverCfg := map[string]any{
-		"portBindings": mitaPortBindings(port, transports),
-		"users": []map[string]string{
-			{"name": cfg.Username, "password": cfg.Password},
-		},
-		"loggingLevel": "INFO",
-	}
+		serverCfg := map[string]any{
+			"portBindings": mitaPortBindings(port, transports),
+			"users": []map[string]string{
+				{"name": cfg.Username, "password": cfg.Password},
+			},
+			"loggingLevel": "INFO",
+		}
+		if ds := proxysvc.EgressMitaDualStack(req.BlockEgressV4, req.BlockEgressV6); ds != "" {
+			serverCfg["dns"] = map[string]any{"dualStack": ds}
+		}
 
 	dir := filepath.Join(coreStateDir(), "mieru")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

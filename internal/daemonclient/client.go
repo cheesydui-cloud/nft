@@ -279,13 +279,20 @@ func (c *Client) DeleteRule(id string) error {
 // daemon. Used by the server's self-node dispatch path to replicate what the
 // WS apply_ruleset frame does for remote nodes. The daemon replaces its panel
 // segment atomically and applies to the kernel.
-func (c *Client) ApplyRuleset(rules []nft.Rule) (string, error) {
-	if rules == nil {
-		rules = []nft.Rule{}
+	func (c *Client) ApplyRuleset(rules []nft.Rule) (string, error) {
+		return c.ApplyRulesetOpts(rules, nil, nil)
 	}
-	body, err := json.Marshal(struct {
-		Rules []nft.Rule `json:"rules"`
-	}{Rules: rules})
+
+	// ApplyRulesetOpts is ApplyRuleset with optional egress-family lock.
+	func (c *Client) ApplyRulesetOpts(rules []nft.Rule, blockV4, blockV6 *bool) (string, error) {
+		if rules == nil {
+			rules = []nft.Rule{}
+		}
+		body, err := json.Marshal(struct {
+			Rules         []nft.Rule `json:"rules"`
+			BlockEgressV4 *bool      `json:"block_egress_v4,omitempty"`
+			BlockEgressV6 *bool      `json:"block_egress_v6,omitempty"`
+		}{Rules: rules, BlockEgressV4: blockV4, BlockEgressV6: blockV6})
 	if err != nil {
 		return "", err
 	}

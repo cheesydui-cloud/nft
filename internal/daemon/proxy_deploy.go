@@ -103,9 +103,14 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 			}
 		}
 		cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
-	if err != nil {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
-	}
+		if err != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
+		}
+		if patched, perr := proxysvc.ApplyXrayEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
+		} else {
+			cfgBytes = patched
+		}
 	// Stats API on loopback so agent can poll inbound traffic.
 	if apiPort, perr := pickLoopbackPort(); perr == nil {
 		if injected, ierr := proxysvc.InjectXrayStatsAPI(cfgBytes, apiPort); ierr == nil {
@@ -258,13 +263,18 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
 			}
 			cfgBytes = patched
-		} else if rh != "" && req.OutboundRedirectPort > 0 {
-			patched, perr := proxysvc.InjectSingBoxRedirectOutbound(cfgBytes, rh, req.OutboundRedirectPort)
-			if perr != nil {
-				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入固定出口失败: " + perr.Error()}
+			} else if rh != "" && req.OutboundRedirectPort > 0 {
+				patched, perr := proxysvc.InjectSingBoxRedirectOutbound(cfgBytes, rh, req.OutboundRedirectPort)
+				if perr != nil {
+					return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入固定出口失败: " + perr.Error()}
+				}
+				cfgBytes = patched
 			}
-			cfgBytes = patched
-		}
+			if patched, perr := proxysvc.ApplySingBoxEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
+				return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
+			} else {
+				cfgBytes = patched
+			}
 	// Clash API on loopback for agent traffic sampling.
 	if apiPort, perr := pickLoopbackPort(); perr == nil {
 		if injected, ierr := proxysvc.InjectSingBoxClashAPI(cfgBytes, apiPort); ierr == nil {

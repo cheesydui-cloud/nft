@@ -49,6 +49,17 @@ func TestResolveCompositeRelayStack(t *testing.T) {
 			compID:    1,
 			wantEntry: "", wantEntryV6: "", wantExitV6: "",
 		},
+		{
+			name: "sticky-disabled v6 on first hop is not an entry v6",
+			nodes: []*Node{
+				{ID: 1, NodeType: "remote", RelayHost: "10.0.0.1", RelayHostV6: "2001:db8::1", RelayV6Disabled: true},
+				{ID: 2, NodeType: "remote", RelayHost: "10.0.0.2", RelayHostV6: "2001:db8::2"},
+				mk(9, "composite", "", ""),
+			},
+			hops:      []*NodeHop{hop(9, 1), hop(9, 2)},
+			compID:    9,
+			wantEntry: "10.0.0.1", wantEntryV6: "", wantExitV6: "2001:db8::2",
+		},
 	}
 
 	for _, tt := range tests {

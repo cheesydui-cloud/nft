@@ -406,8 +406,26 @@ func ListProxyInstances(d *sql.DB, serviceID int64) ([]*ProxyServiceInstance, er
 	return out, rows.Err()
 }
 
-// GetProxyInstance returns one instance by id.
-func GetProxyInstance(d *sql.DB, id int64) (*ProxyServiceInstance, error) {
+	// ListProxyInstancesOnNode returns every instance deployed on nodeID.
+	func ListProxyInstancesOnNode(d *sql.DB, nodeID int64) ([]*ProxyServiceInstance, error) {
+		rows, err := d.Query(`SELECT `+proxyInstanceCols+` FROM proxy_service_instances WHERE node_id=? ORDER BY id`, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []*ProxyServiceInstance
+		for rows.Next() {
+			inst, err := scanProxyInstance(rows)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, inst)
+		}
+		return out, rows.Err()
+	}
+
+	// GetProxyInstance returns one instance by id.
+	func GetProxyInstance(d *sql.DB, id int64) (*ProxyServiceInstance, error) {
 	row := d.QueryRow(`SELECT `+proxyInstanceCols+` FROM proxy_service_instances WHERE id=?`, id)
 	return scanProxyInstance(row)
 }

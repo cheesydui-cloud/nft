@@ -97,9 +97,15 @@ export function NodeTypeIcon({ type }) {
 // RegenerateRule 里 exitIsIPv6 校验最后一跳 relay_host_v6 的语义一致）；
 // 单点节点入口出口就是它自己，两者天然相等。
 export function nodeStack(node) {
-  const entryV4 = node.node_type === 'composite' ? !!node.entry_relay_host : !!node.relay_host
-  const entryV6 = node.node_type === 'composite' ? !!node.entry_relay_host_v6 : !!node.relay_host_v6
-  const exitV6 = node.node_type === 'composite' ? !!node.exit_relay_host_v6 : !!node.relay_host_v6
+  const entryV4 = node.node_type === 'composite'
+    ? !!node.entry_relay_host
+    : !!node.relay_host && !node.relay_v4_disabled
+  const entryV6 = node.node_type === 'composite'
+    ? !!node.entry_relay_host_v6
+    : !!node.relay_host_v6 && !node.relay_v6_disabled
+  const exitV6 = node.node_type === 'composite'
+    ? !!node.exit_relay_host_v6
+    : !!node.relay_host_v6 && !node.relay_v6_disabled
   return { entryV4, entryV6, exitV6 }
 }
 
