@@ -4,8 +4,9 @@ import { api } from '../lib/api'
 import { resolvedDark, getStoredTheme, setStoredTheme } from '../lib/theme'
 import { hasLocalProxies } from '../lib/landing'
 import { Loading } from './ui'
-import { BrandMark } from './BrandMark'
+import { PanelBrandBadge } from './BrandMark'
 import { LoginAnnouncementModal, clearLoginAnnouncementSession } from './LoginAnnouncementModal'
+import { applyFavicon, applyCachedFavicon, logoURLFromBranding } from '../lib/branding'
 
 /* ---------- User context ---------- */
 const UserCtx = createContext(null)
@@ -21,11 +22,18 @@ export function useToast() { return useContext(ToastCtx) }
 export function UserProvider({ children }) {
   const [user, setUser] = useState(undefined) // undefined = loading, null = not logged in
   const [panelName, setPanelName] = useState('')
+  const [panelLogoUrl, setPanelLogoUrl] = useState('')
   const [version, setVersion] = useState('')
   const [komariUrl, setKomariUrl] = useState('')
   const [toasts, setToasts] = useState([])
   const idRef = useRef(0)
   const timersRef = useRef([])
+
+  const applyLogo = useCallback((url) => {
+    const u = (url || '').trim()
+    setPanelLogoUrl(u)
+    applyFavicon(u)
+  }, [])
 
   const refreshUser = useCallback(async () => {
     try {
@@ -34,14 +42,19 @@ export function UserProvider({ children }) {
       setPanelName(data?.panel_name || '')
       setVersion(data?.version || '')
       setKomariUrl(data?.komari_url || '')
+      const logo = logoURLFromBranding(data)
+      if (logo || data?.panel_logo === false) applyLogo(logo)
       return data
     } catch {
       setUser(null)
       return null
     }
-  }, [])
+  }, [applyLogo])
 
-  // Public branding so login + tab title match 系统设置里的面板名称 even before auth.
+  // Prefer cached favicon before /branding returns (reduces default-icon flash).
+  useEffect(() => { applyCachedFavicon() }, [])
+
+  // Public branding so login + tab title/logo match 系统设置 even before auth.
   useEffect(() => {
     api.get('/branding').then(d => {
       const name = (d?.panel_name || '').trim()
@@ -49,8 +62,9 @@ export function UserProvider({ children }) {
         setPanelName(name)
         try { localStorage.setItem('nf-panel-name', name) } catch { /* ignore */ }
       }
+      applyLogo(logoURLFromBranding(d))
     }).catch(() => {})
-  }, [])
+  }, [applyLogo])
 
   // Keep browser tab title in sync with panel_name globally (login + after login).
   useEffect(() => {
@@ -91,10 +105,13 @@ export function UserProvider({ children }) {
     if (data.panel_name !== undefined) setPanelName(data.panel_name || '')
     if (data.version !== undefined) setVersion(data.version || '')
     if (data.komari_url !== undefined) setKomariUrl(data.komari_url || '')
-  }, [])
+    if (data.panel_logo_url !== undefined || data.panel_logo !== undefined) {
+      applyLogo(logoURLFromBranding(data))
+    }
+  }, [applyLogo])
 
   return (
-    <UserCtx.Provider value={{ user, setUser, panelName, version, komariUrl, refreshUser, applySession }}>
+    <UserCtx.Provider value={{ user, setUser, panelName, panelLogoUrl, setPanelLogoUrl: applyLogo, version, komariUrl, refreshUser, applySession }}>
       <ToastCtx.Provider value={toast}>
         {children}
         {/* Toast stack */}
@@ -117,7 +134,7 @@ export function UserProvider({ children }) {
 
 /* ---------- Layout (sidebar + content) ---------- */
 export function Layout({ children }) {
-  const { user, panelName, version, komariUrl } = useUser()
+  const { user, panelName, panelLogoUrl, version, komariUrl } = useUser()
   const [sideOpen, setSideOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('nf-sidebar') === '1')
   const { blurred, toggleBlur } = useContext(BlurCtx)
@@ -174,11 +191,11 @@ export function Layout({ children }) {
 
           {/* Brand */}
           <div className={`flex items-center gap-3 pt-5 pb-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
-            <div className="w-[42px] h-[42px] rounded-[14px] flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(196,120,90,0.55)] ring-1 ring-white/30"
+            <PanelBrandBadge
+              logoUrl={panelLogoUrl}
+              size={42}
               title={collapsed && isAdmin && version ? version : undefined}
-              style={{ background: 'linear-gradient(145deg, #d4896a 0%, #c4785a 55%, #b8664a 100%)' }}>
-              <BrandMark />
-            </div>
+            />
             {!collapsed && <div className="min-w-0">
               <div className="text-[15.5px] font-bold tracking-tight sb-text truncate">{panelName || 'nft'}</div>
               {/* Admin keeps role + version; users only see the panel name. */}

@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useUser } from '../components/Layout'
-import { BrandMark } from '../components/BrandMark'
+import { PanelBrandBadge } from '../components/BrandMark'
 import { clearLoginAnnouncementSession } from '../components/LoginAnnouncementModal'
+import { applyFavicon, logoURLFromBranding } from '../lib/branding'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -11,6 +12,7 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [panelName, setPanelName] = useState('')
+  const [panelLogoUrl, setPanelLogoUrl] = useState('')
   const navigate = useNavigate()
   const { applySession, refreshUser } = useUser()
 
@@ -19,6 +21,9 @@ export default function Login() {
       const name = (d?.panel_name || '').trim()
       setPanelName(name)
       if (name) document.title = name
+      const logo = logoURLFromBranding(d)
+      setPanelLogoUrl(logo)
+      applyFavicon(logo)
     }).catch(() => {})
   }, [])
 
@@ -55,10 +60,7 @@ export default function Login() {
     <div className="login-shell">
       <div className="login-card">
         <div className="flex items-center gap-3.5 mb-8">
-          <div className="w-[46px] h-[46px] rounded-[14px] grid place-items-center text-white shadow-[0_10px_28px_-8px_rgba(196,120,90,0.55)] ring-1 ring-white/30"
-            style={{ background: 'linear-gradient(145deg, #d4896a 0%, #c4785a 55%, #b8664a 100%)' }}>
-            <BrandMark className="w-[28px] h-[28px]" />
-          </div>
+          <PanelBrandBadge logoUrl={panelLogoUrl} size={46} />
           <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
         </div>
 

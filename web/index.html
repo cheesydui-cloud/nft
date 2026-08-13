@@ -6,6 +6,21 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>nft</title>
+    <script>
+      // Prefer cached custom logo as favicon before SPA boots (sync with 系统设置).
+      (function () {
+        try {
+          var u = localStorage.getItem('nf-panel-logo-url')
+          if (u && u.trim()) {
+            var links = document.querySelectorAll("link[rel='icon'], link[rel='apple-touch-icon']")
+            for (var i = 0; i < links.length; i++) {
+              links[i].setAttribute('href', u.trim())
+              links[i].removeAttribute('type')
+            }
+          }
+        } catch (e) {}
+      })()
+    </script>
     <!-- 妙妙屋 Flat: Inter + Noto Sans SC + JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

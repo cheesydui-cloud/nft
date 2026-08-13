@@ -211,13 +211,16 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	// Include panel_name/version so the SPA can brand the sidebar immediately
 	// after login without waiting for a second /me round-trip (which used to
 	// leave the brand stuck on the "nft" fallback until a full page refresh).
-	panelName, _ := db.GetSetting(s.DB, "panel_name")
-	jsonOK(w, map[string]any{
-		"user":       apiUserView(u),
-		"panel_name": panelName,
-		"version":    serverVersion(),
-	})
-}
+		panelName, _ := db.GetSetting(s.DB, "panel_name")
+		jsonOK(w, map[string]any{
+			"user":           apiUserView(u),
+			"panel_name":     panelName,
+			"version":        serverVersion(),
+			"panel_logo":     s.panelLogoConfigured(),
+			"panel_logo_url": s.brandingLogoURL(),
+			"panel_logo_rev": s.panelLogoRev(),
+		})
+	}
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
@@ -229,7 +232,12 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiBranding(w http.ResponseWriter, r *http.Request) {
 	panelName, _ := db.GetSetting(s.DB, "panel_name")
-	jsonOK(w, map[string]any{"panel_name": panelName})
+	jsonOK(w, map[string]any{
+		"panel_name":     panelName,
+		"panel_logo":     s.panelLogoConfigured(),
+		"panel_logo_url": s.brandingLogoURL(),
+		"panel_logo_rev": s.panelLogoRev(),
+	})
 }
 
 func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +256,14 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 	} else {
 		userView["has_line_grant"] = false
 	}
-	out := map[string]any{"user": userView, "panel_name": panelName, "version": serverVersion()}
+	out := map[string]any{
+		"user":           userView,
+		"panel_name":     panelName,
+		"version":        serverVersion(),
+		"panel_logo":     s.panelLogoConfigured(),
+		"panel_logo_url": s.brandingLogoURL(),
+		"panel_logo_rev": s.panelLogoRev(),
+	}
 	// Admin sidebar "服务监控" needs komari_url without a second /settings call.
 	if u.Role == "admin" {
 		if ku, _ := db.GetSetting(s.DB, "komari_url"); strings.TrimSpace(ku) != "" {
@@ -2070,17 +2085,20 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	komariURL, _ := db.GetSetting(s.DB, "komari_url")
 	acmeEmail, _ := db.GetSetting(s.DB, "acme_email")
-	jsonOK(w, map[string]any{
-		"panel_url": panelURL, "panel_name": panelName,
-		"show_rate_to_user": showRate == "1", "pool_size": poolSize,
-		"cf_token_configured": cfConfigured,
-		"cf_token_prefix":     cfPrefix,
-		"cf_zone_name":        cfZone,
-		"cf_ttl":              cfTTL,
-		"komari_url":          komariURL,
-		"acme_email":          acmeEmail,
-	})
-}
+		jsonOK(w, map[string]any{
+			"panel_url": panelURL, "panel_name": panelName,
+			"show_rate_to_user": showRate == "1", "pool_size": poolSize,
+			"cf_token_configured": cfConfigured,
+			"cf_token_prefix":     cfPrefix,
+			"cf_zone_name":        cfZone,
+			"cf_ttl":              cfTTL,
+			"komari_url":          komariURL,
+			"acme_email":          acmeEmail,
+			"panel_logo":          s.panelLogoConfigured(),
+			"panel_logo_url":      s.brandingLogoURL(),
+			"panel_logo_rev":      s.panelLogoRev(),
+		})
+	}
 
 func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 	u := userFromCtx(r.Context())

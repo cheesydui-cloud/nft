@@ -14,6 +14,40 @@ export function BrandMark({ className = 'w-[26px] h-[26px]' }) {
   )
 }
 
+/**
+ * Sidebar / login badge: custom logo image when set, else BrandMark on gradient.
+ * size: outer badge px (default 42 sidebar / 46 login).
+ */
+export function PanelBrandBadge({ logoUrl, size = 42, markClassName, title }) {
+  const s = size
+  const radius = Math.round(s * 14 / 42)
+  if (logoUrl) {
+    return (
+      <div
+        className="flex-none overflow-hidden ring-1 ring-black/5 dark:ring-white/15 shadow-[0_10px_24px_-8px_rgba(196,120,90,0.45)] bg-surface"
+        style={{ width: s, height: s, borderRadius: radius }}
+        title={title}
+      >
+        <img src={logoUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+      </div>
+    )
+  }
+  return (
+    <div
+      className="flex-none grid place-items-center text-white shadow-[0_10px_24px_-8px_rgba(196,120,90,0.55)] ring-1 ring-white/30"
+      style={{
+        width: s,
+        height: s,
+        borderRadius: radius,
+        background: 'linear-gradient(145deg, #d4896a 0%, #c4785a 55%, #b8664a 100%)',
+      }}
+      title={title}
+    >
+      <BrandMark className={markClassName || (s >= 46 ? 'w-[28px] h-[28px]' : 'w-[26px] h-[26px]')} />
+    </div>
+  )
+}
+
 // One side of the equilateral layout: horizontal double arrow, scaled and
 // offset so the three copies form a clear triangle without shrinking into
 // a tiny white knot in the badge center.

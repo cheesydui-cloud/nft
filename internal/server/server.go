@@ -684,9 +684,11 @@ func (s *Server) Router() http.Handler {
 	// --- JSON API ---
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.csrfProtect)
-		r.Post("/login", s.apiLogin)
-		r.Post("/logout", s.apiLogout)
-		r.Get("/branding", s.apiBranding)
+			r.Post("/login", s.apiLogin)
+			r.Post("/logout", s.apiLogout)
+			r.Get("/branding", s.apiBranding)
+			// Public custom logo (or default favicon) for sidebar + browser tab icon.
+			r.Get("/branding/logo", s.apiServeBrandingLogo)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth)
@@ -739,8 +741,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/downstream-bindings", s.apiUpdateNodeDownstreamBindings)
 			r.Get("/node-bindings", s.apiListAllNodeBindings)
 
-			r.Get("/settings", s.apiGetSettings)
-			r.Post("/settings", s.apiSaveSettings)
+				r.Get("/settings", s.apiGetSettings)
+				r.Post("/settings", s.apiSaveSettings)
+				r.Post("/settings/logo", s.apiUploadPanelLogo)
+				r.Delete("/settings/logo", s.apiClearPanelLogo)
 			r.Get("/system/update", s.apiGetPanelUpdate)
 			r.Post("/system/update/check", s.apiCheckPanelUpdate)
 			r.Get("/system/update/status", s.apiGetPanelUpdateStatus)
@@ -900,7 +904,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/info", s.apiTokenInfo)
 	})
 
-	r.NotFound(spaHandlerWithTitle(s.panelBrandName).ServeHTTP)
+		r.NotFound(spaHandlerWithTitle(s.panelBrandName, s.spaFaviconOverride).ServeHTTP)
 
 	return r
 }

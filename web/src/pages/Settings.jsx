@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../lib/api'
 import { Layout, useToast, useUser } from '../components/Layout'
 import { Loading, useConfirm } from '../components/ui'
+import { PanelBrandBadge } from '../components/BrandMark'
+import { logoURLFromBranding } from '../lib/branding'
 
 export default function Settings() {
   const [form, setForm] = useState({
@@ -23,7 +25,12 @@ export default function Settings() {
   const [error, setError] = useState('')
   const toast = useToast()
   const confirm = useConfirm()
-  const { version, refreshUser } = useUser()
+  const { version, refreshUser, panelLogoUrl, setPanelLogoUrl } = useUser()
+
+  // Custom panel logo (sidebar + browser tab favicon)
+  const [logoUrl, setLogoUrl] = useState('')
+  const [logoBusy, setLogoBusy] = useState(false)
+  const logoInputRef = useRef(null)
 
   // panel self-update
   const [upd, setUpd] = useState(null)
@@ -85,8 +92,11 @@ export default function Settings() {
         acme_email: data.acme_email || '',
       }))
       if (data.panel_url) setMigURL(data.panel_url)
+      const logo = logoURLFromBranding(data)
+      setLogoUrl(logo)
+      if (logo || data.panel_logo === false) setPanelLogoUrl?.(logo)
     }).catch(e => setError(e.message)).finally(() => setLoading(false))
-  }, [])
+  }, [setPanelLogoUrl])
 
   const loadMigStatus = () => {
     api.get('/migrate/status').then(setMigStatus).catch(() => {})
@@ -185,6 +195,58 @@ export default function Settings() {
   }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const uploadLogo = async (file) => {
+    if (!file) return
+    if (file.size > 512 * 1024) {
+      toast('图片不能超过 512KB', 'error')
+      return
+    }
+    setLogoBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/settings/logo', {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+      })
+      const ct = res.headers.get('content-type') || ''
+      let data = null
+      if (ct.includes('application/json')) {
+        try { data = await res.json() } catch { data = null }
+      }
+      if (!res.ok) throw new Error((data && data.error) || `上传失败（${res.status}）`)
+      const url = logoURLFromBranding(data) || data?.panel_logo_url || ''
+      setLogoUrl(url)
+      setPanelLogoUrl?.(url)
+      toast('Logo 已更新（侧栏与浏览器标签同步）')
+    } catch (err) {
+      toast(err.message || '上传失败', 'error')
+    } finally {
+      setLogoBusy(false)
+      if (logoInputRef.current) logoInputRef.current.value = ''
+    }
+  }
+
+  const clearLogo = async () => {
+    if (!(await confirm({
+      title: '恢复默认 Logo',
+      message: '将移除自定义图片，侧栏与浏览器标签恢复为默认图标。',
+      confirmText: '恢复默认',
+    }))) return
+    setLogoBusy(true)
+    try {
+      await api.del('/settings/logo')
+      setLogoUrl('')
+      setPanelLogoUrl?.('')
+      toast('已恢复默认 Logo')
+    } catch (err) {
+      toast(err.message || '操作失败', 'error')
+    } finally {
+      setLogoBusy(false)
+    }
+  }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -528,9 +590,47 @@ export default function Settings() {
                   <p className="text-[12px] text-ink-mut mt-1.5 m-0">节点升级会从该地址下载 agent。请带协议（http/https）；只写 IP:端口 时保存会自动补 http://。</p>
                 </div>
               </div>
-              <div className="flex items-center gap-6 pb-[22px] border-b border-line-soft">
+              <div className="flex items-center gap-6 mb-[22px]">
                 <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft">面板名称</label>
                 <input className="input-field max-w-[560px]" type="text" placeholder="nft" value={form.panel_name} onChange={e => set('panel_name', e.target.value)} />
+              </div>
+              <div className="flex items-start gap-6 pb-[22px] border-b border-line-soft">
+                <label className="w-[110px] flex-shrink-0 text-[14px] text-ink-soft pt-2">面板 Logo</label>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <PanelBrandBadge logoUrl={logoUrl || panelLogoUrl} size={48} />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        ref={logoInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.png,.jpg,.jpeg,.webp,.gif,.svg,.ico"
+                        className="hidden"
+                        onChange={e => uploadLogo(e.target.files?.[0])}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm"
+                        disabled={logoBusy}
+                        onClick={() => logoInputRef.current?.click()}
+                      >
+                        {logoBusy ? '处理中…' : (logoUrl || panelLogoUrl ? '更换图片' : '上传图片')}
+                      </button>
+                      {(logoUrl || panelLogoUrl) && (
+                        <button
+                          type="button"
+                          className="btn-secondary text-sm text-rose-600"
+                          disabled={logoBusy}
+                          onClick={clearLogo}
+                        >
+                          恢复默认
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[12px] text-ink-mut mt-2 m-0">
+                    用于侧栏品牌标与浏览器标签图标（favicon），上传后立即同步。支持 PNG / JPEG / WebP / GIF / SVG / ICO，最大 512KB，建议正方形。
+                  </p>
+                </div>
               </div>
 
               <h4 className="text-[14px] font-bold text-ink m-0 mt-6 mb-4">转发设置</h4>

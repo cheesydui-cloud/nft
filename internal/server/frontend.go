@@ -14,12 +14,13 @@ import (
 // request so <title> matches settings.panel_name (avoids a flash of "nft" on
 // hard refresh before React boots).
 func spaHandler() http.Handler {
-	return spaHandlerWithTitle(nil)
+	return spaHandlerWithTitle(nil, nil)
 }
 
 // spaHandlerWithTitle is like spaHandler but uses titleFn for the document
 // title when non-nil and non-empty. Pass Server.panelBrandName for live panel name.
-func spaHandlerWithTitle(titleFn func() string) http.Handler {
+// logoFn, when non-nil, may handle /favicon.svg|/favicon.ico (return true if written).
+func spaHandlerWithTitle(titleFn func() string, logoFn func(http.ResponseWriter, *http.Request) bool) http.Handler {
 	dist, err := fs.Sub(web.Assets, "dist")
 	if err != nil {
 		panic("embedded web/dist not found: " + err.Error())
@@ -71,6 +72,13 @@ func spaHandlerWithTitle(titleFn func() string) http.Handler {
 			w.Write(indexFor())
 			return
 		}
+		// Custom panel logo takes over /favicon.svg so hard-refresh tab icons
+		// match 系统设置 without waiting for the SPA to rewrite <link rel="icon">.
+		if (p == "favicon.svg" || p == "favicon.ico") && logoFn != nil {
+			if logoFn(w, r) {
+				return
+			}
+		}
 		if _, err := fs.Stat(dist, p); err == nil {
 			if strings.HasPrefix(p, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -96,4 +104,14 @@ func htmlEscapeTitle(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	return s
+}
+
+// spaFaviconOverride serves custom logo for /favicon.svg when configured.
+// Returns true if the response was written.
+func (s *Server) spaFaviconOverride(w http.ResponseWriter, r *http.Request) bool {
+	if !s.panelLogoConfigured() {
+		return false
+	}
+	s.apiServeBrandingLogo(w, r)
+	return true
 }
