@@ -2,6 +2,7 @@ package proxysvc
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -44,33 +45,50 @@ func TestEnsureSecretsAndBuildSS(t *testing.T) {
 	}
 }
 
-func TestEnsureSecretsAndBuildMieru(t *testing.T) {
-	raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
-	if err != nil {
-		t.Fatal(err)
+	func TestEnsureSecretsAndBuildMieru(t *testing.T) {
+		raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Official simple share link for `mieru import config`.
+		if !strings.HasPrefix(uri, "mierus://") {
+			t.Fatalf("bad uri scheme: %s", uri)
+		}
+		if !strings.Contains(uri, "profile=m1") {
+			t.Fatalf("missing profile: %s", uri)
+		}
+		portTok := "port=" + strconv.Itoa(DefaultMieruListenPort)
+		if !strings.Contains(uri, portTok) {
+			t.Fatalf("missing port: %s", uri)
+		}
+		if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
+			t.Fatalf("missing protocols: %s", uri)
+		}
+		// Host must not embed :port in simple form (port is a query param).
+		if strings.Contains(uri, "9.9.9.9:"+strconv.Itoa(DefaultMieruListenPort)) {
+			t.Fatalf("host should not include listen port: %s", uri)
+		}
+		// Official pair order: port then protocol, repeated — not all ports first.
+		want := "profile=m1&" + portTok + "&protocol=TCP&" + portTok + "&protocol=UDP"
+		if !strings.Contains(uri, want) {
+			t.Fatalf("query order = %s, want substring %s", uri, want)
+		}
 	}
-	uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", 443, raw)
-	if err != nil {
-		t.Fatal(err)
+
+	func TestValidateMieruDeployRejectsPrivilegedPort(t *testing.T) {
+		c := &MieruConfig{Username: "u", Password: "p", ListenPort: 443}
+		if err := ValidateMieruDeploy(c, 0); err == nil {
+			t.Fatal("expected error for port 443")
+		}
+		c.ListenPort = DefaultMieruListenPort
+		if err := ValidateMieruDeploy(c, 0); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Official simple share link for `mieru import config`.
-	if !strings.HasPrefix(uri, "mierus://") {
-		t.Fatalf("bad uri scheme: %s", uri)
-	}
-	if !strings.Contains(uri, "profile=m1") {
-		t.Fatalf("missing profile: %s", uri)
-	}
-	if !strings.Contains(uri, "port=443") {
-		t.Fatalf("missing port: %s", uri)
-	}
-	if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
-		t.Fatalf("missing protocols: %s", uri)
-	}
-	// Host must not embed :port in simple form (port is a query param).
-	if strings.Contains(uri, "9.9.9.9:443") {
-		t.Fatalf("host should not include listen port: %s", uri)
-	}
-}
 
 func TestEnsureSecretsStripsVlessEncQuotes(t *testing.T) {
 	raw, err := EnsureSecrets("vless", json.RawMessage(`{

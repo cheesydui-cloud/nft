@@ -177,6 +177,17 @@ func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyService
 // Requires the mita server binary (not the mieru client) plus a running `mita run`
 // management daemon (installed automatically from a bare panel-pushed binary).
 func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
+	port := req.ListenPort
+	if port <= 0 {
+		port = proxysvc.ListenPortFromConfig(req.Config)
+	}
+	// Official mita: portBindings.port must be 1025–65535. 443 used to
+	// look "ready" in the panel then fail at `mita apply` / stay silent
+	// on older agents that never checked.
+	if port < 1025 || port > 65535 {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("mieru 监听端口须为 1025–65535（当前 %d）。官方 mita 拒绝 443 等特权端口", port)}
+	}
+
 	mitaPath := findMitaBinary()
 	if mitaPath == "" {
 		return wsproto.ProxyServiceApplyAck{
@@ -184,13 +195,6 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 			DryRun: true,
 			Error:  "节点未安装 mita（mieru 服务端）。请在面板「系统设置 → 代理核心缓存」下载 mita 后重新发布，或在节点本机安装 mita",
 		}
-	}
-	port := req.ListenPort
-	if port <= 0 {
-		port = proxysvc.ListenPortFromConfig(req.Config)
-	}
-	if port <= 0 || port > 65535 {
-		return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("无效监听端口: %d", port)}
 	}
 
 	var cfg proxysvc.MieruConfig

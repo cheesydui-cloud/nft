@@ -262,17 +262,39 @@ func ValidateVLESSDeploy(c *VLESSConfig) error {
 		return nil
 	}
 
-// MieruConfig matches the Weir mieru form.
-type MieruConfig struct {
-	ListenPort          int      `json:"listen_port"`
-	ShareHost           string   `json:"share_host"`
-	Transports          []string `json:"transports"`
-	TrafficPattern      string   `json:"traffic_pattern"`
-	UserHintIsMandatory bool     `json:"user_hint_is_mandatory"`
-	Username            string   `json:"username"`
-	Password            string   `json:"password"`
-	SubVisible          bool     `json:"sub_visible"`
-}
+	// DefaultMieruListenPort is in the official mita range (1025–65535).
+	// 443 is rejected by current mita apply ("ports must fall in 1025-65535").
+	const DefaultMieruListenPort = 8964
+
+	// MieruConfig matches the Weir mieru form.
+	type MieruConfig struct {
+		ListenPort          int      `json:"listen_port"`
+		ShareHost           string   `json:"share_host"`
+		Transports          []string `json:"transports"`
+		TrafficPattern      string   `json:"traffic_pattern"`
+		UserHintIsMandatory bool     `json:"user_hint_is_mandatory"`
+		Username            string   `json:"username"`
+		Password            string   `json:"password"`
+		SubVisible          bool     `json:"sub_visible"`
+	}
+
+	// ValidateMieruDeploy checks fields required to publish mieru/mita.
+	func ValidateMieruDeploy(c *MieruConfig, listenPort int) error {
+		if c == nil {
+			return fmt.Errorf("mieru config nil")
+		}
+		port := listenPort
+		if port <= 0 {
+			port = c.ListenPort
+		}
+		if port < 1025 || port > 65535 {
+			return fmt.Errorf("mieru 监听端口须为 1025–65535（当前 %d）。官方 mita 拒绝 443 等特权端口，请改成例如 %d 后重新发布", port, DefaultMieruListenPort)
+		}
+		if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+			return fmt.Errorf("mieru 用户名/密码未配置")
+		}
+		return nil
+	}
 
 // Socks5Config is sing-box socks inbound (standard SOCKS5 server).
 // Share: socks5://user:pass@host:port#name  or socks5://host:port when auth_mode=none.
@@ -511,24 +533,25 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 				c.Listen = "::"
 			}
 			return json.Marshal(c)
-	case "mieru":
-		var c MieruConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return nil, err
-		}
-		if c.ListenPort <= 0 {
-			c.ListenPort = 443
-		}
-		if len(c.Transports) == 0 {
-			c.Transports = []string{"TCP", "UDP"}
-		}
-		if c.Username == "" {
-			c.Username = "u" + randomHex(4)
-		}
-		if c.Password == "" {
-			c.Password = randomHex(12)
-		}
-		return json.Marshal(c)
+		case "mieru":
+			var c MieruConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return nil, err
+			}
+			if c.ListenPort <= 0 {
+				// Official mita rejects ports below 1025 (443 is invalid).
+				c.ListenPort = DefaultMieruListenPort
+			}
+			if len(c.Transports) == 0 {
+				c.Transports = []string{"TCP", "UDP"}
+			}
+			if c.Username == "" {
+				c.Username = "u" + randomHex(4)
+			}
+			if c.Password == "" {
+				c.Password = randomHex(12)
+			}
+			return json.Marshal(c)
 	case "socks5", "socks":
 		var c Socks5Config
 		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -719,42 +742,50 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			Fragment: name,
 		}
 		return u.String(), nil
-	case "mieru":
-		var c MieruConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return "", err
-		}
-		if c.Username == "" || c.Password == "" {
-			return "", fmt.Errorf("mieru username/password missing")
-		}
-		profile := name
-		if profile == "" {
-			profile = "default"
-		}
-		transports := c.Transports
-		if len(transports) == 0 {
-			transports = []string{"TCP", "UDP"}
-		}
-		q := url.Values{}
-		q.Set("profile", profile)
-		for _, t := range transports {
-			proto := strings.ToUpper(strings.TrimSpace(t))
-			if proto == "" {
-				continue
+		case "mieru":
+			var c MieruConfig
+			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+				return "", err
 			}
-			q.Add("port", strconv.Itoa(listenPort))
-			q.Add("protocol", proto)
-		}
-		if c.TrafficPattern != "" {
-			q.Set("traffic-pattern", c.TrafficPattern)
-		}
-		u := url.URL{
-			Scheme:   "mierus",
-			User:     url.UserPassword(c.Username, c.Password),
-			Host:     host,
-			RawQuery: q.Encode(),
-		}
-		return u.String(), nil
+			if c.Username == "" || c.Password == "" {
+				return "", fmt.Errorf("mieru username/password missing")
+			}
+			profile := name
+			if profile == "" {
+				profile = "default"
+			}
+			transports := c.Transports
+			if len(transports) == 0 {
+				transports = []string{"TCP", "UDP"}
+			}
+			// Official simple share pairs port/protocol by appearance order
+			// (profile&port=P&protocol=TCP&port=P&protocol=UDP). url.Values.Encode
+			// sorts keys and groups all port= before protocol=, which some
+			// clients fail to pair. Build the query in official order.
+			var q strings.Builder
+			q.WriteString("profile=")
+			q.WriteString(url.QueryEscape(profile))
+			for _, t := range transports {
+				proto := strings.ToUpper(strings.TrimSpace(t))
+				if proto == "" {
+					continue
+				}
+				q.WriteString("&port=")
+				q.WriteString(strconv.Itoa(listenPort))
+				q.WriteString("&protocol=")
+				q.WriteString(url.QueryEscape(proto))
+			}
+			if c.TrafficPattern != "" {
+				q.WriteString("&traffic-pattern=")
+				q.WriteString(url.QueryEscape(c.TrafficPattern))
+			}
+			u := url.URL{
+				Scheme:   "mierus",
+				User:     url.UserPassword(c.Username, c.Password),
+				Host:     host,
+				RawQuery: q.String(),
+			}
+			return u.String(), nil
 	case "socks5", "socks":
 			var c Socks5Config
 			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {

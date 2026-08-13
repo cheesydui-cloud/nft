@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nft/internal/proxysvc"
@@ -64,23 +65,39 @@ func TestHandleProxyServiceApplyMissingCores(t *testing.T) {
 	}
 }
 
-func TestDeployMieruMissingMita(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{
-		"username": "u1", "password": "p1", "listen_port": 443,
-		"transports": []string{"TCP"},
-	})
-	ack := deployMieru(wsproto.ProxyServiceApply{
-		InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: 443, Config: raw,
-	})
-	if findMitaBinary() == "" {
-		if ack.OK {
-			t.Fatalf("expected failure without mita: %+v", ack)
-		}
-		if ack.Error == "" {
-			t.Fatal("expected install error")
+	func TestDeployMieruMissingMita(t *testing.T) {
+		raw, _ := json.Marshal(map[string]any{
+			"username": "u1", "password": "p1", "listen_port": proxysvc.DefaultMieruListenPort,
+			"transports": []string{"TCP"},
+		})
+		ack := deployMieru(wsproto.ProxyServiceApply{
+			InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: proxysvc.DefaultMieruListenPort, Config: raw,
+		})
+		if findMitaBinary() == "" {
+			if ack.OK {
+				t.Fatalf("expected failure without mita: %+v", ack)
+			}
+			if ack.Error == "" {
+				t.Fatal("expected install error")
+			}
 		}
 	}
-}
+
+	func TestDeployMieruRejectsPrivilegedPort(t *testing.T) {
+		raw, _ := json.Marshal(map[string]any{
+			"username": "u1", "password": "p1", "listen_port": 443,
+			"transports": []string{"TCP"},
+		})
+		ack := deployMieru(wsproto.ProxyServiceApply{
+			InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: 443, Config: raw,
+		})
+		if ack.OK {
+			t.Fatalf("port 443 must fail: %+v", ack)
+		}
+		if !strings.Contains(ack.Error, "1025") {
+			t.Fatalf("error should mention 1025–65535, got %q", ack.Error)
+		}
+	}
 
 func TestBuildConfigsForDeploy(t *testing.T) {
 	// Config builders used by deploy must produce valid JSON files on disk.

@@ -925,15 +925,21 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 			}
 			return proxysvc.ValidateAnyTLSDeploy(&c)
 		case "naive", "naiveproxy":
-			var c proxysvc.NaiveConfig
-			if err := json.Unmarshal(cfg, &c); err != nil {
-				return err
+				var c proxysvc.NaiveConfig
+				if err := json.Unmarshal(cfg, &c); err != nil {
+					return err
+				}
+				return proxysvc.ValidateNaiveDeploy(&c)
+			case "mieru":
+				var c proxysvc.MieruConfig
+				if err := json.Unmarshal(cfg, &c); err != nil {
+					return err
+				}
+				return proxysvc.ValidateMieruDeploy(&c, 0)
+			default:
+				return nil
 			}
-			return proxysvc.ValidateNaiveDeploy(&c)
-		default:
-			return nil
 		}
-	}
 
 	// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
 		// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing

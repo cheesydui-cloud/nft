@@ -134,15 +134,15 @@ const emptySS = () => ({
   sniffing: true,
 })
 
-const emptyMieru = () => ({
-	  listen_port: 443,
-	  share_host: '',
-	  transports: ['TCP', 'UDP'],
-	  traffic_pattern: '',
-	  user_hint_is_mandatory: false,
-	  username: '',
-	  password: '',
-	})
+	const emptyMieru = () => ({
+		  listen_port: 8964,
+		  share_host: '',
+		  transports: ['TCP', 'UDP'],
+		  traffic_pattern: '',
+		  user_hint_is_mandatory: false,
+		  username: '',
+		  password: '',
+		})
 
 	const emptySocks5 = () => ({
 	  listen_port: 1080,
@@ -616,11 +616,19 @@ export default function ProxyServiceWizard() {
         }
       }
     }
+    if (protocol === 'mieru') {
+      const p = Number(config.listen_port)
+      if (!p || p < 1025 || p > 65535) {
+        toast('mieru 监听端口须为 1025–65535（官方 mita 拒绝 443 等特权端口）', 'error')
+        return false
+      }
+    }
+    const fallbackPort = protocol === 'mieru' ? 8964 : 443
     const body = {
       name: name.trim(),
       protocol,
       core,
-      config: { ...config, listen_port: Number(config.listen_port) || 443 },
+      config: { ...config, listen_port: Number(config.listen_port) || fallbackPort },
       sub_visible: subVisible,
     }
     try {
@@ -751,9 +759,13 @@ export default function ProxyServiceWizard() {
                 </div>
                 <div>
                   <label className="fl block mb-1">默认端口</label>
-                  <input className="input-field font-mono" type="number" value={config.listen_port || 443}
-                    onChange={e => setCfg('listen_port', Number(e.target.value) || 443)} />
-                  <p className="text-[11px] text-ink-mut mt-1">部署时预填，可在部署页修改</p>
+                  <input className="input-field font-mono" type="number" value={config.listen_port || (protocol === 'mieru' ? 8964 : 443)}
+                    onChange={e => setCfg('listen_port', Number(e.target.value) || (protocol === 'mieru' ? 8964 : 443))} />
+                  <p className="text-[11px] text-ink-mut mt-1">
+                    {protocol === 'mieru'
+                      ? '官方 mita 只接受 1025–65535，不要用 443'
+                      : '部署时预填，可在部署页修改'}
+                  </p>
                 </div>
               </div>
 
@@ -1679,7 +1691,7 @@ export default function ProxyServiceWizard() {
               <ul className="text-sm text-ink-soft space-y-1.5 mb-4">
                 <li>服务：<strong>{name}</strong></li>
                 <li>协议 / 核心：{protocol} / {core}</li>
-                <li>端口：{config.listen_port || 443}</li>
+                <li>端口：{config.listen_port || (protocol === 'mieru' ? 8964 : 443)}</li>
                 <li>节点数：{selected.size}</li>
               </ul>
               <p className="text-[12.5px] text-ink-mut mb-4">
