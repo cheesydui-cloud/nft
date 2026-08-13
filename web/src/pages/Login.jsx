@@ -6,9 +6,14 @@ import { PanelBrandBadge } from '../components/BrandMark'
 import { clearLoginAnnouncementSession } from '../components/LoginAnnouncementModal'
 import { applyFavicon, logoURLFromBranding } from '../lib/branding'
 
+const REMEMBER_KEY = 'nf-remember-login'
+
 export default function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(() => {
+    try { return localStorage.getItem(REMEMBER_KEY) === '1' } catch { return false }
+  })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [panelName, setPanelName] = useState('')
@@ -32,7 +37,15 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      const data = await api.post('/login', { username, password })
+      const data = await api.post('/login', {
+        username,
+        password,
+        remember_me: !!rememberMe,
+      })
+      try {
+        if (rememberMe) localStorage.setItem(REMEMBER_KEY, '1')
+        else localStorage.removeItem(REMEMBER_KEY)
+      } catch { /* ignore */ }
       // Fresh login session may show the admin-designated popup once.
       clearLoginAnnouncementSession()
       // Commit user + panel_name/version immediately so RootRedirect sees a
@@ -58,7 +71,7 @@ export default function Login() {
 
   return (
     <div className="login-shell">
-      <div className="login-card">
+      <div className="login-card login-card--float">
         <div className="flex items-center gap-3.5 mb-8">
           <PanelBrandBadge logoUrl={panelLogoUrl} size={46} />
           <div className="text-[17px] font-bold tracking-tight text-ink">{panelName || 'nft'}</div>
@@ -77,8 +90,21 @@ export default function Login() {
             <label className="block text-[13px] font-semibold text-ink-soft mb-1.5">密码</label>
             <input className="input-field" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
           </div>
+
+          <label className="login-remember">
+            <input
+              type="checkbox"
+              className="login-remember__input"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+            />
+            <span className="login-remember__box" aria-hidden="true" />
+            <span className="login-remember__text">记住登录</span>
+            <span className="login-remember__hint">下次访问无需重新输入</span>
+          </label>
+
           <button type="submit" disabled={loading}
-            className="btn-primary mt-2 w-full h-11 justify-center text-[14px] disabled:opacity-60">
+            className="btn-primary mt-1 w-full h-11 justify-center text-[14px] disabled:opacity-60">
             {loading ? <div className="w-4 h-4 border-2 border-current border-t-transparent opacity-90 rounded-full animate-spin" /> : '登录'}
           </button>
         </form>

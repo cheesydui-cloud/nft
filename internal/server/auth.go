@@ -16,7 +16,10 @@ import (
 const (
 	sessionCookie = "nft_session"
 	flashCookie   = "nft_flash"
-	sessionTTL    = 12 * time.Hour
+	// Default browser session length when "记住登录" is off.
+	sessionTTL = 12 * time.Hour
+	// Longer session when the user checks 记住登录 on the login form.
+	sessionTTLRemember = 30 * 24 * time.Hour
 )
 
 type ctxKey int

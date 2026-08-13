@@ -162,8 +162,9 @@ func (s *Server) apiDispatchFanout(nodeIDs []int64) {
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		RememberMe bool   `json:"remember_me"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "请求格式错误")
@@ -201,26 +202,32 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	if s.loginLimiter != nil {
 		s.loginLimiter.recordSuccess(limitKey)
 	}
-	token, err := db.CreateSession(s.DB, u.ID, sessionTTL)
+	// 记住登录：会话与 cookie 延长到 30 天；否则保持默认 12 小时。
+	ttl := sessionTTL
+	if body.RememberMe {
+		ttl = sessionTTLRemember
+	}
+	token, err := db.CreateSession(s.DB, u.ID, ttl)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "登录失败")
 		return
 	}
-	http.SetCookie(w, newSessionCookie(r, token, int(sessionTTL.Seconds())))
+	http.SetCookie(w, newSessionCookie(r, token, int(ttl.Seconds())))
 	db.WriteAudit(s.DB, u.ID, "login", "", "")
 	// Include panel_name/version so the SPA can brand the sidebar immediately
 	// after login without waiting for a second /me round-trip (which used to
 	// leave the brand stuck on the "nft" fallback until a full page refresh).
-		panelName, _ := db.GetSetting(s.DB, "panel_name")
-		jsonOK(w, map[string]any{
-			"user":           apiUserView(u),
-			"panel_name":     panelName,
-			"version":        serverVersion(),
-			"panel_logo":     s.panelLogoConfigured(),
-			"panel_logo_url": s.brandingLogoURL(),
-			"panel_logo_rev": s.panelLogoRev(),
-		})
-	}
+	panelName, _ := db.GetSetting(s.DB, "panel_name")
+	jsonOK(w, map[string]any{
+		"user":           apiUserView(u),
+		"panel_name":     panelName,
+		"version":        serverVersion(),
+		"panel_logo":     s.panelLogoConfigured(),
+		"panel_logo_url": s.brandingLogoURL(),
+		"panel_logo_rev": s.panelLogoRev(),
+		"remember_me":    body.RememberMe,
+	})
+}
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
