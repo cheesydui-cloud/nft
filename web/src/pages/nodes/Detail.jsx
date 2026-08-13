@@ -65,6 +65,9 @@ export default function NodeDetail() {
   // revealedSecret holds the one-time plaintext token returned by a reset; it
   // is never persisted server-side and is cleared when the reveal modal closes.
   const [revealedSecret, setRevealedSecret] = useState('')
+  // 页面折叠：安装命令默认收起；CF 在已开启同步或有错误时默认展开
+  const [installOpen, setInstallOpen] = useState(false)
+  const [cfOpen, setCfOpen] = useState(false)
   const toast = useToast()
   const blurred = useBlur()
   const confirm = useConfirm()
@@ -83,6 +86,8 @@ export default function NodeDetail() {
     setBackendIP(d.node?.backend_ip || '')
     setCfRecordName(d.node?.cf_record_name || '')
     setCfZoneID(d.node?.cf_zone_id || '')
+    // 已开 CF 或上次有错误：默认展开，避免漏改 IP
+    if (d.node?.cf_sync || d.node?.cf_last_error) setCfOpen(true)
   }
   const load = () => {
     setLoading(true)
@@ -407,33 +412,24 @@ export default function NodeDetail() {
                 <button type="submit" className="btn-primary flex-none px-5">保存</button>
               </form>
             </ConfigField>
-            <ConfigField label="直接转发" hint="禁止后本节点不能作为链尾直连目标，规则必须在其后级联线路层；对之后新建/编辑的规则生效">
-              <div className="flex items-center gap-2">
-                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
-                  {noDirectExit ? '禁止直接转发' : '允许直接转发'}
-                </button>
-                <span className="text-xs text-ink-mut">当前：{noDirectExit ? '禁止' : '允许'}</span>
-              </div>
+            <ConfigField label="直接转发" hint="禁止后本节点不能作链尾直连目标，规则须在其后级联；仅对新规则生效">
+              <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
+                {noDirectExit ? '禁止直接转发' : '允许直接转发'}
+              </button>
             </ConfigField>
           </section>
         ) : (
-        /* ===== TWO COLUMN: 基本信息 + 安装命令 | 节点配置 ===== */
-        <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-[18px] items-start">
+        /* ===== TWO COLUMN: 状态 + 安装 | 配置 ===== */
+        <div className="grid grid-cols-1 lg:grid-cols-[1.45fr_1fr] gap-[18px] items-start">
 
           <div className="flex flex-col gap-[18px] min-w-0">
 
-          {/* 基本信息 */}
+          {/* 状态：只读，不重复右侧可编辑的中继/IPv6 */}
           <section className={`${card} px-[26px] py-[22px]`}>
-            <h2 className="m-0 mb-[18px] text-[15px] font-bold">基本信息</h2>
+            <h2 className="m-0 mb-[18px] text-[15px] font-bold">状态</h2>
             <div className="grid grid-cols-[auto_1fr]">
               <InfoRow label="连接 IP" mono>
                 {node.address ? <SensText blurred={blurred}>{node.address}</SensText> : <span className="text-ink-mut">未连接</span>}
-              </InfoRow>
-              <InfoRow label="中继地址（数据面）" mono>
-                {node.relay_host ? <SensText blurred={blurred}>{node.relay_host}</SensText> : <span className="text-ink-mut">未设置（设置后才能进链路）</span>}
-              </InfoRow>
-              <InfoRow label="IPv6 中继地址" mono>
-                {node.relay_host_v6 ? <SensText blurred={blurred}>{node.relay_host_v6}</SensText> : <span className="text-ink-mut">未设置</span>}
               </InfoRow>
               <InfoRow label="Token" mono valueClass="text-[12.5px] break-all leading-relaxed">
                 <span className="inline-flex items-center gap-2 flex-wrap">
@@ -446,6 +442,9 @@ export default function NodeDetail() {
               <InfoRow label="最近心跳">
                 {fmtTime(node.last_seen ?? null)}
                 <span className={`ml-1.5 font-semibold ${node.online === 1 ? 'text-[#0a8a4f]' : 'text-[#c2520a]'}`}>{node.online === 1 ? '在线' : '离线'}</span>
+              </InfoRow>
+              <InfoRow label="最近同步">
+                <b className="text-ink-soft font-semibold">{fmtTime(node.last_apply_at?.Valid ? node.last_apply_at.Int64 : null)}</b>
               </InfoRow>
               <InfoRow label="Agent 版本" mono valueClass="text-[12.5px]" last={!showUpgrade}>
                 {node.agent_version
@@ -473,182 +472,202 @@ export default function NodeDetail() {
             )}
           </section>
 
-          {/* 安装命令（实体节点专属）— desktop only */}
+          {/* 安装命令：默认折叠，日常不占屏 */}
           {node.node_type !== 'self' && (
-          <section className={`${card} px-[26px] py-[22px] hidden md:block`}>
-            <div className="flex items-baseline gap-3 mb-3.5 flex-wrap">
-              <h2 className="m-0 text-[15px] font-bold">节点安装命令</h2>
-              <span className="text-[12.5px] text-ink-mut">在目标节点（已安装 nftables，root 用户）执行下列命令即可</span>
-            </div>
-            {!panel_url_configured && (
-              <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-[13px]">
-                尚未设置面板地址，下面用你当前访问的域名 <code className="bg-amber-100 px-1 rounded">{panel_url}</code> 推断。如 agent 走不同地址，请到<Link to="/nodes" className="text-emerald-600 font-semibold">节点页</Link>设置后再复制。
+          <section className={`${card} hidden md:block overflow-hidden`}>
+            <button
+              type="button"
+              onClick={() => setInstallOpen(v => !v)}
+              className="w-full flex items-center gap-2 px-[26px] py-4 text-left hover:bg-raised/40 transition-colors"
+            >
+              <h2 className="m-0 text-[15px] font-bold flex-1">安装 / 重装命令</h2>
+              <span className="text-[12px] text-ink-mut">{installOpen ? '收起' : '展开'}</span>
+              <svg className={`w-4 h-4 text-ink-mut transition-transform ${installOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            {installOpen && (
+              <div className="px-[26px] pb-[22px] border-t border-line-soft pt-4">
+                <p className="m-0 mb-3 text-[12.5px] text-ink-mut">在目标机（nftables + root）执行；日常运维可忽略本块</p>
+                {!panel_url_configured && (
+                  <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-[13px]">
+                    尚未设置面板地址，下面用你当前访问的域名 <code className="bg-amber-100 px-1 rounded">{panel_url}</code> 推断。如 agent 走不同地址，请到<Link to="/nodes" className="text-emerald-600 font-semibold">节点页</Link>设置后再复制。
+                  </div>
+                )}
+                <div className="mb-3 flex items-center gap-2.5 flex-wrap text-[13px]">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={useGhProxy} onChange={e => setUseGhProxy(e.target.checked)} className="accent-emerald-600" />
+                    <span className="text-ink-soft">使用 gh-proxy（GitHub 受限网络）</span>
+                  </label>
+                  {useGhProxy && (
+                    <input className="input-field font-mono" style={{ height: 30, maxWidth: 280 }} value={ghProxy}
+                      onChange={e => setGhProxy(e.target.value)} placeholder="https://gh-proxy.com/" />
+                  )}
+                </div>
+                <div className="mb-3 flex items-center gap-2.5 flex-wrap text-[13px]">
+                  <span className="text-ink-soft">中继地址声明（双出口可空）</span>
+                  <input className="input-field font-mono" style={{ height: 30, maxWidth: 220 }} value={cmdRelayHost}
+                    onChange={e => setCmdRelayHost(e.target.value)} placeholder="IPv4 / 域名" />
+                  <input className="input-field font-mono" style={{ height: 30, maxWidth: 220 }} value={cmdRelayHostV6}
+                    onChange={e => setCmdRelayHostV6(e.target.value)} placeholder="IPv6" />
+                </div>
+                <div className="relative bg-[#1e1e2e] dark:bg-app border border-line rounded-[10px] px-5 py-[18px]">
+                  <button onClick={() => copyToClipboard(installCmd).then(() => toast('已复制')).catch(() => toast('复制失败', 'error'))}
+                    className="absolute top-3.5 right-3.5 text-[12.5px] font-semibold text-[#a0a4b0] bg-[#2a2a3c] border border-[#3a3a4c] px-3.5 py-[6px] rounded-[7px] cursor-pointer hover:bg-[#33334a] transition-colors">复制</button>
+                  <pre className="m-0 font-mono text-[13px] leading-[1.75] text-[#e8ecf3] whitespace-pre-wrap break-all">
+                    <SensText blurred={blurred}>{installCmd}</SensText>
+                  </pre>
+                </div>
               </div>
             )}
-            <div className="mb-3 flex items-center gap-2.5 flex-wrap text-[13px]">
-              <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                <input type="checkbox" checked={useGhProxy} onChange={e => setUseGhProxy(e.target.checked)} className="accent-emerald-600" />
-                <span className="text-ink-soft">使用 gh-proxy（GitHub 受限网络）</span>
-              </label>
-              {useGhProxy && (
-                <input className="input-field font-mono" style={{ height: 30, maxWidth: 280 }} value={ghProxy}
-                  onChange={e => setGhProxy(e.target.value)} placeholder="https://gh-proxy.com/" />
-              )}
-            </div>
-            <div className="mb-3 flex items-center gap-2.5 flex-wrap text-[13px]">
-              <span className="text-ink-soft">中继地址声明（双出口机器用，可空）</span>
-              <input className="input-field font-mono" style={{ height: 30, maxWidth: 220 }} value={cmdRelayHost}
-                onChange={e => setCmdRelayHost(e.target.value)} placeholder="IPv4 / 域名（可选）" />
-              <input className="input-field font-mono" style={{ height: 30, maxWidth: 220 }} value={cmdRelayHostV6}
-                onChange={e => setCmdRelayHostV6(e.target.value)} placeholder="IPv6（可选）" />
-            </div>
-            <div className="relative bg-[#1e1e2e] dark:bg-app border border-line rounded-[10px] px-5 py-[18px]">
-              <button onClick={() => copyToClipboard(installCmd).then(() => toast('已复制')).catch(() => toast('复制失败', 'error'))}
-                className="absolute top-3.5 right-3.5 text-[12.5px] font-semibold text-[#a0a4b0] bg-[#2a2a3c] border border-[#3a3a4c] px-3.5 py-[6px] rounded-[7px] cursor-pointer hover:bg-[#33334a] transition-colors">复制</button>
-              <pre className="m-0 font-mono text-[13px] leading-[1.75] text-[#e8ecf3] whitespace-pre-wrap break-all">
-                <SensText blurred={blurred}>{installCmd}</SensText>
-              </pre>
-            </div>
           </section>
           )}
 
           </div>
 
-          {/* 节点配置 — desktop only */}
-          <section className={`${card} px-6 py-[22px] flex-col gap-[18px] hidden md:flex`}>
-            <h2 className="m-0 text-[15px] font-bold">节点配置</h2>
+          {/* 节点配置：分组，CF 默认可折叠 */}
+          <section className={`${card} px-6 py-[22px] flex-col gap-0 hidden md:flex`}>
+            <h2 className="m-0 mb-4 text-[15px] font-bold">节点配置</h2>
 
-            <ConfigField label="节点名称">
-              <form onSubmit={saveName} className="flex gap-2">
-                <input className="input-field flex-1" value={name} onChange={e => setName(e.target.value)} required />
-                <button type="submit" className="btn-primary flex-none px-5">保存</button>
-              </form>
-            </ConfigField>
-
-            <ConfigField
-              label="中继地址（数据面）"
-              hint={node.relay_host_declared ? '由 daemon 启动参数 --relay-host 管理，UI 不可修改；如需变更请更新节点配置后重启 daemon' : '用户/上游连这个地址。开 CF 时请填域名（灰云 A 记录），崩线后只改当前 IP 即可'}
-            >
-              <form onSubmit={saveRelay} className="flex gap-2">
-                <input className="input-field font-mono flex-1" value={relayHost} onChange={e => setRelayHost(e.target.value)} placeholder="数据面公网 IP 或域名" disabled={node.relay_host_declared} />
-                <button type="submit" className="btn-primary flex-none px-5" disabled={node.relay_host_declared}>保存</button>
-              </form>
-            </ConfigField>
-
-            {!isComposite && (
-              <ConfigField
-                label="Cloudflare DNS"
-                hint="与落地仓库相同：中继填域名后开启同步；线路崩了点「改 IP」写入新 A 记录，用户链接不用改"
-              >
-                <form onSubmit={saveCF} className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[13px] text-ink-soft">
-                      同步 A 记录（DNS only / 灰云，勿开橙云代理）
-                    </div>
-                    <button type="button" role="switch" aria-checked={cfSync}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${cfSync ? 'bg-emerald-600' : 'bg-gray-500'}`}
-                      onClick={() => setCfSync(!cfSync)}>
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cfSync ? 'translate-x-6' : 'translate-x-1'}`} />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[12px] font-semibold text-ink-soft mb-1">
-                        当前 IP {cfSync && <span className="text-red-500">*</span>}
-                      </label>
-                      <input className="input-field font-mono text-sm w-full" value={backendIP}
-                        onChange={e => setBackendIP(e.target.value)} placeholder="要写入 A 记录的 IPv4" />
-                    </div>
-                    <div>
-                      <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名（可选）</label>
-                      <input className="input-field font-mono text-sm w-full" value={cfRecordName}
-                        onChange={e => setCfRecordName(e.target.value)} placeholder="默认用中继域名" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[12px] font-semibold text-ink-soft mb-1">Zone ID（可选）</label>
-                    <input className="input-field font-mono text-sm w-full" value={cfZoneID}
-                      onChange={e => setCfZoneID(e.target.value)} placeholder="空则用系统设置默认 Zone" />
-                  </div>
-                  {(node.cf_last_sync_at > 0 || node.cf_last_error) && (
-                    <div className={`text-[11px] ${node.cf_last_error ? 'text-red-600' : 'text-ink-mut'}`}>
-                      {node.cf_last_sync_at > 0 && (
-                        <>上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
-                          {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
-                          {node.cf_last_error ? '' : ' · 成功'}
-                        </>
-                      )}
-                      {node.cf_last_error && <>{node.cf_last_sync_at > 0 ? ' · ' : ''}错误：{node.cf_last_error}</>}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <button type="submit" className="btn-primary px-5" disabled={cfBusy}>{cfBusy ? '保存中…' : '保存 CF 配置'}</button>
-                    <button type="button" className="btn-secondary px-4" disabled={cfBusy} onClick={openCFImport}>
-                      从 CF 同步
-                    </button>
-                    {node.cf_sync && (
-                      <>
-                        <button type="button" className="btn-secondary px-4" disabled={cfBusy}
-                          onClick={() => { setChangeIPVal(node.backend_ip || backendIP || ''); setChangeIPOpen(true) }}>
-                          改 IP
-                        </button>
-                        <button type="button" className="btn-secondary px-4" disabled={cfBusy} onClick={resyncCF}>
-                          重新同步
-                        </button>
-                      </>
-                    )}
-                  </div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-mut mb-2">连接与域名</div>
+            <div className="flex flex-col gap-[16px] mb-5">
+              <ConfigField label="节点名称">
+                <form onSubmit={saveName} className="flex gap-2">
+                  <input className="input-field flex-1" value={name} onChange={e => setName(e.target.value)} required />
+                  <button type="submit" className="btn-primary flex-none px-5">保存</button>
                 </form>
               </ConfigField>
-            )}
 
-            <ConfigField
-              label="IPv6 中继地址"
-              hint={node.relay_host_v6_declared ? '由 daemon 启动参数 --relay-host-v6 管理，UI 不可修改；如需变更请更新节点配置后重启 daemon' : '设置后该节点可转发 IPv6 目标，留空表示不支持 IPv6'}
-            >
-              <form onSubmit={saveRelayV6} className="flex gap-2">
-                <input className="input-field font-mono flex-1" value={relayHostV6} onChange={e => setRelayHostV6(e.target.value)} placeholder="数据面公网 IPv6 地址" disabled={node.relay_host_v6_declared} />
-                <button type="submit" className="btn-primary flex-none px-5" disabled={node.relay_host_v6_declared}>保存</button>
-              </form>
-            </ConfigField>
+              <ConfigField
+                label="中继地址（数据面）"
+                hint={node.relay_host_declared ? '由 daemon --relay-host 管理，UI 不可改' : '用户/上游连这个地址；开 CF 时填域名（灰云 A）'}
+              >
+                <form onSubmit={saveRelay} className="flex gap-2">
+                  <input className="input-field font-mono flex-1" value={relayHost} onChange={e => setRelayHost(e.target.value)} placeholder="公网 IP 或域名" disabled={node.relay_host_declared} />
+                  <button type="submit" className="btn-primary flex-none px-5" disabled={node.relay_host_declared}>保存</button>
+                </form>
+              </ConfigField>
 
-            <ConfigField label="端口范围" hint="规则自动分配监听端口时从该范围中选取">
-              <form onSubmit={savePortRange} className="flex gap-2">
-                <input className="input-field font-mono flex-1" value={portRange} onChange={e => setPortRange(e.target.value)} placeholder="例如 10001-19999,23333,40000-42000" />
-                <button type="submit" className="btn-primary flex-none px-5">保存</button>
-              </form>
-            </ConfigField>
+              <ConfigField
+                label="IPv6 中继"
+                hint={node.relay_host_v6_declared ? '由 daemon --relay-host-v6 管理' : '留空表示不支持 IPv6 目标'}
+              >
+                <form onSubmit={saveRelayV6} className="flex gap-2">
+                  <input className="input-field font-mono flex-1" value={relayHostV6} onChange={e => setRelayHostV6(e.target.value)} placeholder="IPv6 地址" disabled={node.relay_host_v6_declared} />
+                  <button type="submit" className="btn-primary flex-none px-5" disabled={node.relay_host_v6_declared}>保存</button>
+                </form>
+              </ConfigField>
 
-            <ConfigField label="倍率" hint="影响该节点承担流量的计费">
-              <form onSubmit={saveRateMult} className="flex gap-2">
-                <input className="input-field font-mono" type="number" min="0" step="0.1" value={rateMult} onChange={e => setRateMult(e.target.value)} style={{ width: 100 }} />
-                <button type="submit" className="btn-primary flex-none px-5">保存</button>
-              </form>
-            </ConfigField>
+              {!isComposite && (
+                <div className="rounded-xl border border-line-soft overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setCfOpen(v => !v)}
+                    className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left hover:bg-raised/50 transition-colors"
+                  >
+                    <span className="text-[13px] font-semibold flex-1">Cloudflare DNS</span>
+                    {node.cf_sync
+                      ? <Badge color="green">已开启</Badge>
+                      : <span className="text-[11px] text-ink-mut">未开启</span>}
+                    {node.cf_last_error && <Badge color="red">错误</Badge>}
+                    <svg className={`w-3.5 h-3.5 text-ink-mut transition-transform ${cfOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M6 9l6 6 6-6"/></svg>
+                  </button>
+                  {cfOpen && (
+                    <form onSubmit={saveCF} className="px-3.5 pb-3.5 space-y-3 border-t border-line-soft pt-3">
+                      <p className="m-0 text-[11px] text-ink-mut">中继填域名后开启；崩线点「改 IP」写 A 记录，用户链接不用改</p>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[13px] text-ink-soft">同步 A 记录（灰云，勿开橙云）</div>
+                        <button type="button" role="switch" aria-checked={cfSync}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${cfSync ? 'bg-emerald-600' : 'bg-gray-500'}`}
+                          onClick={() => setCfSync(!cfSync)}>
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cfSync ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div>
+                          <label className="block text-[12px] font-semibold text-ink-soft mb-1">
+                            当前 IP {cfSync && <span className="text-red-500">*</span>}
+                          </label>
+                          <input className="input-field font-mono text-sm w-full" value={backendIP}
+                            onChange={e => setBackendIP(e.target.value)} placeholder="写入 A 记录的 IPv4" />
+                        </div>
+                        <div>
+                          <label className="block text-[12px] font-semibold text-ink-soft mb-1">记录名（可选）</label>
+                          <input className="input-field font-mono text-sm w-full" value={cfRecordName}
+                            onChange={e => setCfRecordName(e.target.value)} placeholder="默认用中继域名" />
+                        </div>
+                        <div>
+                          <label className="block text-[12px] font-semibold text-ink-soft mb-1">Zone ID（可选）</label>
+                          <input className="input-field font-mono text-sm w-full" value={cfZoneID}
+                            onChange={e => setCfZoneID(e.target.value)} placeholder="空则用系统默认 Zone" />
+                        </div>
+                      </div>
+                      {(node.cf_last_sync_at > 0 || node.cf_last_error) && (
+                        <div className={`text-[11px] ${node.cf_last_error ? 'text-red-600' : 'text-ink-mut'}`}>
+                          {node.cf_last_sync_at > 0 && (
+                            <>上次同步：{new Date(node.cf_last_sync_at * 1000).toLocaleString('zh-CN')}
+                              {node.cf_last_ip ? ` · ${node.cf_last_ip}` : ''}
+                              {node.cf_last_error ? '' : ' · 成功'}
+                            </>
+                          )}
+                          {node.cf_last_error && <>{node.cf_last_sync_at > 0 ? ' · ' : ''}错误：{node.cf_last_error}</>}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button type="submit" className="btn-primary px-4" disabled={cfBusy}>{cfBusy ? '保存中…' : '保存 CF'}</button>
+                        <button type="button" className="btn-secondary px-3" disabled={cfBusy} onClick={openCFImport}>从 CF 同步</button>
+                        {node.cf_sync && (
+                          <>
+                            <button type="button" className="btn-secondary px-3" disabled={cfBusy}
+                              onClick={() => { setChangeIPVal(node.backend_ip || backendIP || ''); setChangeIPOpen(true) }}>
+                              改 IP
+                            </button>
+                            <button type="button" className="btn-secondary px-3" disabled={cfBusy} onClick={resyncCF}>
+                              重新同步
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
+            </div>
 
-            <ConfigField label="计费方向" hint="单向计费只计算出站流量，双向计费计算出站+入站">
-              <div className="flex items-center gap-2">
+            <div className="border-t border-line-soft pt-4 mb-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-mut mb-2">端口与计费</div>
+            </div>
+            <div className="flex flex-col gap-[16px] mb-5">
+              <ConfigField label="端口范围" hint="自动分配监听端口时从此范围选取">
+                <form onSubmit={savePortRange} className="flex gap-2">
+                  <input className="input-field font-mono flex-1" value={portRange} onChange={e => setPortRange(e.target.value)} placeholder="10001-19999,23333" />
+                  <button type="submit" className="btn-primary flex-none px-5">保存</button>
+                </form>
+              </ConfigField>
+
+              <ConfigField label="倍率" hint="该节点承担流量的计费倍率">
+                <form onSubmit={saveRateMult} className="flex gap-2">
+                  <input className="input-field font-mono" type="number" min="0" step="0.1" value={rateMult} onChange={e => setRateMult(e.target.value)} style={{ width: 100 }} />
+                  <button type="submit" className="btn-primary flex-none px-5">保存</button>
+                </form>
+              </ConfigField>
+
+              <ConfigField label="计费方向" hint="单向只计出站，双向计出站+入站">
                 <button onClick={toggleBillingDir} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${unidirectional ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
                   {unidirectional ? '单向计费（仅出站）' : '双向计费（出站+入站）'}
                 </button>
-                <span className="text-xs text-ink-mut">当前：{unidirectional ? '单向' : '双向'}</span>
-              </div>
-            </ConfigField>
+              </ConfigField>
+            </div>
 
-            <ConfigField label="直接转发" hint="禁止后本节点不能作为链尾直连目标，规则必须在其后级联线路层；对之后新建/编辑的规则生效">
-              <div className="flex items-center gap-2">
-                <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
-                  {noDirectExit ? '禁止直接转发' : '允许直接转发'}
-                </button>
-                <span className="text-xs text-ink-mut">当前：{noDirectExit ? '禁止' : '允许'}</span>
-              </div>
+            <div className="border-t border-line-soft pt-4 mb-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-mut mb-2">高级</div>
+            </div>
+            <ConfigField label="直接转发" hint="禁止后不能作链尾直连目标，须级联；仅对新规则生效">
+              <button onClick={toggleNoDirectExit} className={`inline-flex items-center gap-1.5 px-3.5 py-[7px] rounded-[8px] text-[13px] font-semibold border cursor-pointer transition-colors ${noDirectExit ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}>
+                {noDirectExit ? '禁止直接转发' : '允许直接转发'}
+              </button>
             </ConfigField>
           </section>
         </div>
         )}
-
-        {/* ===== 节点角色（含中间层的上游绑定） ===== */}
-        <RolesCard node={node} onDone={reloadSilent} />
 
         {/* ===== 组合节点跳序 — desktop only ===== */}
         {isComposite && (
@@ -1075,237 +1094,6 @@ function CompositeHopsCard({ nodeId, hops: initHops, singleNodes, onDone }) {
           title={dirty ? '请先保存跳序' : '逐跳测延迟'}>
           {probing ? '测延迟…' : '测延迟'}
         </button>
-      </div>
-    </section>
-  )
-}
-
-// A node's role bitmask controls where it can appear in a rule chain: entry
-// (bit0) lets a rule start here, via (bit1) lets other nodes bind behind it as
-// a middle layer. Both bits can be set at once; at least one must stay set or
-// the node becomes unreachable from any rule.
-//
-// Each role owns one column and one edge set. The entry column owns downstream
-// edges — nodes that cascade in behind this one, so this node is their upstream
-// — editable from here via the upstream-side API. The via column owns upstream
-// edges — nodes this one sits behind, so this node is their downstream. Each
-// editor loads lazily when its role is checked; a failed load keeps rows null
-// (nothing to save) with a retry, so one transient blip can never overwrite a
-// stored edge set with an empty one on the next save.
-function EdgeEditor({ title, hint, rows, err, onRetry, candidates, idKey, nodeById,
-                      onPick, onMode, onRemove, onAddAll, placeholder }) {
-  return (
-    <div>
-      <div className="flex items-baseline gap-2.5 mb-1.5">
-        <h3 className="m-0 text-[13.5px] font-bold">{title}</h3>
-        <span className="text-[12.5px] text-ink-mut">{rows ? `${rows.length} 条` : err ? '' : '加载中…'}</span>
-      </div>
-      <p className="text-[12.5px] text-ink-mut mb-2.5">{hint}</p>
-      {err && (
-        <div className="text-[12.5px] text-red-600 flex items-center gap-2.5">
-          已有绑定加载失败，为避免误覆盖，修好前不会保存绑定。
-          <button type="button" onClick={onRetry} className="btn-secondary text-xs">重试</button>
-        </div>
-      )}
-      {rows && (
-        <>
-          <div className="flex items-center gap-2 mb-2">
-            <Select multiple searchable className="flex-1" placeholder={placeholder}
-              value={rows.map(r => String(r[idKey]))} onChange={onPick}
-              options={candidates.map(n => ({ value: n.id, label: n.name, icon: <NodeTypeIcon type={n.node_type} /> }))} />
-            <button type="button" onClick={onAddAll} className="btn-secondary flex-none text-xs">全选</button>
-          </div>
-          {rows.length > 0 && (
-            <div className="space-y-2">
-              {rows.map((r, i) => {
-                const n = nodeById[Number(r[idKey])]
-                return (
-                  <div key={r[idKey]} className="flex items-center gap-2 bg-raised rounded-lg px-3 py-2">
-                    <NodeTypeIcon type={n?.node_type} />
-                    <span className="flex-1 min-w-0 truncate text-[13.5px]">{n?.name || `#${r[idKey]}`}</span>
-                    <Select value={r.mode} onChange={v => onMode(i, v)} style={{ width: 120 }}
-                      options={[{ value: 'kernel', label: 'kernel' }, { value: 'userspace', label: 'userspace' }]} />
-                    <button type="button" onClick={() => onRemove(i)} className="btn-danger-sm text-xs px-1.5">×</button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-function RolesCard({ node, onDone }) {
-  const [roles, setRoles] = useState(node.roles ?? 1)
-  const [saving, setSaving] = useState(false)
-  const [allNodes, setAllNodes] = useState([])
-  // Upstream edges: nodes this one sits behind (this node = downstream).
-  const [upRows, setUpRows] = useState(null)          // [{upstream_node_id, mode}]
-  const [savedUpRows, setSavedUpRows] = useState(null)
-  const [upErr, setUpErr] = useState(false)
-  // Downstream edges: nodes that cascade in behind this one (this node = upstream).
-  const [downRows, setDownRows] = useState(null)      // [{downstream_node_id, mode}]
-  const [savedDownRows, setSavedDownRows] = useState(null)
-  const [downErr, setDownErr] = useState(false)
-  const toast = useToast()
-
-  const entryChecked = (roles & 1) !== 0
-  const viaChecked = (roles & 2) !== 0
-
-  // NodeDetail stays mounted when only the :id param changes, so re-seed roles
-  // and drop both edge sets whenever the node identity changes.
-  useEffect(() => setRoles(node.roles ?? 1), [node.id, node.roles])
-  useEffect(() => {
-    setUpRows(null); setSavedUpRows(null); setUpErr(false)
-    setDownRows(null); setSavedDownRows(null); setDownErr(false)
-  }, [node.id])
-
-  // The candidate roster and both editors' name lookups share one fetch of the
-  // full node list, made once either role is checked.
-  const needNodes = entryChecked || viaChecked
-  useEffect(() => {
-    if (!needNodes) return
-    let stale = false
-    api.get('/nodes').then(d => { if (!stale) setAllNodes(d.nodes || []) }).catch(() => { if (!stale) setAllNodes([]) })
-    return () => { stale = true }
-  }, [needNodes, node.id])
-
-  // Lazy-load upstream edges when 中间层 is checked. stale drops superseded
-  // responses; an error keeps rows null so a save never overwrites stored edges.
-  useEffect(() => {
-    if (!viaChecked || upRows !== null || upErr) return
-    let stale = false
-    api.get(`/nodes/${node.id}/bindings`)
-      .then(d => {
-        if (stale) return
-        const rs = (d.bindings || []).map(b => ({ upstream_node_id: b.upstream_node_id, mode: b.mode }))
-        setUpRows(rs); setSavedUpRows(rs)
-      })
-      .catch(() => { if (!stale) setUpErr(true) })
-    return () => { stale = true }
-  }, [viaChecked, upRows, node.id, upErr])
-
-  // Lazy-load downstream edges when 入口 is checked, mirroring the upstream path.
-  useEffect(() => {
-    if (!entryChecked || downRows !== null || downErr) return
-    let stale = false
-    api.get(`/nodes/${node.id}/downstream-bindings`)
-      .then(d => {
-        if (stale) return
-        const rs = (d.bindings || []).map(b => ({ downstream_node_id: b.downstream_node_id, mode: b.mode }))
-        setDownRows(rs); setSavedDownRows(rs)
-      })
-      .catch(() => { if (!stale) setDownErr(true) })
-    return () => { stale = true }
-  }, [entryChecked, downRows, node.id, downErr])
-
-  const nodeById = Object.fromEntries(allNodes.map(n => [n.id, n]))
-  const toggle = (bit) => setRoles(r => r ^ bit)
-
-  // Upstream candidates: any other node (an upstream may be entry or via).
-  const upCandidates = allNodes.filter(n => n.id !== node.id)
-  // Downstream candidates: other nodes carrying the via role, since a downstream
-  // must be able to sit behind this one as a middle layer.
-  const downCandidates = allNodes.filter(n => n.id !== node.id && (n.roles & 2) !== 0)
-
-  const pickUp = (next) => setUpRows(rs => {
-    const keep = rs.filter(r => next.includes(String(r.upstream_node_id)))
-    const have = new Set(keep.map(r => String(r.upstream_node_id)))
-    const added = next.filter(v => !have.has(v)).map(v => ({ upstream_node_id: Number(v), mode: 'userspace' }))
-    return [...keep, ...added]
-  })
-  const setUpMode = (i, v) => setUpRows(rs => rs.map((r, j) => j === i ? { ...r, mode: v } : r))
-  const removeUp = (i) => setUpRows(rs => rs.filter((_, j) => j !== i))
-  const addAllUp = () => setUpRows(rs => upCandidates.map(n =>
-    rs.find(r => Number(r.upstream_node_id) === n.id) || { upstream_node_id: n.id, mode: 'userspace' }))
-
-  const pickDown = (next) => setDownRows(rs => {
-    const keep = rs.filter(r => next.includes(String(r.downstream_node_id)))
-    const have = new Set(keep.map(r => String(r.downstream_node_id)))
-    const added = next.filter(v => !have.has(v)).map(v => ({ downstream_node_id: Number(v), mode: 'userspace' }))
-    return [...keep, ...added]
-  })
-  const setDownMode = (i, v) => setDownRows(rs => rs.map((r, j) => j === i ? { ...r, mode: v } : r))
-  const removeDown = (i) => setDownRows(rs => rs.filter((_, j) => j !== i))
-  const addAllDown = () => setDownRows(rs => downCandidates.map(n =>
-    rs.find(r => Number(r.downstream_node_id) === n.id) || { downstream_node_id: n.id, mode: 'userspace' }))
-
-  const rolesDirty = roles !== (node.roles ?? 1)
-  const edgesDirty = (rows, saved) => rows !== null && saved !== null && (
-    rows.length !== saved.length ||
-    rows.some((r, i) => {
-      const s = saved[i]
-      return !s || JSON.stringify(r) !== JSON.stringify(s)
-    })
-  )
-  // Hidden edits are not dirty: an unchecked role's editor won't be saved.
-  const upDirty = viaChecked && edgesDirty(upRows, savedUpRows)
-  const downDirty = entryChecked && edgesDirty(downRows, savedDownRows)
-  const dirty = rolesDirty || upDirty || downDirty
-
-  // The three POSTs are not one transaction; onDone (a silent refresh) runs on
-  // failure too so the dirty baseline realigns with what actually persisted,
-  // without remounting the card and dropping the still-edited rows.
-  const save = async () => {
-    if (!roles) { toast('至少保留一个用途', 'error'); return }
-    setSaving(true)
-    try {
-      if (rolesDirty) await api.post(`/nodes/${node.id}/roles`, { roles })
-      if (upDirty) {
-        const bs = upRows.map(r => ({ upstream_node_id: Number(r.upstream_node_id), mode: r.mode }))
-        await api.post(`/nodes/${node.id}/bindings`, { bindings: bs })
-        setSavedUpRows(bs)
-      }
-      if (downDirty) {
-        const bs = downRows.map(r => ({ downstream_node_id: Number(r.downstream_node_id), mode: r.mode }))
-        await api.post(`/nodes/${node.id}/downstream-bindings`, { bindings: bs })
-        setSavedDownRows(bs)
-      }
-      toast('已保存')
-    } catch (err) { toast(err.message, 'error') } finally { setSaving(false); onDone() }
-  }
-
-  const entryCls = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700'
-  const viaCls = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700'
-  const roleBtn = (bit, label, cls) => (
-    <button type="button" onClick={() => toggle(bit)}
-      className={`px-3 py-1 text-[12.5px] font-semibold rounded-md border transition-colors ${
-        (roles & bit) !== 0 ? cls : 'bg-transparent border-line text-ink-mut/40 hover:text-ink-mut'
-      }`}>{label}</button>
-  )
-
-  return (
-    <section className={`${card} px-[26px] pt-[22px] pb-[18px]`}>
-      <div className="flex items-center gap-2 mb-1.5">
-        <h2 className="m-0 text-[15px] font-bold">节点用途</h2>
-        <button onClick={save} disabled={saving || !dirty} className="btn-primary ml-auto">保存</button>
-      </div>
-      <p className="text-[12.5px] text-ink-mut mb-3">
-        入口：可被规则选为入口，并绑定下游。中间层：可绑定到上游之后供规则级联。至少保留一个。
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-        <div className="md:pr-6 md:border-r border-line-soft">
-          <div className="flex items-center gap-1.5 mb-3">{roleBtn(1, '入口', entryCls)}</div>
-          {entryChecked && (
-            <EdgeEditor title="已绑定的下游" placeholder="选择下游节点…"
-              hint="选中的下游（须为中间层）可在选中本节点的规则里级联接入本节点之后。模式作用于衔接段；修改对此后新建的规则生效。"
-              rows={downRows} err={downErr} onRetry={() => setDownErr(false)}
-              candidates={downCandidates} idKey="downstream_node_id" nodeById={nodeById}
-              onPick={pickDown} onMode={setDownMode} onRemove={removeDown} onAddAll={addAllDown} />
-          )}
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5 mb-3">{roleBtn(2, '中间层', viaCls)}</div>
-          {viaChecked && (
-            <EdgeEditor title="已绑定的上游" placeholder="选择上游节点…"
-              hint="绑定后，选中这些上游（入口或中间层）的规则可以级联接入本节点。模式作用于衔接段；修改对此后新建的规则生效。"
-              rows={upRows} err={upErr} onRetry={() => setUpErr(false)}
-              candidates={upCandidates} idKey="upstream_node_id" nodeById={nodeById}
-              onPick={pickUp} onMode={setUpMode} onRemove={removeUp} onAddAll={addAllUp} />
-          )}
-        </div>
       </div>
     </section>
   )
