@@ -72,3 +72,15 @@ func TestMitaPortBindingsStillOK(t *testing.T) {
 		t.Fatalf("%+v", b)
 	}
 }
+
+func TestMitaStatusIsRunning(t *testing.T) {
+	if !mitaStatusIsRunning(`mieru server status is "RUNNING"`) {
+		t.Fatal("RUNNING")
+	}
+	if mitaStatusIsRunning(`mieru server status is "IDLE"`) {
+		t.Fatal("IDLE")
+	}
+	if mitaStatusIsRunning("stopped") {
+		t.Fatal("stopped")
+	}
+}

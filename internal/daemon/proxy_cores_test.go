@@ -37,7 +37,7 @@ func TestHandleProxyServiceApplyMissingCores(t *testing.T) {
 	ack := handleProxyServiceApply(wsproto.ProxyServiceApply{
 		Protocol: "vless", Core: "xray",
 		Config: mustJSON(map[string]any{
-			"uuid": "11111111-2222-3333-4444-555555555555",
+			"uuid":        "11111111-2222-3333-4444-555555555555",
 			"server_name": "www.example.com",
 			"private_key": "dGVzdA", // short — may fail at config stage if xray present
 		}),
@@ -65,39 +65,39 @@ func TestHandleProxyServiceApplyMissingCores(t *testing.T) {
 	}
 }
 
-	func TestDeployMieruMissingMita(t *testing.T) {
-		raw, _ := json.Marshal(map[string]any{
-			"username": "u1", "password": "p1", "listen_port": proxysvc.DefaultMieruListenPort,
-			"transports": []string{"TCP"},
-		})
-		ack := deployMieru(wsproto.ProxyServiceApply{
-			InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: proxysvc.DefaultMieruListenPort, Config: raw,
-		})
-		if findMitaBinary() == "" {
-			if ack.OK {
-				t.Fatalf("expected failure without mita: %+v", ack)
-			}
-			if ack.Error == "" {
-				t.Fatal("expected install error")
-			}
-		}
-	}
-
-	func TestDeployMieruRejectsPrivilegedPort(t *testing.T) {
-		raw, _ := json.Marshal(map[string]any{
-			"username": "u1", "password": "p1", "listen_port": 443,
-			"transports": []string{"TCP"},
-		})
-		ack := deployMieru(wsproto.ProxyServiceApply{
-			InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: 443, Config: raw,
-		})
+func TestDeployMieruMissingMita(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"username": "u1", "password": "p1", "listen_port": proxysvc.DefaultMieruListenPort,
+		"transports": []string{"TCP"},
+	})
+	ack := deployMieru(wsproto.ProxyServiceApply{
+		InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: proxysvc.DefaultMieruListenPort, Config: raw,
+	})
+	if findMitaBinary() == "" {
 		if ack.OK {
-			t.Fatalf("port 443 must fail: %+v", ack)
+			t.Fatalf("expected failure without mita: %+v", ack)
 		}
-		if !strings.Contains(ack.Error, "1025") {
-			t.Fatalf("error should mention 1025–65535, got %q", ack.Error)
+		if ack.Error == "" {
+			t.Fatal("expected install error")
 		}
 	}
+}
+
+func TestDeployMieruRejectsPrivilegedPort(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"username": "u1", "password": "p1", "listen_port": 443,
+		"transports": []string{"TCP"},
+	})
+	ack := deployMieru(wsproto.ProxyServiceApply{
+		InstanceID: 1, Protocol: "mieru", Core: "mieru", ListenPort: 443, Config: raw,
+	})
+	if ack.OK {
+		t.Fatalf("port 443 must fail: %+v", ack)
+	}
+	if !strings.Contains(ack.Error, "1025") {
+		t.Fatalf("error should mention 1025–65535, got %q", ack.Error)
+	}
+}
 
 func TestBuildConfigsForDeploy(t *testing.T) {
 	// Config builders used by deploy must produce valid JSON files on disk.
@@ -148,6 +148,20 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+func TestSameCoreConfigFileIgnoresWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.json")
+	if err := os.WriteFile(p, []byte("{\n  \"a\": 1\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !sameCoreConfigFile(p, []byte(`{"a":1}`)) {
+		t.Fatal("same JSON")
+	}
+	if sameCoreConfigFile(p, []byte(`{"a":2}`)) {
+		t.Fatal("different JSON")
+	}
+}
+
 func TestFindCoreBinaryPrefersEarlierPath(t *testing.T) {
 	dir := t.TempDir()
 	panel := filepath.Join(dir, "panel-xray")
@@ -188,7 +202,6 @@ func TestXraySupportsVlessEnc(t *testing.T) {
 		}
 	}
 }
-
 
 func TestDeployXrayAndSingBoxIfPresent(t *testing.T) {
 	xray := findCoreBinary([]string{"xray"}, []string{"/tmp/nft-core-verify/xray", "/usr/local/bin/xray"})

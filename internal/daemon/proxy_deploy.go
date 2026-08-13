@@ -89,30 +89,30 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 		_ = os.Remove(keyPath)
 	}
 
-		// 3x-ui-style egress: share-protocol outbound, open SOCKS, and/or freedom redirect.
-		var socks *proxysvc.OutboundSOCKS
-		uri := strings.TrimSpace(req.OutboundSocks)
-		share := strings.TrimSpace(req.OutboundShareURI)
-		rh := strings.TrimSpace(req.OutboundRedirectHost)
-		if share != "" || uri != "" || (rh != "" && req.OutboundRedirectPort > 0) {
-			socks = &proxysvc.OutboundSOCKS{
-				URI:          uri,
-				ShareURI:     share,
-				RedirectHost: rh,
-				RedirectPort: req.OutboundRedirectPort,
-			}
+	// 3x-ui-style egress: share-protocol outbound, open SOCKS, and/or freedom redirect.
+	var socks *proxysvc.OutboundSOCKS
+	uri := strings.TrimSpace(req.OutboundSocks)
+	share := strings.TrimSpace(req.OutboundShareURI)
+	rh := strings.TrimSpace(req.OutboundRedirectHost)
+	if share != "" || uri != "" || (rh != "" && req.OutboundRedirectPort > 0) {
+		socks = &proxysvc.OutboundSOCKS{
+			URI:          uri,
+			ShareURI:     share,
+			RedirectHost: rh,
+			RedirectPort: req.OutboundRedirectPort,
 		}
-		cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
-		if err != nil {
-			return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
-		}
-		if patched, perr := proxysvc.ApplyXrayEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
-			return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
-		} else {
-			cfgBytes = patched
-		}
+	}
+	cfgBytes, err := proxysvc.BuildXrayVLESSConfigOpts(port, buildCfg, socks)
+	if err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "生成 xray 配置失败: " + err.Error()}
+	}
+	if patched, perr := proxysvc.ApplyXrayEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
+	} else {
+		cfgBytes = patched
+	}
 	// Stats API on loopback so agent can poll inbound traffic.
-	if apiPort, perr := pickLoopbackPort(); perr == nil {
+	if apiPort := reuseOrPickStatsPort(dir, req.InstanceID); apiPort > 0 {
 		if injected, ierr := proxysvc.InjectXrayStatsAPI(cfgBytes, apiPort); ierr == nil {
 			cfgBytes = injected
 			_ = writeStatsPort(dir, req.InstanceID, apiPort)
@@ -123,6 +123,13 @@ func deployXrayVLESS(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck
 	// Validate JSON shape early.
 	if !json.Valid(cfgBytes) {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "xray 配置不是合法 JSON"}
+	}
+	if sameCoreConfigFile(cfgPath, cfgBytes) && pidFileAlive(pidPath) {
+		return wsproto.ProxyServiceApplyAck{
+			OK:          true,
+			DryRun:      false,
+			CoreVersion: probeCoreVersion(xrayPath),
+		}
 	}
 	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 xray 配置失败: " + err.Error()}
@@ -240,48 +247,55 @@ func deploySingBoxInbound(req wsproto.ProxyServiceApply, label string, build fun
 		_ = os.Remove(keyPath)
 	}
 
-		cfgBytes, err := build(port, buildCfg)
-		if err != nil {
-			return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
+	cfgBytes, err := build(port, buildCfg)
+	if err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: fmt.Sprintf("生成 sing-box %s 配置失败: %v", label, err)}
+	}
+	// Rule-scoped egress (3x-ui style):
+	//   OutboundShareURI → real protocol outbound (ss/socks)
+	//   OutboundSocks → open SOCKS
+	//   OutboundRedirect* → fixed dial to exit host:port
+	share := strings.TrimSpace(req.OutboundShareURI)
+	uri := strings.TrimSpace(req.OutboundSocks)
+	rh := strings.TrimSpace(req.OutboundRedirectHost)
+	if share != "" {
+		patched, perr := proxysvc.InjectSingBoxShareOutbound(cfgBytes, share)
+		if perr != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入落地协议出站失败: " + perr.Error()}
 		}
-		// Rule-scoped egress (3x-ui style):
-		//   OutboundShareURI → real protocol outbound (ss/socks)
-		//   OutboundSocks → open SOCKS
-		//   OutboundRedirect* → fixed dial to exit host:port
-		share := strings.TrimSpace(req.OutboundShareURI)
-		uri := strings.TrimSpace(req.OutboundSocks)
-		rh := strings.TrimSpace(req.OutboundRedirectHost)
-		if share != "" {
-			patched, perr := proxysvc.InjectSingBoxShareOutbound(cfgBytes, share)
-			if perr != nil {
-				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入落地协议出站失败: " + perr.Error()}
-			}
-			cfgBytes = patched
-		} else if uri != "" {
-			patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
-			if perr != nil {
-				return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
-			}
-			cfgBytes = patched
-			} else if rh != "" && req.OutboundRedirectPort > 0 {
-				patched, perr := proxysvc.InjectSingBoxRedirectOutbound(cfgBytes, rh, req.OutboundRedirectPort)
-				if perr != nil {
-					return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入固定出口失败: " + perr.Error()}
-				}
-				cfgBytes = patched
-			}
-			if patched, perr := proxysvc.ApplySingBoxEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
-				return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
-			} else {
-				cfgBytes = patched
-			}
+		cfgBytes = patched
+	} else if uri != "" {
+		patched, perr := proxysvc.InjectSingBoxSocksOutbound(cfgBytes, uri)
+		if perr != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入 SOCKS 出站失败: " + perr.Error()}
+		}
+		cfgBytes = patched
+	} else if rh != "" && req.OutboundRedirectPort > 0 {
+		patched, perr := proxysvc.InjectSingBoxRedirectOutbound(cfgBytes, rh, req.OutboundRedirectPort)
+		if perr != nil {
+			return wsproto.ProxyServiceApplyAck{OK: false, Error: "注入固定出口失败: " + perr.Error()}
+		}
+		cfgBytes = patched
+	}
+	if patched, perr := proxysvc.ApplySingBoxEgressPolicy(cfgBytes, req.BlockEgressV4, req.BlockEgressV6); perr != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "应用出站协议栈失败: " + perr.Error()}
+	} else {
+		cfgBytes = patched
+	}
 	// Clash API on loopback for agent traffic sampling.
-	if apiPort, perr := pickLoopbackPort(); perr == nil {
+	if apiPort := reuseOrPickStatsPort(dir, req.InstanceID); apiPort > 0 {
 		if injected, ierr := proxysvc.InjectSingBoxClashAPI(cfgBytes, apiPort); ierr == nil {
 			cfgBytes = injected
 			_ = writeStatsPort(dir, req.InstanceID, apiPort)
 		} else {
 			logStatsInjectOnce("sing-box inject: " + ierr.Error())
+		}
+	}
+	if sameCoreConfigFile(cfgPath, cfgBytes) && pidFileAlive(pidPath) {
+		return wsproto.ProxyServiceApplyAck{
+			OK:          true,
+			DryRun:      false,
+			CoreVersion: probeCoreVersion(boxPath),
 		}
 	}
 	if err := os.WriteFile(cfgPath, cfgBytes, 0o600); err != nil {
@@ -413,6 +427,38 @@ func materializeTLSCertsAny(raw json.RawMessage, certPath, keyPath string) (json
 		return raw, false
 	}
 	return out, true
+}
+
+// sameCoreConfigFile is true when path already holds the same JSON
+// (whitespace-insensitive). Used to skip restarting a live core.
+func sameCoreConfigFile(path string, want []byte) bool {
+	have, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var a, b any
+	if json.Unmarshal(have, &a) != nil || json.Unmarshal(want, &b) != nil {
+		return string(have) == string(want)
+	}
+	ab, err1 := json.Marshal(a)
+	bb, err2 := json.Marshal(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return string(ab) == string(bb)
+}
+
+// reuseOrPickStatsPort keeps the previous loopback stats/Clash port so an
+// unchanged republish does not rewrite the core config (and bounce the process).
+func reuseOrPickStatsPort(dir string, instanceID int64) int {
+	if p := readStatsPort(dir, instanceID); p > 0 {
+		return p
+	}
+	p, err := pickLoopbackPort()
+	if err != nil {
+		return 0
+	}
+	return p
 }
 
 // restartDetached stops any prior instance pid, then starts name args... in

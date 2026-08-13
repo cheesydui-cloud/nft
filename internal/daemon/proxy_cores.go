@@ -212,16 +212,16 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		transports = []string{"TCP", "UDP"}
 	}
 
-		serverCfg := map[string]any{
-			"portBindings": mitaPortBindings(port, transports),
-			"users": []map[string]string{
-				{"name": cfg.Username, "password": cfg.Password},
-			},
-			"loggingLevel": "INFO",
-		}
-		if ds := proxysvc.EgressMitaDualStack(req.BlockEgressV4, req.BlockEgressV6); ds != "" {
-			serverCfg["dns"] = map[string]any{"dualStack": ds}
-		}
+	serverCfg := map[string]any{
+		"portBindings": mitaPortBindings(port, transports),
+		"users": []map[string]string{
+			{"name": cfg.Username, "password": cfg.Password},
+		},
+		"loggingLevel": "INFO",
+	}
+	if ds := proxysvc.EgressMitaDualStack(req.BlockEgressV4, req.BlockEgressV6); ds != "" {
+		serverCfg["dns"] = map[string]any{"dualStack": ds}
+	}
 
 	dir := filepath.Join(coreStateDir(), "mieru")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -232,6 +232,7 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: err.Error()}
 	}
+	cfgUnchanged := sameCoreConfigFile(cfgPath, raw)
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 mita 配置失败: " + err.Error()}
 	}
@@ -249,6 +250,16 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	// After prepare, always talk to the system binary.
 	if p := resolveMitaBinary(); p != "" {
 		mitaPath = p
+	}
+
+	// Unchanged republish (hello / 同步节点) must not mita stop+start —
+	// that tears down every live UDP/TCP session for a few minutes.
+	if cfgUnchanged && mitaProxyListening(mitaPath) {
+		return wsproto.ProxyServiceApplyAck{
+			OK:          true,
+			DryRun:      false,
+			CoreVersion: probeCoreVersion(mitaPath),
+		}
 	}
 
 	// apply merges into existing mita settings (multiple instances on one host OK).

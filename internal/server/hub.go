@@ -60,7 +60,8 @@ type Hub struct {
 	// mutates rule state on their behalf. Keeps the hub transport-only.
 	Redispatch func(nodeIDs []int64)
 	// RepublishProxy, when set, re-applies published proxy cores on a node
-	// so they pick up the current egress-family lock after reconnect.
+	// (family toggle / 同步节点 / ACME). Hello must not call this — a
+	// reconnect used to bounce mita/xray/sing-box and drop live sessions.
 	RepublishProxy func(nodeID int64)
 
 	mu         sync.RWMutex
@@ -244,9 +245,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// the kernel state converges on reconnect instead of drifting until the next
 	// mutation. The rev check keeps this a no-op when the node is already in sync.
 	h.reconcileOnConnect(node.ID, hello.LastAppliedRev)
-	if h.RepublishProxy != nil && (node.RelayV4Disabled || node.RelayV6Disabled) {
-		go h.RepublishProxy(node.ID)
-	}
+	// Do not republish proxy cores on every hello. A reconnect used to
+	// `mita stop` / restart xray+sing-box even when the config was
+	// unchanged, which drops live client sessions for a few minutes.
 	// If an admin started a panel host migration, late-connecting agents still
 	// on the old panel get redirected once they hello here.
 	h.maybePushPendingRedirect(node.ID)

@@ -403,6 +403,24 @@ func mitaProxyStop(mitaPath string) {
 	_, _ = runCmdTimeout(15*time.Second, mitaPath, "stop")
 }
 
+// mitaProxyListening is true when `mita status` reports the proxy is up.
+// Used to skip stop+start on an unchanged republish.
+func mitaProxyListening(mitaPath string) bool {
+	out, err := runCmdTimeout(6*time.Second, mitaPath, "status")
+	if err != nil {
+		return false
+	}
+	return mitaStatusIsRunning(out)
+}
+
+func mitaStatusIsRunning(out string) bool {
+	s := strings.ToUpper(out)
+	if strings.Contains(s, "IDLE") || strings.Contains(s, "STOPPED") {
+		return false
+	}
+	return strings.Contains(s, "RUNNING") || strings.Contains(s, "STARTED") || strings.Contains(s, "LISTENING")
+}
+
 // installMitaRuntimeAfterBinary is called after panel core-install drops mita.
 func installMitaRuntimeAfterBinary(mitaPath string) {
 	if strings.TrimSpace(mitaPath) == "" {
