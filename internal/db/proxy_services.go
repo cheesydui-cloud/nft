@@ -406,26 +406,26 @@ func ListProxyInstances(d *sql.DB, serviceID int64) ([]*ProxyServiceInstance, er
 	return out, rows.Err()
 }
 
-	// ListProxyInstancesOnNode returns every instance deployed on nodeID.
-	func ListProxyInstancesOnNode(d *sql.DB, nodeID int64) ([]*ProxyServiceInstance, error) {
-		rows, err := d.Query(`SELECT `+proxyInstanceCols+` FROM proxy_service_instances WHERE node_id=? ORDER BY id`, nodeID)
+// ListProxyInstancesOnNode returns every instance deployed on nodeID.
+func ListProxyInstancesOnNode(d *sql.DB, nodeID int64) ([]*ProxyServiceInstance, error) {
+	rows, err := d.Query(`SELECT `+proxyInstanceCols+` FROM proxy_service_instances WHERE node_id=? ORDER BY id`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ProxyServiceInstance
+	for rows.Next() {
+		inst, err := scanProxyInstance(rows)
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		var out []*ProxyServiceInstance
-		for rows.Next() {
-			inst, err := scanProxyInstance(rows)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, inst)
-		}
-		return out, rows.Err()
+		out = append(out, inst)
 	}
+	return out, rows.Err()
+}
 
-	// GetProxyInstance returns one instance by id.
-	func GetProxyInstance(d *sql.DB, id int64) (*ProxyServiceInstance, error) {
+// GetProxyInstance returns one instance by id.
+func GetProxyInstance(d *sql.DB, id int64) (*ProxyServiceInstance, error) {
 	row := d.QueryRow(`SELECT `+proxyInstanceCols+` FROM proxy_service_instances WHERE id=?`, id)
 	return scanProxyInstance(row)
 }
@@ -497,6 +497,12 @@ type SubExportNode struct {
 	ShareHost  string `json:"share_host"`
 	ListenPort int    `json:"listen_port"`
 	NodeName   string `json:"node_name"`
+	// Live rewrite fields (not shown to clients).
+	ConfigJSON  json.RawMessage `json:"-"`
+	NodeAddress string          `json:"-"`
+	BackendIP   string          `json:"-"`
+	RelayHost   string          `json:"-"`
+	RelayHostV6 string          `json:"-"`
 }
 
 // ListSubVisibleReadyInstancesForUser returns published proxy instances that:
@@ -506,17 +512,18 @@ type SubExportNode struct {
 //   - run on a line node the user is granted (user_nodes)
 func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNode, error) {
 	rows, err := d.Query(`
-		SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
-		       COALESCE(n.name, '')
-		FROM proxy_service_instances i
-		JOIN proxy_services s ON s.id = i.service_id
-		JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
-		JOIN user_nodes g ON g.node_id = i.node_id AND g.user_id = ?
-		LEFT JOIN nodes n ON n.id = i.node_id
-		WHERE s.sub_visible = 1
-		  AND i.deploy_status = ?
-		  AND TRIM(i.uri) != ''
-		ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
+				SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
+				       COALESCE(n.name, ''), COALESCE(s.config_json,''), COALESCE(n.address,''), COALESCE(n.backend_ip,''),
+				       COALESCE(n.relay_host,''), COALESCE(n.relay_host_v6,'')
+				FROM proxy_service_instances i
+				JOIN proxy_services s ON s.id = i.service_id
+				JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
+				JOIN user_nodes g ON g.node_id = i.node_id AND g.user_id = ?
+				LEFT JOIN nodes n ON n.id = i.node_id
+				WHERE s.sub_visible = 1
+				  AND i.deploy_status = ?
+				  AND TRIM(i.uri) != ''
+				ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
 		userID, userID, ProxyDeployReady)
 	if err != nil {
 		return nil, err
@@ -525,12 +532,15 @@ func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNo
 	var out []SubExportNode
 	for rows.Next() {
 		var n SubExportNode
+		var cfg string
 		if err := rows.Scan(
 			&n.InstanceID, &n.ServiceID, &n.NodeID, &n.Name, &n.Protocol,
 			&n.URI, &n.ShareHost, &n.ListenPort, &n.NodeName,
+			&cfg, &n.NodeAddress, &n.BackendIP, &n.RelayHost, &n.RelayHostV6,
 		); err != nil {
 			return nil, err
 		}
+		n.ConfigJSON = json.RawMessage(cfg)
 		// Prefer "Service · Node" when multiple nodes; keep service name if single-ish.
 		svc := strings.TrimSpace(n.Name)
 		node := strings.TrimSpace(n.NodeName)

@@ -298,13 +298,10 @@ func (s *Server) publishProxyToNodes(serviceID int64, nodeIDs []int64, forceCore
 		if it := instByNode[nodeID]; it != nil && it.ListenPort > 0 {
 			port = it.ListenPort
 		}
-		shareHost := cfgShare
-		if shareHost == "" {
-			shareHost = firstNonEmpty(node.RelayHost, node.Address)
-			if h, _, err := splitHostPortLoose(shareHost); err == nil && h != "" {
-				shareHost = h
+			shareHost := cfgShare
+			if shareHost == "" {
+				shareHost = defaultProxyShareHost(node)
 			}
-		}
 		inst, err := db.UpsertProxyInstance(s.DB, serviceID, nodeID, port, shareHost)
 		if err != nil {
 			fail++

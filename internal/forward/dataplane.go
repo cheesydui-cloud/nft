@@ -3,6 +3,8 @@ package forward
 import (
 	"context"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 
 	"nft/internal/nft"
@@ -22,6 +24,8 @@ type Dataplane struct {
 
 	mu            sync.Mutex
 	lastUserspace []nft.Rule
+	lastKernel    []nft.Rule
+	extraListen   []shim.ListenPort
 }
 
 // Config wires dependencies. Shims defaults to the built-in registry.
@@ -63,11 +67,28 @@ func (d *Dataplane) Reconcile(ctx context.Context, rules []nft.Rule) error {
 		}
 		return err
 	}
-	if err := d.fw.Sync(kernelRules, listenPortsOf(userspaceRules)); err != nil {
+	d.lastKernel = append([]nft.Rule(nil), kernelRules...)
+	d.lastUserspace = append([]nft.Rule(nil), userspaceRules...)
+	if err := d.fw.Sync(kernelRules, mergeListenPorts(listenPortsOf(userspaceRules), d.extraListen)); err != nil {
 		log.Printf("dataplane: firewall sync: %v", err)
 	}
-	d.lastUserspace = append([]nft.Rule(nil), userspaceRules...)
 	return nil
+}
+
+// SetExtraListenPorts merges proxy-service inbound ports into the UFW
+// INPUT accepts. Forward rules only punched userspace relay ports, so
+// published SS / VLESS / mieru stayed blocked when INPUT defaulted to drop
+// — panel TCP probe from a permitted host still looked green.
+func (d *Dataplane) SetExtraListenPorts(ports []shim.ListenPort) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.extraListen = append([]shim.ListenPort(nil), ports...)
+	if err := d.fw.Sync(d.lastKernel, mergeListenPorts(listenPortsOf(d.lastUserspace), d.extraListen)); err != nil {
+		log.Printf("dataplane: extra listen firewall sync: %v", err)
+	}
 }
 
 func (d *Dataplane) Counters() ([]Counter, error) {
@@ -102,6 +123,33 @@ func listenPortsOf(rules []nft.Rule) []shim.ListenPort {
 	out := make([]shim.ListenPort, 0, len(rules))
 	for _, r := range rules {
 		out = append(out, shim.ListenPort{Proto: "tcp", Port: r.SrcPort})
+	}
+	return out
+}
+
+func mergeListenPorts(a, b []shim.ListenPort) []shim.ListenPort {
+	seen := map[string]bool{}
+	out := make([]shim.ListenPort, 0, len(a)+len(b))
+	add := func(p shim.ListenPort) {
+		if p.Port < 1 || p.Port > 65535 {
+			return
+		}
+		proto := strings.ToLower(strings.TrimSpace(p.Proto))
+		if proto == "" {
+			proto = "tcp"
+		}
+		key := proto + "/" + strconv.Itoa(p.Port)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, shim.ListenPort{Proto: proto, Port: p.Port})
+	}
+	for _, p := range a {
+		add(p)
+	}
+	for _, p := range b {
+		add(p)
 	}
 	return out
 }

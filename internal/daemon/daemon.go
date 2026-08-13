@@ -112,7 +112,7 @@ func New(cfg Config) (*Daemon, error) {
 	if connectFile == "" {
 		connectFile = DefaultConnectFile
 	}
-	return &Daemon{
+	d := &Daemon{
 		socketPath:           cfg.SocketPath,
 		statePath:            cfg.StatePath,
 		groupName:            cfg.GroupName,
@@ -127,7 +127,9 @@ func New(cfg Config) (*Daemon, error) {
 		portRange:            cfg.PortRange,
 		declaredRelayHost:    cfg.DeclaredRelayHost,
 		declaredRelayHostV6:  cfg.DeclaredRelayHostV6,
-	}, nil
+	}
+	d.wireProxyFirewall()
+	return d, nil
 }
 
 // downgradePanelRule turns a panel-pushed rule into a standalone tui rule:
@@ -260,12 +262,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	serveErr := make(chan error, 1)
 	safeGo(func() { serveErr <- srv.Serve(l) })
 
-		safeGo(d.probeFirewallEnvironment)
-		safeGo(func() { d.refreshLoop(ctx) })
-		// Keep detached xray/sing-box instances alive across crashes and agent restarts.
-		safeGo(func() { startCoreWatchdog(ctx) })
+	safeGo(d.probeFirewallEnvironment)
+	safeGo(func() { d.refreshLoop(ctx) })
+	// Keep detached xray/sing-box instances alive across crashes and agent restarts.
+	safeGo(func() { startCoreWatchdog(ctx) })
 
-		if d.connectURL != "" {
+	if d.connectURL != "" {
 		dl := NewDialer(DialerConfig{
 			URL:                 d.connectURL,
 			Token:               d.connectTok,
@@ -280,10 +282,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 			OnApply:             d.SetPanelRuleset,
 			OnMigrated:          d.clearTuiSegment,
 			CountersFn:          d.counterSamples,
-				CountersReadd:       d.reAddCounters,
-				ProxyCountersFn:     d.proxyCounterSamples,
-				ProxyCountersReadd:  d.reAddProxyCounters,
-				OnConfigUpdate: func(poolSize int) {
+			CountersReadd:       d.reAddCounters,
+			ProxyCountersFn:     d.proxyCounterSamples,
+			ProxyCountersReadd:  d.reAddProxyCounters,
+			OnConfigUpdate: func(poolSize int) {
 				if dp, ok := d.dp.(*forward.Dataplane); ok {
 					dp.SetPoolSize(poolSize)
 				}

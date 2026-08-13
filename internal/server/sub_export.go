@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"nft/internal/db"
+	"nft/internal/proxysvc"
 	"nft/internal/subexport"
 
 	"github.com/go-chi/chi/v5"
@@ -77,12 +78,25 @@ func (s *Server) loadSubExportNodes(userID int64) ([]subexport.Node, error) {
 	}
 	out := make([]subexport.Node, 0, len(rows))
 	for _, r := range rows {
+		host := liveProxyShareHost(r.ConfigJSON, r.ShareHost, &db.Node{
+			Address:     r.NodeAddress,
+			BackendIP:   r.BackendIP,
+			RelayHost:   r.RelayHost,
+			RelayHostV6: r.RelayHostV6,
+		})
+		port := r.ListenPort
+		uri := r.URI
+		if host != "" && port > 0 {
+			if rebuilt, err := proxysvc.BuildShareURI(r.Protocol, r.Name, host, port, r.ConfigJSON); err == nil && rebuilt != "" {
+				uri = rebuilt
+			}
+		}
 		out = append(out, subexport.Node{
 			Name:     r.Name,
 			Protocol: r.Protocol,
-			URI:      r.URI,
-			Host:     strings.TrimSpace(r.ShareHost),
-			Port:     r.ListenPort,
+			URI:      uri,
+			Host:     host,
+			Port:     port,
 		})
 	}
 	return out, nil
@@ -235,7 +249,11 @@ func (s *Server) apiMyGetSubscription(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "读取订阅凭证失败")
 		return
 	}
-	nodes, _ := db.ListSubVisibleReadyInstancesForUser(s.DB, u.ID)
+	nodes, err := db.ListSubVisibleReadyInstancesForUser(s.DB, u.ID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "加载订阅节点失败")
+		return
+	}
 	base := panelBaseURL(s.DB, r)
 	resp := map[string]any{
 		"has_token":    true,

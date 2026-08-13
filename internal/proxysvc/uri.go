@@ -763,10 +763,11 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		if profile == "" {
 			profile = "default"
 		}
-		transports := c.Transports
-		if len(transports) == 0 {
-			transports = []string{"TCP"}
-		}
+		// Simple share is one transport. Shadowrocket / some iOS
+		// clients take the last protocol= and show MIERU/UDP — then
+		// time out against a TCP-only (or TCP-preferred) listen
+		// while the panel TCP probe still looks green.
+		transports := mieruShareTransports(c.Transports)
 		// Official simple share pairs port/protocol by appearance order
 		// (profile&port=P&protocol=TCP). url.Values.Encode sorts keys
 		// and groups all port= before protocol=, which some clients
@@ -906,6 +907,29 @@ func ListenPortFromConfig(raw json.RawMessage) int {
 		}
 	}
 	return 443
+}
+
+// mieruShareTransports is what the simple mierus:// link advertises.
+// Server may still bind UDP when the operator ticked it; clients that
+// can only use one protocol get TCP so NAT / CF / UDP-blocked paths work.
+func mieruShareTransports(in []string) []string {
+	var hasTCP, hasUDP bool
+	for _, t := range in {
+		switch strings.ToUpper(strings.TrimSpace(t)) {
+		case "TCP":
+			hasTCP = true
+		case "UDP":
+			hasUDP = true
+		}
+	}
+	switch {
+	case hasTCP:
+		return []string{"TCP"}
+	case hasUDP:
+		return []string{"UDP"}
+	default:
+		return []string{"TCP"}
+	}
 }
 
 // shareHostAuthority puts IPv6 literals in brackets for URL Host (no port).

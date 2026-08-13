@@ -120,13 +120,10 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
 		return err
 	}
-	shareHost := proxysvc.ShareHostFromConfig(cfg)
-	if shareHost == "" {
-		shareHost = firstNonEmpty(node.RelayHost, node.Address)
-		if h, _, e := splitHostPortLoose(shareHost); e == nil && h != "" {
-			shareHost = h
+		shareHost := proxysvc.ShareHostFromConfig(cfg)
+		if shareHost == "" {
+			shareHost = defaultProxyShareHost(node)
 		}
-	}
 	core := strings.TrimSpace(svc.Core)
 	if core == "" {
 		core = protocolEntryCore(proto)

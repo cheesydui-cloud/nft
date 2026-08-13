@@ -124,18 +124,20 @@ func TestEnsureSecretsAndBuildMieru(t *testing.T) {
 	if !strings.Contains(uri, portTok) {
 		t.Fatalf("missing port: %s", uri)
 	}
-	if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
-		t.Fatalf("missing protocols: %s", uri)
-	}
+		if !strings.Contains(uri, "protocol=TCP") {
+			t.Fatalf("missing TCP: %s", uri)
+		}
+		if strings.Contains(uri, "protocol=UDP") {
+			t.Fatalf("share must advertise TCP only even when server also binds UDP: %s", uri)
+		}
 	// Host must not embed :port in simple form (port is a query param).
 	if strings.Contains(uri, "9.9.9.9:"+strconv.Itoa(DefaultMieruListenPort)) {
 		t.Fatalf("host should not include listen port: %s", uri)
 	}
-	// Official pair order: port then protocol, repeated — not all ports first.
-	want := "profile=m1&" + portTok + "&protocol=TCP&" + portTok + "&protocol=UDP"
-	if !strings.Contains(uri, want) {
-		t.Fatalf("query order = %s, want substring %s", uri, want)
-	}
+		want := "profile=m1&" + portTok + "&protocol=TCP"
+		if !strings.Contains(uri, want) {
+			t.Fatalf("query order = %s, want substring %s", uri, want)
+		}
 }
 
 func TestValidateMieruDeployRejectsPrivilegedPort(t *testing.T) {

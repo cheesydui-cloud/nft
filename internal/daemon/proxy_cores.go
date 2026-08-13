@@ -162,25 +162,30 @@ func handleProxyServiceApply(req wsproto.ProxyServiceApply) wsproto.ProxyService
 		evictForeignListeners(p)
 	}
 	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
+	var ack wsproto.ProxyServiceApplyAck
 	switch proto {
 	case "mieru":
-		return deployMieru(req)
+		ack = deployMieru(req)
 	case "vless":
-		return deployXrayVLESS(req)
+		ack = deployXrayVLESS(req)
 	case "shadowsocks", "ss":
-		return deploySingBoxSS(req)
+		ack = deploySingBoxSS(req)
 	case "socks5", "socks":
-		return deploySingBoxSocks(req)
+		ack = deploySingBoxSocks(req)
 	case "anytls":
-		return deploySingBoxAnyTLS(req)
+		ack = deploySingBoxAnyTLS(req)
 	case "naive", "naiveproxy":
-		return deploySingBoxNaive(req)
+		ack = deploySingBoxNaive(req)
 	default:
 		return wsproto.ProxyServiceApplyAck{
 			OK:    false,
 			Error: "不支持的协议: " + req.Protocol,
 		}
 	}
+	if ack.OK {
+		syncProxyFirewallPorts()
+	}
+	return ack
 }
 
 // deployMieru writes a mita server config fragment and applies it via the mita CLI.
@@ -510,6 +515,7 @@ func handleProxyServiceStop(req wsproto.ProxyServiceStop) wsproto.ProxyServiceSt
 		// A lone `mita apply` of one fragment cannot delete users/ports.
 		reapplyMitaAfterInstanceRemoved(filepath.Join(coreStateDir(), "mieru"))
 	}
+	syncProxyFirewallPorts()
 	return wsproto.ProxyServiceStopAck{OK: true}
 }
 

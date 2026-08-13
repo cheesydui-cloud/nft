@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -303,5 +304,37 @@ func TestDeployXrayAndSingBoxIfPresent(t *testing.T) {
 		}
 		stopPIDFile(filepath.Join(state, "sing-box", "instance-900002.pid"))
 		t.Log("sing-box deploy ok")
+	}
+}
+
+func TestCollectProxyListenPortsFromInstanceFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("NFT_CORE_STATE_DIR", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "sing-box"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "mieru"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ss := []byte(`{"inbounds":[{"type":"shadowsocks","listen_port":18388}]}`)
+	if err := os.WriteFile(filepath.Join(dir, "sing-box", "instance-1.json"), ss, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mieru := []byte(`{"portBindings":[{"port":18964,"protocol":"TCP"},{"port":18964,"protocol":"UDP"}]}`)
+	if err := os.WriteFile(filepath.Join(dir, "mieru", "instance-2.json"), mieru, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := collectProxyListenPorts()
+	want := map[string]bool{"tcp/18388": false, "tcp/18964": false, "udp/18964": false}
+	for _, p := range got {
+		k := p.Proto + "/" + strconv.Itoa(p.Port)
+		if _, ok := want[k]; ok {
+			want[k] = true
+		}
+	}
+	for k, ok := range want {
+		if !ok {
+			t.Fatalf("missing listen port %s in %+v", k, got)
+		}
 	}
 }

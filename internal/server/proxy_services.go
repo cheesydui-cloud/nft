@@ -80,6 +80,8 @@ func (s *Server) apiGetProxyService(w http.ResponseWriter, r *http.Request) {
 		if i.DeployStatus == db.ProxyDeployReady {
 			ready++
 		}
+		n, _ := db.GetNode(s.DB, i.NodeID)
+		rewriteInstanceShare(svc, i, n)
 	}
 	svc.ReadyCount = ready
 	// Redact PEM / private keys for API responses (DB still holds full secrets).
@@ -273,13 +275,12 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 		if p, ok := portByNode[nodeID]; ok && p > 0 {
 			port = p
 		}
-		shareHost := cfgShare
+		// Prefer the node's public connect IP. RelayHost is often a
+		// CF orange-cloud landing domain: TCP probe succeeds, SS /
+		// mieru handshake dies on the CDN.
+		shareHost := liveProxyShareHost(svc.ConfigJSON, "", node)
 		if shareHost == "" {
-			shareHost = firstNonEmpty(node.RelayHost, node.RelayHostV6, node.Address)
-			// Address may be "ip:port" from connect — strip port if present.
-			if h, _, err := splitHostPortLoose(shareHost); err == nil && h != "" {
-				shareHost = h
-			}
+			shareHost = cfgShare
 		}
 		inst, err := db.UpsertProxyInstance(s.DB, id, nodeID, port, shareHost)
 		if err != nil {
@@ -681,13 +682,11 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 
 			if mode == "public" {
 				// Real path: panel → share_host:port (what clients hit).
-				sh := strings.TrimSpace(it.ShareHost)
-				if sh == "" {
-					// fall back to node relay host
-					if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
-						sh = firstNonEmpty(n.RelayHost, n.RelayHostV6, n.Address)
-					}
+				var n *db.Node
+				if got, err := db.GetNode(s.DB, it.NodeID); err == nil {
+					n = got
 				}
+				sh := liveProxyShareHost(svc.ConfigJSON, it.ShareHost, n)
 				if sh != "" {
 					if h, _, err := splitHostPortLoose(sh); err == nil && h != "" {
 						sh = h
@@ -1096,6 +1095,76 @@ func parseProxyEndpoint(uri string) (proxyEndpoint, bool) {
 		return proxyEndpoint{}, false
 	}
 	return proxyEndpoint{host: nodes[0].Host, port: nodes[0].Port}, true
+}
+
+// defaultProxyShareHost is the client-facing host when share_host is empty.
+// Address is the agent-probed public IP. RelayHost is the data-plane /
+// landing domain and must not win by default (Cloudflare orange cloud
+// accepts TCP then drops SS / mieru).
+func rewriteInstanceShare(svc *db.ProxyService, inst *db.ProxyServiceInstance, node *db.Node) {
+	if svc == nil || inst == nil {
+		return
+	}
+	host := liveProxyShareHost(svc.ConfigJSON, inst.ShareHost, node)
+	port := inst.ListenPort
+	if port <= 0 {
+		port = proxysvc.ListenPortFromConfig(svc.ConfigJSON)
+	}
+	if host == "" || port <= 0 {
+		return
+	}
+	uri, err := proxysvc.BuildShareURI(svc.Protocol, svc.Name, host, port, svc.ConfigJSON)
+	if err != nil || uri == "" {
+		return
+	}
+	inst.URI = uri
+	inst.ShareHost = host
+}
+
+func liveProxyShareHost(cfg json.RawMessage, instShare string, node *db.Node) string {
+	if h := proxysvc.ShareHostFromConfig(cfg); h != "" {
+		return h
+	}
+	var cands []string
+	if node != nil {
+		cands = append(cands, node.Address, node.BackendIP)
+	}
+	cands = append(cands, instShare)
+	if node != nil {
+		cands = append(cands, node.RelayHost, node.RelayHostV6)
+	}
+	var first string
+	for _, cand := range cands {
+		h := usableProxyShareHost(cand)
+		if h == "" {
+			continue
+		}
+		if first == "" {
+			first = h
+		}
+		if net.ParseIP(h) != nil {
+			return h
+		}
+	}
+	return first
+}
+
+func defaultProxyShareHost(node *db.Node) string {
+	return liveProxyShareHost(nil, "", node)
+}
+
+func usableProxyShareHost(s string) string {
+	h := strings.TrimSpace(s)
+	if h == "" || strings.Contains(h, "://") {
+		return ""
+	}
+	if stripped, _, err := splitHostPortLoose(h); err == nil && stripped != "" {
+		h = stripped
+	}
+	if h == "" || strings.Contains(h, "://") {
+		return ""
+	}
+	return h
 }
 
 func firstNonEmpty(ss ...string) string {
