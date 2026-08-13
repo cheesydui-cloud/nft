@@ -14,8 +14,9 @@
   --color-app: #faf8f5;
   --color-surface: #ffffff;
   --color-raised: #f7f3ef;
-  --color-line: #e5d9cf;
-  --color-line-soft: #f0e9e2;
+  /* 线条略加重：奶油底上分区更清晰，仍保持暖色 */
+  --color-line: #d9c8ba;
+  --color-line-soft: #e8ddd3;
   --color-ink: #3d2c24;
   --color-ink-soft: #6b5348;
   --color-ink-mut: #a89084;
@@ -28,24 +29,25 @@
   --color-app: #1a1512;
   --color-surface: #241e1a;
   --color-raised: #2e2621;
-  --color-line: #3f342d;
-  --color-line-soft: #2a221d;
+  /* 暗色线条略提亮，分隔更可辨 */
+  --color-line: #4a3c33;
+  --color-line-soft: #342a24;
   --color-ink: #f3ebe4;
   --color-ink-soft: #c4b0a4;
   --color-ink-mut: #8a7468;
   --sidebar-bg: #1f1915;
-  --sidebar-border: #3f342d;
+  --sidebar-border: #4a3c33;
   --sidebar-text: #f3ebe4;
   --sidebar-text-soft: #c4b0a4;
   --sidebar-text-mut: #8a7468;
   --sidebar-active-bg: rgba(196, 120, 90, 0.22);
   --sidebar-active-border: rgba(196, 120, 90, 0.45);
   --sidebar-active-text: #f5d0c0;
-  --sidebar-hover-bg: rgba(196, 120, 90, 0.10);
+  --sidebar-hover-bg: rgba(196, 120, 90, 0.14);
   --sidebar-hover-text: #f3ebe4;
   --sidebar-group-label: #8a7468;
   --sidebar-btn-bg: rgba(255,255,255,0.04);
-  --sidebar-btn-border: #3f342d;
+  --sidebar-btn-border: #4a3c33;
   --sidebar-btn-text: #c4b0a4;
   --sidebar-avatar-bg: linear-gradient(145deg, #d4896a, #c4785a);
   --sidebar-avatar-border: rgba(196, 120, 90, 0.45);
@@ -64,18 +66,18 @@
 
 :root {
   --sidebar-bg: #ffffff;
-  --sidebar-border: #e5d9cf;
+  --sidebar-border: #d9c8ba;
   --sidebar-text: #3d2c24;
   --sidebar-text-soft: #6b5348;
   --sidebar-text-mut: #a89084;
   --sidebar-active-bg: #f3e4da;
   --sidebar-active-border: #e0c4b4;
   --sidebar-active-text: #8b4f38;
-  --sidebar-hover-bg: #faf3ee;
+  --sidebar-hover-bg: #f5ebe3;
   --sidebar-hover-text: #3d2c24;
   --sidebar-group-label: #a89084;
   --sidebar-btn-bg: #ffffff;
-  --sidebar-btn-border: #e5d9cf;
+  --sidebar-btn-border: #d9c8ba;
   --sidebar-btn-text: #6b5348;
   --sidebar-avatar-bg: linear-gradient(145deg, #d4896a, #c4785a);
   --sidebar-avatar-border: rgba(196, 120, 90, 0.35);
@@ -261,8 +263,8 @@ select.input-field option {
 }
 .icon-btn:hover {
   color: var(--color-ink);
-  border-color: color-mix(in srgb, var(--brand-from) 32%, var(--color-line));
-  background: color-mix(in srgb, var(--brand-from) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--brand-from) 40%, var(--color-line));
+  background: color-mix(in srgb, var(--brand-from) 11%, var(--color-surface));
 }
 .icon-btn-danger {
   @apply w-[34px] h-[34px] inline-flex items-center justify-center rounded-[10px] transition-colors cursor-pointer;
@@ -282,7 +284,7 @@ select.input-field option {
   backdrop-filter: none;
 }
 .card:hover {
-  border-color: color-mix(in srgb, var(--brand-from) 28%, var(--color-line));
+  border-color: color-mix(in srgb, var(--brand-from) 36%, var(--color-line));
 }
 .dark .card {
   background: var(--color-surface);
@@ -672,7 +674,9 @@ select.input-field option {
   transition: background 0.12s ease;
 }
 .attention-item:last-child { border-bottom: 0; }
-.attention-item:hover { background: color-mix(in srgb, var(--color-raised) 55%, transparent); }
+.attention-item:hover {
+  background: color-mix(in srgb, var(--brand-from) 8%, var(--color-raised));
+}
 .attention-dot {
   width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; flex: none;
 }
@@ -712,7 +716,8 @@ select.input-field option {
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .tbl tbody tr { @apply transition-colors; }
 .tbl tbody tr:hover {
-  background: var(--color-raised);
+  /* 悬停略带品牌暖色，比纯 raised 更易辨认 */
+  background: color-mix(in srgb, var(--brand-from) 8%, var(--color-raised));
 }
 
 /* Form label */
