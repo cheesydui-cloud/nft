@@ -3,6 +3,7 @@ package proxysvc
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // EgressDomainStrategy is the xray routing / freedom domainStrategy for a
@@ -18,7 +19,7 @@ func EgressDomainStrategy(blockV4, blockV6 bool) string {
 	}
 }
 
-// EgressSingBoxStrategy is sing-box domain_strategy / dns.strategy.
+// EgressSingBoxStrategy is sing-box dns / domain_resolver strategy.
 func EgressSingBoxStrategy(blockV4, blockV6 bool) string {
 	switch {
 	case blockV6 && !blockV4:
@@ -84,7 +85,14 @@ func ApplyXrayEgressPolicy(cfg []byte, blockV4, blockV6 bool) ([]byte, error) {
 	return out, nil
 }
 
-// ApplySingBoxEgressPolicy pins direct outbounds and dns to ipv4_only / ipv6_only.
+const singBoxLocalDNSTag = "nft-local"
+
+// ApplySingBoxEgressPolicy pins dial-capable outbounds to ipv4_only / ipv6_only.
+//
+// sing-box 1.12+ treats Dial Fields `domain_strategy` as a hard error unless
+// ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true. Use a real local DNS
+// server plus `domain_resolver` instead. A bare `dns: {strategy}` without
+// servers is also rejected by 1.12+ check.
 func ApplySingBoxEgressPolicy(cfg []byte, blockV4, blockV6 bool) ([]byte, error) {
 	strat := EgressSingBoxStrategy(blockV4, blockV6)
 	if strat == "" || len(cfg) == 0 {
@@ -94,6 +102,21 @@ func ApplySingBoxEgressPolicy(cfg []byte, blockV4, blockV6 bool) ([]byte, error)
 	if err := json.Unmarshal(cfg, &m); err != nil {
 		return nil, fmt.Errorf("sing-box egress policy: %w", err)
 	}
+
+	dns, _ := m["dns"].(map[string]any)
+	if dns == nil {
+		dns = map[string]any{}
+		m["dns"] = dns
+	}
+	servers, _ := dns["servers"].([]any)
+	resolverTag := firstDNSServerTag(servers)
+	if resolverTag == "" {
+		servers = append(servers, map[string]any{"type": "local", "tag": singBoxLocalDNSTag})
+		dns["servers"] = servers
+		resolverTag = singBoxLocalDNSTag
+	}
+	dns["strategy"] = strat
+
 	if outs, ok := m["outbounds"].([]any); ok {
 		for _, o := range outs {
 			om, ok := o.(map[string]any)
@@ -102,19 +125,54 @@ func ApplySingBoxEgressPolicy(cfg []byte, blockV4, blockV6 bool) ([]byte, error)
 			}
 			typ, _ := om["type"].(string)
 			if typ == "direct" || typ == "socks" || typ == "shadowsocks" || typ == "vless" || typ == "trojan" {
-				om["domain_strategy"] = strat
+				delete(om, "domain_strategy")
+				om["domain_resolver"] = mergeSingBoxResolver(om["domain_resolver"], resolverTag, strat)
 			}
 		}
 	}
-	dns, _ := m["dns"].(map[string]any)
-	if dns == nil {
-		dns = map[string]any{}
-		m["dns"] = dns
+	if route, ok := m["route"].(map[string]any); ok && route != nil {
+		route["default_domain_resolver"] = mergeSingBoxResolver(route["default_domain_resolver"], resolverTag, strat)
 	}
-	dns["strategy"] = strat
+	if ntp, ok := m["ntp"].(map[string]any); ok && ntp != nil {
+		delete(ntp, "domain_strategy")
+		ntp["domain_resolver"] = mergeSingBoxResolver(ntp["domain_resolver"], resolverTag, strat)
+	}
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func firstDNSServerTag(servers []any) string {
+	for _, s := range servers {
+		sm, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		if tag, _ := sm["tag"].(string); strings.TrimSpace(tag) != "" {
+			return strings.TrimSpace(tag)
+		}
+	}
+	return ""
+}
+
+func mergeSingBoxResolver(existing any, tag, strat string) map[string]any {
+	switch v := existing.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			return map[string]any{"server": strings.TrimSpace(v), "strategy": strat}
+		}
+	case map[string]any:
+		if v != nil {
+			if srv, _ := v["server"].(string); strings.TrimSpace(srv) != "" {
+				v["strategy"] = strat
+				return v
+			}
+			v["server"] = tag
+			v["strategy"] = strat
+			return v
+		}
+	}
+	return map[string]any{"server": tag, "strategy": strat}
 }
