@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -236,10 +237,28 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
 		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 mita 配置失败: " + err.Error()}
 	}
+	// mita apply merges a single fragment into daemon state. Applying one
+	// instance file leaves other instances' users/ports to chance (and
+	// same username last-write-wins). Desired state is the union of every
+	// instance-*.json on this host.
+	unionRaw, err := mergeMitaInstanceConfigs(dir)
+	if err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "合并 mita 实例配置失败: " + err.Error()}
+	}
+	unionPath := filepath.Join(dir, "desired.json")
+	unionUnchanged := sameCoreConfigFile(unionPath, unionRaw)
+	if err := os.WriteFile(unionPath, unionRaw, 0o600); err != nil {
+		return wsproto.ProxyServiceApplyAck{OK: false, Error: "写入 mita 合并配置失败: " + err.Error()}
+	}
+	cfgUnchanged = cfgUnchanged && unionUnchanged
+	raw = unionRaw
+	cfgPath = unionPath
 	// Username key for `mita get users` traffic sampling (per-instance).
 	_ = writeStatsUser(dir, req.InstanceID, cfg.Username)
-	// mita process runs as user mita; make instance JSON readable.
-	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", cfgPath)
+	// mita process runs as user mita; make instance + desired JSON readable.
+	instPath := filepath.Join(dir, fmt.Sprintf("instance-%d.json", req.InstanceID))
+	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", instPath, cfgPath)
+	_ = os.Chmod(instPath, 0o640)
 	_ = os.Chmod(cfgPath, 0o640)
 
 	// After prepare, always talk to the system binary.
@@ -289,7 +308,7 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		}
 	}
 
-	// apply merges into existing mita settings (multiple instances on one host OK).
+	// apply the union of all local instance fragments (desired state).
 	if out, err := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", cfgPath); err != nil {
 		// Daemon may have died; one more prepare+apply attempt.
 		_ = ensureMitaDaemon(mitaPath)
@@ -467,5 +486,125 @@ func handleProxyServiceStop(req wsproto.ProxyServiceStop) wsproto.ProxyServiceSt
 	stopPIDFile(pidPath)
 	_ = os.Remove(cfgPath)
 	_ = os.Remove(logPath)
+	if dirName == "mieru" {
+		// Drop this instance from mita by re-applying the remaining union.
+		// A lone `mita apply` of one fragment cannot delete users/ports.
+		reapplyMitaAfterInstanceRemoved(filepath.Join(coreStateDir(), "mieru"))
+	}
 	return wsproto.ProxyServiceStopAck{OK: true}
+}
+
+// mergeMitaInstanceConfigs unions every instance-*.json under dir into one
+// mita server config (portBindings + users). Same username keeps the last
+// password seen (deterministic by filename sort).
+func mergeMitaInstanceConfigs(dir string) ([]byte, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, "instance-*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(matches)
+	type frag struct {
+		PortBindings []map[string]any    `json:"portBindings"`
+		Users        []map[string]string `json:"users"`
+		LoggingLevel string              `json:"loggingLevel"`
+		DNS          map[string]any      `json:"dns,omitempty"`
+	}
+	var ports []map[string]any
+	seenPort := map[string]bool{}
+	users := map[string]string{}
+	userOrder := []string{}
+	logging := "INFO"
+	var dns map[string]any
+	for _, p := range matches {
+		base := filepath.Base(p)
+		if !strings.HasPrefix(base, "instance-") || !strings.HasSuffix(base, ".json") {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var f frag
+		if err := json.Unmarshal(b, &f); err != nil {
+			continue
+		}
+		for _, pb := range f.PortBindings {
+			key := fmt.Sprintf("%v/%v", pb["port"], pb["protocol"])
+			if seenPort[key] {
+				continue
+			}
+			seenPort[key] = true
+			ports = append(ports, pb)
+		}
+		for _, u := range f.Users {
+			name := strings.TrimSpace(u["name"])
+			if name == "" {
+				continue
+			}
+			if _, ok := users[name]; !ok {
+				userOrder = append(userOrder, name)
+			}
+			users[name] = u["password"]
+		}
+		if strings.TrimSpace(f.LoggingLevel) != "" {
+			logging = f.LoggingLevel
+		}
+		if len(f.DNS) > 0 {
+			dns = f.DNS
+		}
+	}
+	outUsers := make([]map[string]string, 0, len(userOrder))
+	for _, name := range userOrder {
+		outUsers = append(outUsers, map[string]string{"name": name, "password": users[name]})
+	}
+	if len(ports) == 0 {
+		ports = []map[string]any{}
+	}
+	serverCfg := map[string]any{
+		"portBindings": ports,
+		"users":        outUsers,
+		"loggingLevel": logging,
+	}
+	if len(dns) > 0 {
+		serverCfg["dns"] = dns
+	}
+	return json.MarshalIndent(serverCfg, "", "  ")
+}
+
+func reapplyMitaAfterInstanceRemoved(dir string) {
+	unionRaw, err := mergeMitaInstanceConfigs(dir)
+	if err != nil {
+		return
+	}
+	var peek struct {
+		Users        []map[string]string `json:"users"`
+		PortBindings []map[string]any    `json:"portBindings"`
+	}
+	_ = json.Unmarshal(unionRaw, &peek)
+	mitaPath := findMitaBinary()
+	if mitaPath == "" {
+		return
+	}
+	if len(peek.Users) == 0 && len(peek.PortBindings) == 0 {
+		_ = os.Remove(filepath.Join(dir, "desired.json"))
+		mitaProxyStop(mitaPath)
+		return
+	}
+	unionPath := filepath.Join(dir, "desired.json")
+	if err := os.WriteFile(unionPath, unionRaw, 0o600); err != nil {
+		return
+	}
+	_, _ = runCmdTimeout(5*time.Second, "chown", "mita:mita", unionPath)
+	_ = os.Chmod(unionPath, 0o640)
+	if err := ensureMitaDaemon(mitaPath); err != nil {
+		return
+	}
+	if p := resolveMitaBinary(); p != "" {
+		mitaPath = p
+	}
+	if _, err := runCmdTimeout(20*time.Second, mitaPath, "apply", "config", unionPath); err != nil {
+		return
+	}
+	mitaProxyStop(mitaPath)
+	_ = mitaProxyStart(mitaPath)
 }

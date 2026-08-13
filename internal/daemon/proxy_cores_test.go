@@ -148,6 +148,29 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+func TestMergeMitaInstanceConfigsUnionsUsersAndPorts(t *testing.T) {
+	dir := t.TempDir()
+	a := []byte(`{"portBindings":[{"port":8964,"protocol":"TCP"}],"users":[{"name":"u1","password":"p1"}],"loggingLevel":"INFO"}`)
+	b := []byte(`{"portBindings":[{"port":9000,"protocol":"TCP"},{"port":8964,"protocol":"TCP"}],"users":[{"name":"u2","password":"p2"}],"loggingLevel":"INFO"}`)
+	if err := os.WriteFile(filepath.Join(dir, "instance-1.json"), a, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "instance-2.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mergeMitaInstanceConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"u1"`) || !strings.Contains(s, `"u2"`) {
+		t.Fatalf("want both users: %s", s)
+	}
+	if !strings.Contains(s, "8964") || !strings.Contains(s, "9000") {
+		t.Fatalf("want both ports: %s", s)
+	}
+}
+
 func TestSameCoreConfigFileIgnoresWhitespace(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "c.json")

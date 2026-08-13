@@ -8,7 +8,7 @@ import { PageHeader, Panel } from '../../components/page'
 
 const STATUS_MAP = {
   draft: { label: '草稿', color: 'gray' },
-  ready: { label: '全部就绪', color: 'green' },
+  ready: { label: '部署完成', color: 'green' },
   partial: { label: '部分就绪', color: 'amber' },
   error: { label: '异常', color: 'red' },
 }

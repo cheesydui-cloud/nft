@@ -46,22 +46,22 @@ type VLESSConfig struct {
 	TcpFastOpen bool `json:"tcp_fast_open,omitempty"`
 	// Transport extras (ws / httpupgrade / xhttp / grpc)
 	Path        string `json:"path"`
-	Host        string `json:"host"`         // Host header / authority
+	Host        string `json:"host"` // Host header / authority
 	SpiderX     string `json:"spider_x"`
 	XHTTPMode   string `json:"xhttp_mode"`   // auto | packet-up | stream-up | stream-one
 	ServiceName string `json:"service_name"` // gRPC service name
-		// TLS fields (security=tls)
-		ALPN          string `json:"alpn"`           // e.g. "h2,http/1.1"
-		AllowInsecure bool   `json:"allow_insecure"` // client skip verify (URI only)
-		CertPEM       string `json:"cert_pem"`       // server certificate PEM
-		KeyPEM        string `json:"key_pem"`        // server private key PEM
-		// CertID references tls_certificates vault; panel resolves to PEM before deploy.
-		CertID int64 `json:"cert_id,omitempty"`
-		// Deploy-only: absolute paths written by agent before BuildXrayVLESSConfig.
-		// Not set by panel; never required in config_json from API.
-		CertFile string `json:"cert_file,omitempty"`
-		KeyFile  string `json:"key_file,omitempty"`
-	}
+	// TLS fields (security=tls)
+	ALPN          string `json:"alpn"`           // e.g. "h2,http/1.1"
+	AllowInsecure bool   `json:"allow_insecure"` // client skip verify (URI only)
+	CertPEM       string `json:"cert_pem"`       // server certificate PEM
+	KeyPEM        string `json:"key_pem"`        // server private key PEM
+	// CertID references tls_certificates vault; panel resolves to PEM before deploy.
+	CertID int64 `json:"cert_id,omitempty"`
+	// Deploy-only: absolute paths written by agent before BuildXrayVLESSConfig.
+	// Not set by panel; never required in config_json from API.
+	CertFile string `json:"cert_file,omitempty"`
+	KeyFile  string `json:"key_file,omitempty"`
+}
 
 // NetworksForSecurity returns allowed transport networks for a security mode.
 func NetworksForSecurity(security string) []string {
@@ -170,131 +170,131 @@ func ValidateVLESSDeploy(c *VLESSConfig) error {
 }
 
 // SSConfig is Shadowsocks / SS2022 (sing-box) config.
-	// Aligned with common production sing-box SS deploys (e.g. yyds install script):
-	// dual-stack listen, optional NTP, multiplex / TFO / sniff.
-	type SSConfig struct {
-		ListenPort int    `json:"listen_port"`
-		ShareHost  string `json:"share_host"`
-		Method     string `json:"method"`
-		Password   string `json:"password"`
-		// Listen address for sing-box inbound. Empty → "::" (dual-stack, yyds-style).
-		// Use "0.0.0.0" for IPv4-only when the host has no IPv6.
-		Listen string `json:"listen,omitempty"`
-		// NTP keeps server clock accurate (LE/SS2022 less sensitive but good practice).
-		// nil / omitted → enabled by default in BuildSingBoxSSConfig.
-		NTP *bool `json:"ntp,omitempty"`
-		// Multiplex enables sing-box inbound multiplex (smux).
-		Multiplex bool `json:"multiplex,omitempty"`
-		// TCPFastOpen sets sockopt tcp_fast_open when supported.
-		TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
-		// Sniffing enables inbound sniff (default true when nil).
-		Sniffing *bool `json:"sniffing,omitempty"`
-		SubVisible bool `json:"sub_visible"`
-	}
+// Aligned with common production sing-box SS deploys (e.g. yyds install script):
+// dual-stack listen, optional NTP, multiplex / TFO / sniff.
+type SSConfig struct {
+	ListenPort int    `json:"listen_port"`
+	ShareHost  string `json:"share_host"`
+	Method     string `json:"method"`
+	Password   string `json:"password"`
+	// Listen address for sing-box inbound. Empty → "::" (dual-stack, yyds-style).
+	// Use "0.0.0.0" for IPv4-only when the host has no IPv6.
+	Listen string `json:"listen,omitempty"`
+	// NTP keeps server clock accurate (LE/SS2022 less sensitive but good practice).
+	// nil / omitted → enabled by default in BuildSingBoxSSConfig.
+	NTP *bool `json:"ntp,omitempty"`
+	// Multiplex enables sing-box inbound multiplex (smux).
+	Multiplex bool `json:"multiplex,omitempty"`
+	// TCPFastOpen sets sockopt tcp_fast_open when supported.
+	TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
+	// Sniffing enables inbound sniff (default true when nil).
+	Sniffing   *bool `json:"sniffing,omitempty"`
+	SubVisible bool  `json:"sub_visible"`
+}
 
-	// SSMethods lists supported ciphers for Wizard / validation.
-	// Prefer SS2022 (blake3); legacy AEAD kept for older clients.
-	var SSMethods = []string{
-		"2022-blake3-aes-128-gcm",
-		"2022-blake3-aes-256-gcm",
-		"2022-blake3-chacha20-poly1305",
-		"aes-128-gcm",
-		"aes-256-gcm",
-		"chacha20-ietf-poly1305",
-	}
+// SSMethods lists supported ciphers for Wizard / validation.
+// Prefer SS2022 (blake3); legacy AEAD kept for older clients.
+var SSMethods = []string{
+	"2022-blake3-aes-128-gcm",
+	"2022-blake3-aes-256-gcm",
+	"2022-blake3-chacha20-poly1305",
+	"aes-128-gcm",
+	"aes-256-gcm",
+	"chacha20-ietf-poly1305",
+}
 
-	// NormalizeSSMethod returns a known method or the default SS2022-128.
-	func NormalizeSSMethod(m string) string {
-		m = strings.TrimSpace(strings.ToLower(m))
-		if m == "" {
-			return "2022-blake3-aes-128-gcm"
-		}
-		for _, known := range SSMethods {
-			if m == known {
-				return known
-			}
-		}
-		// Accept any non-empty method sing-box may support; wizard only offers SSMethods.
-		return m
+// NormalizeSSMethod returns a known method or the default SS2022-128.
+func NormalizeSSMethod(m string) string {
+	m = strings.TrimSpace(strings.ToLower(m))
+	if m == "" {
+		return "2022-blake3-aes-128-gcm"
 	}
-
-	// SSPasswordBytes returns the recommended random key length in bytes for method.
-	// SS2022-128 → 16; SS2022-256 / chacha20 → 32; legacy AEAD → 16.
-	func SSPasswordBytes(method string) int {
-		m := strings.ToLower(strings.TrimSpace(method))
-		switch {
-		case strings.Contains(m, "256"), strings.Contains(m, "chacha20"):
-			return 32
-		default:
-			return 16
+	for _, known := range SSMethods {
+		if m == known {
+			return known
 		}
 	}
+	// Accept any non-empty method sing-box may support; wizard only offers SSMethods.
+	return m
+}
 
-	// GenerateSSPassword returns a std base64 random key sized for method.
-	func GenerateSSPassword(method string) string {
-		return randomB64Std(SSPasswordBytes(method))
+// SSPasswordBytes returns the recommended random key length in bytes for method.
+// SS2022-128 → 16; SS2022-256 / chacha20 → 32; legacy AEAD → 16.
+func SSPasswordBytes(method string) int {
+	m := strings.ToLower(strings.TrimSpace(method))
+	switch {
+	case strings.Contains(m, "256"), strings.Contains(m, "chacha20"):
+		return 32
+	default:
+		return 16
 	}
+}
 
-	// ValidateSSDeploy checks method/password before publish.
-	func ValidateSSDeploy(c *SSConfig) error {
-		if c == nil {
-			return fmt.Errorf("ss config nil")
-		}
-		method := NormalizeSSMethod(c.Method)
-		if c.Password == "" {
-			return fmt.Errorf("Shadowsocks 密码未配置")
-		}
-		// Soft check: SS2022 keys should be valid base64 of expected length.
-		if strings.HasPrefix(method, "2022-") {
-			raw, err := base64.StdEncoding.DecodeString(c.Password)
-			if err != nil {
-				// try raw URL encoding without padding
-				raw, err = base64.RawStdEncoding.DecodeString(c.Password)
-			}
-			if err != nil {
-				return fmt.Errorf("SS2022 密码须为 base64 密钥材料: %w", err)
-			}
-			want := SSPasswordBytes(method)
-			if len(raw) != want {
-				return fmt.Errorf("SS2022 method %s 需要 %d 字节密钥（当前 %d 字节 base64 解码后）", method, want, len(raw))
-			}
-		}
-		return nil
+// GenerateSSPassword returns a std base64 random key sized for method.
+func GenerateSSPassword(method string) string {
+	return randomB64Std(SSPasswordBytes(method))
+}
+
+// ValidateSSDeploy checks method/password before publish.
+func ValidateSSDeploy(c *SSConfig) error {
+	if c == nil {
+		return fmt.Errorf("ss config nil")
 	}
-
-	// DefaultMieruListenPort is in the official mita range (1025–65535).
-	// 443 is rejected by current mita apply ("ports must fall in 1025-65535").
-	const DefaultMieruListenPort = 8964
-
-	// MieruConfig matches the Weir mieru form.
-	type MieruConfig struct {
-		ListenPort          int      `json:"listen_port"`
-		ShareHost           string   `json:"share_host"`
-		Transports          []string `json:"transports"`
-		TrafficPattern      string   `json:"traffic_pattern"`
-		UserHintIsMandatory bool     `json:"user_hint_is_mandatory"`
-		Username            string   `json:"username"`
-		Password            string   `json:"password"`
-		SubVisible          bool     `json:"sub_visible"`
+	method := NormalizeSSMethod(c.Method)
+	if c.Password == "" {
+		return fmt.Errorf("Shadowsocks 密码未配置")
 	}
-
-	// ValidateMieruDeploy checks fields required to publish mieru/mita.
-	func ValidateMieruDeploy(c *MieruConfig, listenPort int) error {
-		if c == nil {
-			return fmt.Errorf("mieru config nil")
+	// Soft check: SS2022 keys should be valid base64 of expected length.
+	if strings.HasPrefix(method, "2022-") {
+		raw, err := base64.StdEncoding.DecodeString(c.Password)
+		if err != nil {
+			// try raw URL encoding without padding
+			raw, err = base64.RawStdEncoding.DecodeString(c.Password)
 		}
-		port := listenPort
-		if port <= 0 {
-			port = c.ListenPort
+		if err != nil {
+			return fmt.Errorf("SS2022 密码须为 base64 密钥材料: %w", err)
 		}
-		if port < 1025 || port > 65535 {
-			return fmt.Errorf("mieru 监听端口须为 1025–65535（当前 %d）。官方 mita 拒绝 443 等特权端口，请改成例如 %d 后重新发布", port, DefaultMieruListenPort)
+		want := SSPasswordBytes(method)
+		if len(raw) != want {
+			return fmt.Errorf("SS2022 method %s 需要 %d 字节密钥（当前 %d 字节 base64 解码后）", method, want, len(raw))
 		}
-		if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
-			return fmt.Errorf("mieru 用户名/密码未配置")
-		}
-		return nil
 	}
+	return nil
+}
+
+// DefaultMieruListenPort is in the official mita range (1025–65535).
+// 443 is rejected by current mita apply ("ports must fall in 1025-65535").
+const DefaultMieruListenPort = 8964
+
+// MieruConfig matches the Weir mieru form.
+type MieruConfig struct {
+	ListenPort          int      `json:"listen_port"`
+	ShareHost           string   `json:"share_host"`
+	Transports          []string `json:"transports"`
+	TrafficPattern      string   `json:"traffic_pattern"`
+	UserHintIsMandatory bool     `json:"user_hint_is_mandatory"`
+	Username            string   `json:"username"`
+	Password            string   `json:"password"`
+	SubVisible          bool     `json:"sub_visible"`
+}
+
+// ValidateMieruDeploy checks fields required to publish mieru/mita.
+func ValidateMieruDeploy(c *MieruConfig, listenPort int) error {
+	if c == nil {
+		return fmt.Errorf("mieru config nil")
+	}
+	port := listenPort
+	if port <= 0 {
+		port = c.ListenPort
+	}
+	if port < 1025 || port > 65535 {
+		return fmt.Errorf("mieru 监听端口须为 1025–65535（当前 %d）。官方 mita 拒绝 443 等特权端口，请改成例如 %d 后重新发布", port, DefaultMieruListenPort)
+	}
+	if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+		return fmt.Errorf("mieru 用户名/密码未配置")
+	}
+	return nil
+}
 
 // Socks5Config is sing-box socks inbound (standard SOCKS5 server).
 // Share: socks5://user:pass@host:port#name  or socks5://host:port when auth_mode=none.
@@ -461,100 +461,100 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 		if c.ServerPort <= 0 {
 			c.ServerPort = 443
 		}
-			if c.Fingerprint == "" {
-				c.Fingerprint = "chrome"
+		if c.Fingerprint == "" {
+			c.Fingerprint = "chrome"
+		}
+		c.Security = NormalizeSecurity(c.Security)
+		c.Network = NormalizeNetwork(c.Network)
+		if !NetworkAllowed(c.Security, c.Network) {
+			// Soft-correct illegal combo (e.g. old ws+reality) back to tcp.
+			c.Network = "tcp"
+		}
+		// flow: "none" / "off" / "关" = explicitly disabled; empty = default vision when allowed
+		switch strings.ToLower(strings.TrimSpace(c.Flow)) {
+		case "none", "off", "关", "-":
+			c.Flow = ""
+		case "":
+			if VisionAllowed(c.Security, c.Network) {
+				c.Flow = "xtls-rprx-vision"
 			}
-			c.Security = NormalizeSecurity(c.Security)
-			c.Network = NormalizeNetwork(c.Network)
-			if !NetworkAllowed(c.Security, c.Network) {
-				// Soft-correct illegal combo (e.g. old ws+reality) back to tcp.
-				c.Network = "tcp"
-			}
-			// flow: "none" / "off" / "关" = explicitly disabled; empty = default vision when allowed
-			switch strings.ToLower(strings.TrimSpace(c.Flow)) {
-			case "none", "off", "关", "-":
+		default:
+			if !VisionAllowed(c.Security, c.Network) {
 				c.Flow = ""
-			case "":
-				if VisionAllowed(c.Security, c.Network) {
-					c.Flow = "xtls-rprx-vision"
-				}
-			default:
-				if !VisionAllowed(c.Security, c.Network) {
-					c.Flow = ""
-				}
 			}
-			switch c.Security {
-			case "reality":
-				// Always keep private/public as a matched pair. Partial fill used to
-				// generate only the missing side and break client handshakes.
-				if c.PrivateKey == "" || c.PublicKey == "" {
-					priv, pub := GenerateRealityKeyPair()
-					c.PrivateKey = priv
-					c.PublicKey = pub
-				}
-				if c.ShortID == "" {
-					c.ShortID = randomHex(8)
-				}
-			case "tls":
-				// TLS uses cert_pem/key_pem; do not auto-generate REALITY keys.
-			case "none":
-				// plain: no keys required
+		}
+		switch c.Security {
+		case "reality":
+			// Always keep private/public as a matched pair. Partial fill used to
+			// generate only the missing side and break client handshakes.
+			if c.PrivateKey == "" || c.PublicKey == "" {
+				priv, pub := GenerateRealityKeyPair()
+				c.PrivateKey = priv
+				c.PublicKey = pub
 			}
-			// xray vlessenc / paste often wraps material in quotes — strip so share URI
-			// and server config stay in sync (quoted encryption breaks clients).
-			// Also auto-swap if user/panel put client (0rtt) into decryption and server (600s) into encryption.
-			c.Encryption = normalizeVLESSEncToken(c.Encryption)
-			c.Decryption = normalizeVLESSEncToken(c.Decryption)
-			c.Encryption, c.Decryption = alignVLESSEncPair(c.Encryption, c.Decryption)
-			if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
-				c.Path = "/"
+			if c.ShortID == "" {
+				c.ShortID = randomHex(8)
 			}
-			if c.XHTTPMode == "" && c.Network == "xhttp" {
-				c.XHTTPMode = "auto"
-			}
-			if c.ServiceName == "" && c.Network == "grpc" {
-				c.ServiceName = "GunService"
-			}
-			return json.Marshal(c)
-		case "shadowsocks", "ss":
-			var c SSConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return nil, err
-			}
-			if c.ListenPort <= 0 {
-				c.ListenPort = 443
-			}
-			c.Method = NormalizeSSMethod(c.Method)
-			if c.Password == "" {
-				c.Password = GenerateSSPassword(c.Method)
-			}
-			// Default dual-stack listen (yyds / production sing-box SS).
-			if strings.TrimSpace(c.Listen) == "" {
-				c.Listen = "::"
-			}
-			return json.Marshal(c)
-		case "mieru":
-			var c MieruConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return nil, err
-			}
-			if c.ListenPort <= 0 {
-				// Official mita rejects ports below 1025 (443 is invalid).
-				c.ListenPort = DefaultMieruListenPort
-			}
-			if len(c.Transports) == 0 {
-				// TCP-only default: UDP share makes Clash/some clients
-				// sit on UDP, which dies behind NAT while panel TCP
-				// probe still looks green. Operators can still tick UDP.
-				c.Transports = []string{"TCP"}
-			}
-			if c.Username == "" {
-				c.Username = "u" + randomHex(4)
-			}
-			if c.Password == "" {
-				c.Password = randomHex(12)
-			}
-			return json.Marshal(c)
+		case "tls":
+			// TLS uses cert_pem/key_pem; do not auto-generate REALITY keys.
+		case "none":
+			// plain: no keys required
+		}
+		// xray vlessenc / paste often wraps material in quotes — strip so share URI
+		// and server config stay in sync (quoted encryption breaks clients).
+		// Also auto-swap if user/panel put client (0rtt) into decryption and server (600s) into encryption.
+		c.Encryption = normalizeVLESSEncToken(c.Encryption)
+		c.Decryption = normalizeVLESSEncToken(c.Decryption)
+		c.Encryption, c.Decryption = alignVLESSEncPair(c.Encryption, c.Decryption)
+		if c.Path == "" && (c.Network == "ws" || c.Network == "httpupgrade" || c.Network == "xhttp") {
+			c.Path = "/"
+		}
+		if c.XHTTPMode == "" && c.Network == "xhttp" {
+			c.XHTTPMode = "auto"
+		}
+		if c.ServiceName == "" && c.Network == "grpc" {
+			c.ServiceName = "GunService"
+		}
+		return json.Marshal(c)
+	case "shadowsocks", "ss":
+		var c SSConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return nil, err
+		}
+		if c.ListenPort <= 0 {
+			c.ListenPort = 443
+		}
+		c.Method = NormalizeSSMethod(c.Method)
+		if c.Password == "" {
+			c.Password = GenerateSSPassword(c.Method)
+		}
+		// Default dual-stack listen (yyds / production sing-box SS).
+		if strings.TrimSpace(c.Listen) == "" {
+			c.Listen = "::"
+		}
+		return json.Marshal(c)
+	case "mieru":
+		var c MieruConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return nil, err
+		}
+		if c.ListenPort <= 0 {
+			// Official mita rejects ports below 1025 (443 is invalid).
+			c.ListenPort = DefaultMieruListenPort
+		}
+		if len(c.Transports) == 0 {
+			// TCP-only default: UDP share makes Clash/some clients
+			// sit on UDP, which dies behind NAT while panel TCP
+			// probe still looks green. Operators can still tick UDP.
+			c.Transports = []string{"TCP"}
+		}
+		if c.Username == "" {
+			c.Username = "u" + randomHex(4)
+		}
+		if c.Password == "" {
+			c.Password = randomHex(12)
+		}
+		return json.Marshal(c)
 	case "socks5", "socks":
 		var c Socks5Config
 		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
@@ -655,72 +655,72 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			return "", fmt.Errorf("vless uuid missing")
 		}
 		q := url.Values{}
-			// encryption: none unless ML-KEM / vlessenc material provided.
-			// Align against decryption so a swapped pair still exports the client (0rtt) string.
-			enc, _ := alignVLESSEncPair(c.Encryption, c.Decryption)
-			enc = normalizeVLESSEncToken(enc)
-			if enc != "" && !strings.EqualFold(enc, "none") {
-				q.Set("encryption", enc)
-			} else {
-				q.Set("encryption", "none")
-			}
+		// encryption: none unless ML-KEM / vlessenc material provided.
+		// Align against decryption so a swapped pair still exports the client (0rtt) string.
+		enc, _ := alignVLESSEncPair(c.Encryption, c.Decryption)
+		enc = normalizeVLESSEncToken(enc)
+		if enc != "" && !strings.EqualFold(enc, "none") {
+			q.Set("encryption", enc)
+		} else {
+			q.Set("encryption", "none")
+		}
 		if c.Flow != "" {
 			q.Set("flow", c.Flow)
 		}
-			sec := NormalizeSecurity(c.Security)
-			q.Set("security", sec)
-			network := NormalizeNetwork(c.Network)
-			q.Set("type", network)
-			if c.Fingerprint != "" && (sec == "reality" || sec == "tls") {
-				q.Set("fp", c.Fingerprint)
+		sec := NormalizeSecurity(c.Security)
+		q.Set("security", sec)
+		network := NormalizeNetwork(c.Network)
+		q.Set("type", network)
+		if c.Fingerprint != "" && (sec == "reality" || sec == "tls") {
+			q.Set("fp", c.Fingerprint)
+		}
+		if sec == "reality" || sec == "tls" {
+			if c.ServerName != "" {
+				q.Set("sni", c.ServerName)
 			}
-			if sec == "reality" || sec == "tls" {
-				if c.ServerName != "" {
-					q.Set("sni", c.ServerName)
-				}
+		}
+		if sec == "tls" {
+			if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
+				q.Set("alpn", alpn)
 			}
-			if sec == "tls" {
-				if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
-					q.Set("alpn", alpn)
-				}
-				if c.AllowInsecure {
-					q.Set("allowInsecure", "1")
-				}
+			if c.AllowInsecure {
+				q.Set("allowInsecure", "1")
 			}
-			if sec == "reality" {
-				if c.PublicKey != "" {
-					q.Set("pbk", c.PublicKey)
-				}
-				if c.ShortID != "" {
-					q.Set("sid", c.ShortID)
-				}
-				if c.SpiderX != "" {
-					q.Set("spx", c.SpiderX)
-				}
+		}
+		if sec == "reality" {
+			if c.PublicKey != "" {
+				q.Set("pbk", c.PublicKey)
 			}
-			// Transport-specific client params
-			switch network {
-			case "ws", "httpupgrade", "xhttp", "http":
-				if c.Path != "" {
-					q.Set("path", c.Path)
-				}
-				if c.Host != "" {
-					q.Set("host", c.Host)
-				}
-				if network == "xhttp" && c.XHTTPMode != "" {
-					q.Set("mode", c.XHTTPMode)
-				}
-			case "grpc":
-				svcName := strings.TrimSpace(c.ServiceName)
-				if svcName == "" {
-					svcName = "GunService"
-				}
-				q.Set("serviceName", svcName)
-				// Some clients also read path as service name
-				if c.Path != "" && c.Path != "/" {
-					q.Set("path", c.Path)
-				}
+			if c.ShortID != "" {
+				q.Set("sid", c.ShortID)
 			}
+			if c.SpiderX != "" {
+				q.Set("spx", c.SpiderX)
+			}
+		}
+		// Transport-specific client params
+		switch network {
+		case "ws", "httpupgrade", "xhttp", "http":
+			if c.Path != "" {
+				q.Set("path", c.Path)
+			}
+			if c.Host != "" {
+				q.Set("host", c.Host)
+			}
+			if network == "xhttp" && c.XHTTPMode != "" {
+				q.Set("mode", c.XHTTPMode)
+			}
+		case "grpc":
+			svcName := strings.TrimSpace(c.ServiceName)
+			if svcName == "" {
+				svcName = "GunService"
+			}
+			q.Set("serviceName", svcName)
+			// Some clients also read path as service name
+			if c.Path != "" && c.Path != "/" {
+				q.Set("path", c.Path)
+			}
+		}
 		u := url.URL{
 			Scheme:   "vless",
 			User:     url.User(c.UUID),
@@ -737,144 +737,157 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 		if c.Method == "" || c.Password == "" {
 			return "", fmt.Errorf("ss method/password missing")
 		}
-		userinfo := base64.StdEncoding.EncodeToString([]byte(c.Method + ":" + c.Password))
-		u := &url.URL{
-			Scheme:   "ss",
-			User:     url.User(userinfo),
+		// SIP002: ss://base64url(method:password)@host:port#name
+		// Must be RawURLEncoding (no padding) and must NOT go through
+		// url.User — that percent-encodes '/' as %2F, and many clients
+		// (Clash / Shadowrocket / sing-box) then fail to decode the
+		// userinfo. SS2022 keys are std-base64 and frequently contain '/'.
+		userinfo := base64.RawURLEncoding.EncodeToString([]byte(c.Method + ":" + c.Password))
+		out := "ss://" + userinfo + "@" + net.JoinHostPort(host, strconv.Itoa(listenPort))
+		if name != "" {
+			out += "#" + url.PathEscape(name)
+		}
+		return out, nil
+	case "mieru":
+		var c MieruConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return "", err
+		}
+		if c.Username == "" || c.Password == "" {
+			return "", fmt.Errorf("mieru username/password missing")
+		}
+		if strings.ContainsAny(c.Username, ":@/?#") || strings.ContainsAny(c.Password, "@/?#") {
+			return "", fmt.Errorf("mieru 用户名/密码含非法字符（:@/?#），请重新生成")
+		}
+		profile := name
+		if profile == "" {
+			profile = "default"
+		}
+		transports := c.Transports
+		if len(transports) == 0 {
+			transports = []string{"TCP"}
+		}
+		// Official simple share pairs port/protocol by appearance order
+		// (profile&port=P&protocol=TCP). url.Values.Encode sorts keys
+		// and groups all port= before protocol=, which some clients
+		// fail to pair. Build the query in official order.
+		var q strings.Builder
+		q.WriteString("profile=")
+		q.WriteString(url.QueryEscape(profile))
+		wroteProto := false
+		for _, t := range transports {
+			proto := strings.ToUpper(strings.TrimSpace(t))
+			if proto == "" {
+				continue
+			}
+			q.WriteString("&port=")
+			q.WriteString(strconv.Itoa(listenPort))
+			q.WriteString("&protocol=")
+			q.WriteString(url.QueryEscape(proto))
+			wroteProto = true
+		}
+		if !wroteProto {
+			q.WriteString("&port=")
+			q.WriteString(strconv.Itoa(listenPort))
+			q.WriteString("&protocol=TCP")
+		}
+		if c.TrafficPattern != "" {
+			q.WriteString("&traffic-pattern=")
+			q.WriteString(url.QueryEscape(c.TrafficPattern))
+		}
+		u := url.URL{
+			Scheme:   "mierus",
+			User:     url.UserPassword(c.Username, c.Password),
+			Host:     shareHostAuthority(host),
+			RawQuery: q.String(),
+		}
+		return u.String(), nil
+	case "socks5", "socks":
+		var c Socks5Config
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return "", err
+		}
+		mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
+		if mode == "" {
+			mode = "password"
+		}
+		u := url.URL{
+			Scheme:   "socks5",
 			Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
 			Fragment: name,
 		}
-		return u.String(), nil
-		case "mieru":
-			var c MieruConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return "", err
-			}
-			if c.Username == "" || c.Password == "" {
-				return "", fmt.Errorf("mieru username/password missing")
-			}
-			profile := name
-			if profile == "" {
-				profile = "default"
-			}
-			transports := c.Transports
-			if len(transports) == 0 {
-				transports = []string{"TCP", "UDP"}
-			}
-			// Official simple share pairs port/protocol by appearance order
-			// (profile&port=P&protocol=TCP&port=P&protocol=UDP). url.Values.Encode
-			// sorts keys and groups all port= before protocol=, which some
-			// clients fail to pair. Build the query in official order.
-			var q strings.Builder
-			q.WriteString("profile=")
-			q.WriteString(url.QueryEscape(profile))
-			for _, t := range transports {
-				proto := strings.ToUpper(strings.TrimSpace(t))
-				if proto == "" {
-					continue
-				}
-				q.WriteString("&port=")
-				q.WriteString(strconv.Itoa(listenPort))
-				q.WriteString("&protocol=")
-				q.WriteString(url.QueryEscape(proto))
-			}
-			if c.TrafficPattern != "" {
-				q.WriteString("&traffic-pattern=")
-				q.WriteString(url.QueryEscape(c.TrafficPattern))
-			}
-			u := url.URL{
-				Scheme:   "mierus",
-				User:     url.UserPassword(c.Username, c.Password),
-				Host:     host,
-				RawQuery: q.String(),
-			}
-			return u.String(), nil
-	case "socks5", "socks":
-			var c Socks5Config
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return "", err
-			}
-			mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
-			if mode == "" {
-				mode = "password"
-			}
-			u := url.URL{
-				Scheme:   "socks5",
-				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
-				Fragment: name,
-			}
-			if mode == "password" {
-				if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
-					return "", fmt.Errorf("socks5 username/password missing")
-				}
-				u.User = url.UserPassword(c.Username, c.Password)
-			}
-			return u.String(), nil
-		case "anytls":
-			var c AnyTLSConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return "", err
-			}
-			if strings.TrimSpace(c.Password) == "" {
-				return "", fmt.Errorf("anytls password missing")
-			}
-			q := url.Values{}
-			if sn := strings.TrimSpace(c.ServerName); sn != "" {
-				q.Set("sni", sn)
-			}
-			fp := strings.TrimSpace(c.Fingerprint)
-			if fp == "" {
-				fp = "chrome"
-			}
-			q.Set("fp", fp)
-			if c.AllowInsecure {
-				q.Set("insecure", "1")
-			}
-			if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
-				q.Set("alpn", alpn)
-			}
-			u := url.URL{
-				Scheme:   "anytls",
-				User:     url.User(c.Password),
-				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
-				RawQuery: q.Encode(),
-				Fragment: name,
-			}
-			return u.String(), nil
-		case "naive", "naiveproxy":
-			var c NaiveConfig
-			if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-				return "", err
-			}
+		if mode == "password" {
 			if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
-				return "", fmt.Errorf("naive username/password missing")
+				return "", fmt.Errorf("socks5 username/password missing")
 			}
-			// udp-only → quic; otherwise https (tcp or both).
-			scheme := "naive+https"
-			if strings.EqualFold(strings.TrimSpace(c.Network), "udp") {
-				scheme = "naive+quic"
-			}
-			u := url.URL{
-				Scheme:   scheme,
-				User:     url.UserPassword(c.Username, c.Password),
-				Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
-				Fragment: name,
-			}
-			q := url.Values{}
-			if sn := strings.TrimSpace(c.ServerName); sn != "" {
-				q.Set("sni", sn)
-			}
-			if c.AllowInsecure {
-				q.Set("insecure", "1")
-			}
-			if s := q.Encode(); s != "" {
-				u.RawQuery = s
-			}
-			return u.String(), nil
-		default:
-			return "", fmt.Errorf("unknown protocol %s", protocol)
+			u.User = url.UserPassword(c.Username, c.Password)
 		}
+		return u.String(), nil
+	case "anytls":
+		var c AnyTLSConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(c.Password) == "" {
+			return "", fmt.Errorf("anytls password missing")
+		}
+		q := url.Values{}
+		if sn := strings.TrimSpace(c.ServerName); sn != "" {
+			q.Set("sni", sn)
+		}
+		fp := strings.TrimSpace(c.Fingerprint)
+		if fp == "" {
+			fp = "chrome"
+		}
+		q.Set("fp", fp)
+		if c.AllowInsecure {
+			q.Set("insecure", "1")
+		}
+		if alpn := strings.TrimSpace(c.ALPN); alpn != "" {
+			q.Set("alpn", alpn)
+		}
+		u := url.URL{
+			Scheme:   "anytls",
+			User:     url.User(c.Password),
+			Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
+			RawQuery: q.Encode(),
+			Fragment: name,
+		}
+		return u.String(), nil
+	case "naive", "naiveproxy":
+		var c NaiveConfig
+		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(c.Username) == "" || strings.TrimSpace(c.Password) == "" {
+			return "", fmt.Errorf("naive username/password missing")
+		}
+		// udp-only → quic; otherwise https (tcp or both).
+		scheme := "naive+https"
+		if strings.EqualFold(strings.TrimSpace(c.Network), "udp") {
+			scheme = "naive+quic"
+		}
+		u := url.URL{
+			Scheme:   scheme,
+			User:     url.UserPassword(c.Username, c.Password),
+			Host:     net.JoinHostPort(host, strconv.Itoa(listenPort)),
+			Fragment: name,
+		}
+		q := url.Values{}
+		if sn := strings.TrimSpace(c.ServerName); sn != "" {
+			q.Set("sni", sn)
+		}
+		if c.AllowInsecure {
+			q.Set("insecure", "1")
+		}
+		if s := q.Encode(); s != "" {
+			u.RawQuery = s
+		}
+		return u.String(), nil
+	default:
+		return "", fmt.Errorf("unknown protocol %s", protocol)
 	}
+}
 
 // ListenPortFromConfig extracts default listen port from config JSON.
 func ListenPortFromConfig(raw json.RawMessage) int {
@@ -893,6 +906,22 @@ func ListenPortFromConfig(raw json.RawMessage) int {
 		}
 	}
 	return 443
+}
+
+// shareHostAuthority puts IPv6 literals in brackets for URL Host (no port).
+// Official mierus:// keeps the listen port in the query, so Host is host-only.
+func shareHostAuthority(host string) string {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return h
+	}
+	if strings.HasPrefix(h, "[") {
+		return h
+	}
+	if ip := net.ParseIP(h); ip != nil && ip.To4() == nil {
+		return "[" + h + "]"
+	}
+	return h
 }
 
 // ShareHostFromConfig returns optional share_host override from config.

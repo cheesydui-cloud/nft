@@ -1,7 +1,6 @@
 package subexport
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
@@ -46,9 +45,7 @@ func ssToSR(rest, forceName string) string {
 	var port int
 	if at := strings.LastIndex(rest, "@"); at >= 0 {
 		userinfo := rest[:at]
-		if dec, err := base64.StdEncoding.DecodeString(padB64(userinfo)); err == nil {
-			userinfo = string(dec)
-		} else if dec, err := base64.RawStdEncoding.DecodeString(userinfo); err == nil {
+		if dec, ok := decodeSSUserinfo(userinfo); ok {
 			userinfo = string(dec)
 		}
 		colon := strings.Index(userinfo, ":")
@@ -107,18 +104,18 @@ func vlessToSR(rest, forceName string) string {
 	parts := []string{
 		fmt.Sprintf("%s = vless, %s, %d, %s", escapeSRName(name), host, port, uuid),
 	}
-		if sec := params["security"]; sec == "reality" || sec == "tls" {
-			parts = append(parts, "tls=true")
-		}
-		if sni := params["sni"]; sni != "" {
-			parts = append(parts, "peer="+sni)
-		}
-		if alpn := params["alpn"]; alpn != "" {
-			parts = append(parts, "alpn="+alpn)
-		}
-		if ai := params["allowInsecure"]; ai == "1" || strings.EqualFold(ai, "true") {
-			parts = append(parts, "allow-insecure=true")
-		}
+	if sec := params["security"]; sec == "reality" || sec == "tls" {
+		parts = append(parts, "tls=true")
+	}
+	if sni := params["sni"]; sni != "" {
+		parts = append(parts, "peer="+sni)
+	}
+	if alpn := params["alpn"]; alpn != "" {
+		parts = append(parts, "alpn="+alpn)
+	}
+	if ai := params["allowInsecure"]; ai == "1" || strings.EqualFold(ai, "true") {
+		parts = append(parts, "allow-insecure=true")
+	}
 	if pbk := params["pbk"]; pbk != "" {
 		parts = append(parts, "public-key="+pbk)
 	}
@@ -128,43 +125,43 @@ func vlessToSR(rest, forceName string) string {
 	if fp := params["fp"]; fp != "" {
 		parts = append(parts, "client-fingerprint="+fp)
 	}
-		if flow := params["flow"]; flow != "" {
-			parts = append(parts, "flow="+flow)
-		}
-		// VLESS Encryption (vlessenc): must mirror URI encryption= when not none.
-		// Older exports dropped this field → Shadowrocket dialed as encryption=none
-		// while server had decryption=mlkem… → TCP OK, proxy dead.
-		if enc := strings.TrimSpace(params["encryption"]); enc != "" && !strings.EqualFold(enc, "none") {
-			// Strip accidental quotes from paste / old generators.
-			for len(enc) >= 2 && ((enc[0] == '"' && enc[len(enc)-1] == '"') || (enc[0] == '\'' && enc[len(enc)-1] == '\'')) {
-				enc = enc[1 : len(enc)-1]
-			}
-			parts = append(parts, "encryption="+enc)
-		}
-		netw := params["type"]
-		if netw == "" {
-			netw = "tcp"
-		}
-		if netw != "tcp" {
-				parts = append(parts, "obfs="+netw)
-				if path := params["path"]; path != "" {
-					parts = append(parts, "obfs-path="+path)
-				}
-				if h := params["host"]; h != "" {
-					parts = append(parts, "obfs-host="+h)
-				}
-				if netw == "grpc" {
-					svc := params["serviceName"]
-					if svc == "" {
-						svc = params["path"]
-					}
-					if svc != "" {
-						parts = append(parts, "obfs-host="+svc)
-					}
-				}
-			}
-		return strings.Join(parts, ", ")
+	if flow := params["flow"]; flow != "" {
+		parts = append(parts, "flow="+flow)
 	}
+	// VLESS Encryption (vlessenc): must mirror URI encryption= when not none.
+	// Older exports dropped this field → Shadowrocket dialed as encryption=none
+	// while server had decryption=mlkem… → TCP OK, proxy dead.
+	if enc := strings.TrimSpace(params["encryption"]); enc != "" && !strings.EqualFold(enc, "none") {
+		// Strip accidental quotes from paste / old generators.
+		for len(enc) >= 2 && ((enc[0] == '"' && enc[len(enc)-1] == '"') || (enc[0] == '\'' && enc[len(enc)-1] == '\'')) {
+			enc = enc[1 : len(enc)-1]
+		}
+		parts = append(parts, "encryption="+enc)
+	}
+	netw := params["type"]
+	if netw == "" {
+		netw = "tcp"
+	}
+	if netw != "tcp" {
+		parts = append(parts, "obfs="+netw)
+		if path := params["path"]; path != "" {
+			parts = append(parts, "obfs-path="+path)
+		}
+		if h := params["host"]; h != "" {
+			parts = append(parts, "obfs-host="+h)
+		}
+		if netw == "grpc" {
+			svc := params["serviceName"]
+			if svc == "" {
+				svc = params["path"]
+			}
+			if svc != "" {
+				parts = append(parts, "obfs-host="+svc)
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
+}
 
 func escapeSRName(name string) string {
 	// Keep simple; strip commas that break conf

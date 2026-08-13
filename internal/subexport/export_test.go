@@ -133,6 +133,23 @@ func TestShadowrocketConf(t *testing.T) {
 	}
 }
 
+func TestSSToClashUnescapesSIP002Slash(t *testing.T) {
+	// Historical panel bug: url.User turned '/' into %2F in userinfo.
+	userinfo := "MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206QUEvQkIrQ0M9PQ" // 2022-blake3-aes-128-gcm:AA/BB+CC==
+	encodedSlash := strings.ReplaceAll(userinfo, "/", "%2F")
+	uri := "ss://" + encodedSlash + "@5.6.7.8:8388#SS1"
+	y := URIToClashProxy(uri, "SS1")
+	if y == "" {
+		t.Fatal("empty clash for percent-encoded SIP002")
+	}
+	if !strings.Contains(y, "type: ss") || !strings.Contains(y, "cipher: 2022-blake3-aes-128-gcm") {
+		t.Fatalf("bad clash:\n%s", y)
+	}
+	if !strings.Contains(y, `password: "AA/BB+CC=="`) {
+		t.Fatalf("password not decoded:\n%s", y)
+	}
+}
+
 func TestURIToClashVLESS(t *testing.T) {
 	uri := "vless://u@1.2.3.4:443?security=reality&sni=a.com&pbk=pk&sid=ab&type=tcp&flow=xtls-rprx-vision#n"
 	y := URIToClashProxy(uri, "n1")

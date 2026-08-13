@@ -144,13 +144,13 @@ function ssToYaml(uri) {
   const at = rest.lastIndexOf('@')
   if (at >= 0) {
     let userinfo = rest.slice(0, at)
-    // Prefer base64(method:password); else plain / percent-decoded method:password
-    const decoded = b64(userinfo)
+    // SIP002: unescape %2F (from url.User) then base64; else plain method:password
+    const unesc = dec(userinfo)
+    const decoded = b64(unesc) || b64(userinfo)
     if (decoded && decoded.includes(':')) {
       userinfo = decoded
-    } else {
-      const plain = dec(userinfo)
-      if (plain.includes(':')) userinfo = plain
+    } else if (unesc.includes(':')) {
+      userinfo = unesc
     }
     const colon = userinfo.indexOf(':')
     if (colon < 0) return null

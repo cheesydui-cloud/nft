@@ -33,28 +33,28 @@ func (s *Server) apiListProxyServices(w http.ResponseWriter, r *http.Request) {
 		LastErrorSample string `json:"last_error_sample,omitempty"`
 	}
 	out := make([]svcOut, 0, len(list))
-		for _, svc := range list {
-			// Redact secrets before embedding in list response.
-			svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
-			row := svcOut{ProxyService: svc}
-			if svc.Status == db.ProxyStatusError || svc.Status == "error" || svc.Status == db.ProxyStatusPartial || svc.Status == "partial" {
-				if inst, err := db.ListProxyInstances(s.DB, svc.ID); err == nil {
-					for _, i := range inst {
-						if strings.TrimSpace(i.LastError) != "" {
-							msg := strings.TrimSpace(i.LastError)
-							if len(msg) > 120 {
-								msg = msg[:120] + "…"
-							}
-							row.LastErrorSample = msg
-							break
+	for _, svc := range list {
+		// Redact secrets before embedding in list response.
+		svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+		row := svcOut{ProxyService: svc}
+		if svc.Status == db.ProxyStatusError || svc.Status == "error" || svc.Status == db.ProxyStatusPartial || svc.Status == "partial" {
+			if inst, err := db.ListProxyInstances(s.DB, svc.ID); err == nil {
+				for _, i := range inst {
+					if strings.TrimSpace(i.LastError) != "" {
+						msg := strings.TrimSpace(i.LastError)
+						if len(msg) > 120 {
+							msg = msg[:120] + "…"
 						}
+						row.LastErrorSample = msg
+						break
 					}
 				}
 			}
-			out = append(out, row)
 		}
-		jsonOK(w, map[string]any{"services": out})
+		out = append(out, row)
 	}
+	jsonOK(w, map[string]any{"services": out})
+}
 
 // apiGetProxyService returns one service with instances.
 func (s *Server) apiGetProxyService(w http.ResponseWriter, r *http.Request) {
@@ -73,19 +73,19 @@ func (s *Server) apiGetProxyService(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-		svc.Instances = inst
-		svc.InstanceCount = len(inst)
-		ready := 0
-		for _, i := range inst {
-			if i.DeployStatus == db.ProxyDeployReady {
-				ready++
-			}
+	svc.Instances = inst
+	svc.InstanceCount = len(inst)
+	ready := 0
+	for _, i := range inst {
+		if i.DeployStatus == db.ProxyDeployReady {
+			ready++
 		}
-		svc.ReadyCount = ready
-		// Redact PEM / private keys for API responses (DB still holds full secrets).
-		svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
-		jsonOK(w, map[string]any{"service": svc})
 	}
+	svc.ReadyCount = ready
+	// Redact PEM / private keys for API responses (DB still holds full secrets).
+	svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+	jsonOK(w, map[string]any{"service": svc})
+}
 
 type proxyServiceBody struct {
 	Name       string          `json:"name"`
@@ -112,16 +112,16 @@ func (s *Server) apiCreateProxyService(w http.ResponseWriter, r *http.Request) {
 	if body.SubVisible != nil {
 		sub = *body.SubVisible
 	}
-		cfg, err := proxysvc.EnsureSecrets(protocol, body.Config)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := validateProxyConfigForSave(protocol, cfg); err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		svc, err := db.CreateProxyService(s.DB, body.Name, protocol, core, cfg, sub)
+	cfg, err := proxysvc.EnsureSecrets(protocol, body.Config)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateProxyConfigForSave(protocol, cfg); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	svc, err := db.CreateProxyService(s.DB, body.Name, protocol, core, cfg, sub)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -151,54 +151,44 @@ func (s *Server) apiUpdateProxyService(w http.ResponseWriter, r *http.Request) {
 		name = svc.Name
 	}
 	cfg := body.Config
-		if len(cfg) == 0 {
-			cfg = svc.ConfigJSON
-		} else {
-			// Preserve PEM/REALITY secrets when client re-submits redacted placeholders.
-			cfg = mergePreservedProxySecrets(svc.Protocol, svc.ConfigJSON, cfg)
-			cfg, err = proxysvc.EnsureSecrets(svc.Protocol, cfg)
-			if err != nil {
-				jsonErr(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			if err := validateProxyConfigForSave(svc.Protocol, cfg); err != nil {
-				jsonErr(w, http.StatusBadRequest, err.Error())
-				return
-			}
+	if len(cfg) == 0 {
+		cfg = svc.ConfigJSON
+	} else {
+		// Preserve PEM/REALITY secrets when client re-submits redacted placeholders.
+		cfg = mergePreservedProxySecrets(svc.Protocol, svc.ConfigJSON, cfg)
+		cfg, err = proxysvc.EnsureSecrets(svc.Protocol, cfg)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
 		}
+		if err := validateProxyConfigForSave(svc.Protocol, cfg); err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	sub := svc.SubVisible
 	if body.SubVisible != nil {
 		sub = *body.SubVisible
 	}
-		if err := db.UpdateProxyService(s.DB, id, name, cfg, sub); err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Rebuild instance share URIs so encryption/decryption/flow changes take effect
-		// without requiring a full re-publish (node still needs re-publish for server config).
-		if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
-			for _, it := range inst {
-				if it == nil || it.ShareHost == "" || it.ListenPort <= 0 {
-					continue
-				}
-				uri, uriErr := proxysvc.BuildShareURI(svc.Protocol, name, it.ShareHost, it.ListenPort, cfg)
-				if uriErr != nil {
-					continue
-				}
-				_ = db.UpdateProxyInstanceURI(s.DB, it.ID, uri)
-			}
-		}
-		svc, _ = db.GetProxyService(s.DB, id)
-			if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
-				svc.Instances = inst
-			}
-			if svc != nil {
-				svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
-			}
-			jsonOK(w, map[string]any{"service": svc})
-		}
+	if err := db.UpdateProxyService(s.DB, id, name, cfg, sub); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Do not rewrite instance share URIs here. EnsureSecrets on PATCH
+	// may mint a new password/uuid; the node still runs the old core
+	// config until publish. Rebuilding the URI would make copy-paste
+	// advertise secrets the inbound does not yet have.
+	svc, _ = db.GetProxyService(s.DB, id)
+	if inst, err := db.ListProxyInstances(s.DB, id); err == nil {
+		svc.Instances = inst
+	}
+	if svc != nil {
+		svc.ConfigJSON = proxysvc.RedactProxyConfigJSON(svc.Protocol, svc.ConfigJSON)
+	}
+	jsonOK(w, map[string]any{"service": svc})
+}
 
-	// apiDeleteProxyService removes a service and instances.
+// apiDeleteProxyService removes a service and instances.
 func (s *Server) apiDeleteProxyService(w http.ResponseWriter, r *http.Request) {
 	id, err := urlParamInt64(r, "id")
 	if err != nil {
@@ -252,25 +242,25 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 	defaultPort := proxysvc.ListenPortFromConfig(svc.ConfigJSON)
 	cfgShare := proxysvc.ShareHostFromConfig(svc.ConfigJSON)
 
-// Ensure secrets present before deploy.
-		cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Expand cert_id vault reference → cert_pem/key_pem for validate + agent.
-		cfg, err = s.resolveProxyConfigCertID(cfg)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Fail fast on illegal config / missing TLS certs before agents.
-		if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
-		svc.ConfigJSON = cfg
+	// Ensure secrets present before deploy.
+	cfg, err := proxysvc.EnsureSecrets(svc.Protocol, svc.ConfigJSON)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Expand cert_id vault reference → cert_pem/key_pem for validate + agent.
+	cfg, err = s.resolveProxyConfigCertID(cfg)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Fail fast on illegal config / missing TLS certs before agents.
+	if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	_ = db.UpdateProxyService(s.DB, id, svc.Name, cfg, svc.SubVisible)
+	svc.ConfigJSON = cfg
 
 	results := make([]map[string]any, 0, len(body.NodeIDs))
 	for _, nodeID := range body.NodeIDs {
@@ -285,7 +275,7 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 		}
 		shareHost := cfgShare
 		if shareHost == "" {
-			shareHost = firstNonEmpty(node.RelayHost, node.Address)
+			shareHost = firstNonEmpty(node.RelayHost, node.RelayHostV6, node.Address)
 			// Address may be "ip:port" from connect — strip port if present.
 			if h, _, err := splitHostPortLoose(shareHost); err == nil && h != "" {
 				shareHost = h
@@ -304,21 +294,21 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-			// Ensure proxy core is on the node (push from panel cache if needed).
-			// VLESS Encryption requires a modern xray; force push so panel-managed
-			// core wins over stale /usr/local/bin packages that accept none but
-			// time out with mlkem768x25519plus decryption.
-			forceCore := body.ForceCore
-			if !forceCore && strings.EqualFold(svc.Protocol, "vless") && proxysvc.NeedsVLESSEnc(cfg) {
-				forceCore = true
-			}
-			if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
-				_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
-				results = append(results, map[string]any{
-					"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
-				})
-				continue
-			}
+		// Ensure proxy core is on the node (push from panel cache if needed).
+		// VLESS Encryption requires a modern xray; force push so panel-managed
+		// core wins over stale /usr/local/bin packages that accept none but
+		// time out with mlkem768x25519plus decryption.
+		forceCore := body.ForceCore
+		if !forceCore && strings.EqualFold(svc.Protocol, "vless") && proxysvc.NeedsVLESSEnc(cfg) {
+			forceCore = true
+		}
+		if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
+			_ = db.UpdateProxyInstanceDeploy(s.DB, inst.ID, db.ProxyDeployError, uri, err.Error(), "")
+			results = append(results, map[string]any{
+				"node_id": nodeID, "ok": false, "uri": uri, "error": err.Error(), "instance_id": inst.ID,
+			})
+			continue
+		}
 
 		// Try live apply on agent.
 		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
@@ -481,22 +471,22 @@ func (s *Server) applyProxyInstance(nodeID int64, svc *db.ProxyService, inst *db
 	if s.Hub == nil || !s.Hub.IsOnline(nodeID) {
 		return applyOutcome{OK: false, Error: "节点离线", DryRun: true}
 	}
-		blockV4, blockV6 := false, false
-		if n, err := db.GetNode(s.DB, nodeID); err == nil && n != nil {
-			blockV4, blockV6 = n.RelayV4Disabled, n.RelayV6Disabled
-		}
-		ack, err := s.Hub.SendProxyServiceApply(nodeID, wsproto.ProxyServiceApply{
-			InstanceID:    inst.ID,
-			ServiceID:     svc.ID,
-			Protocol:      svc.Protocol,
-			Core:          svc.Core,
-			ListenPort:    port,
-			ShareHost:     shareHost,
-			Name:          svc.Name,
-			Config:        cfg,
-			BlockEgressV4: blockV4,
-			BlockEgressV6: blockV6,
-		})
+	blockV4, blockV6 := false, false
+	if n, err := db.GetNode(s.DB, nodeID); err == nil && n != nil {
+		blockV4, blockV6 = n.RelayV4Disabled, n.RelayV6Disabled
+	}
+	ack, err := s.Hub.SendProxyServiceApply(nodeID, wsproto.ProxyServiceApply{
+		InstanceID:    inst.ID,
+		ServiceID:     svc.ID,
+		Protocol:      svc.Protocol,
+		Core:          svc.Core,
+		ListenPort:    port,
+		ShareHost:     shareHost,
+		Name:          svc.Name,
+		Config:        cfg,
+		BlockEgressV4: blockV4,
+		BlockEgressV6: blockV6,
+	})
 	if err != nil {
 		return applyOutcome{OK: false, Error: err.Error(), DryRun: true}
 	}
@@ -695,7 +685,7 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 				if sh == "" {
 					// fall back to node relay host
 					if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
-						sh = firstNonEmpty(n.RelayHost, n.Address)
+						sh = firstNonEmpty(n.RelayHost, n.RelayHostV6, n.Address)
 					}
 				}
 				if sh != "" {
@@ -792,17 +782,17 @@ func (s *Server) apiProbeProxyServiceLatency(w http.ResponseWriter, r *http.Requ
 	if mode == "local" {
 		modeLabel = "节点本机"
 	}
-	summary := fmt.Sprintf("%d/%d 端口可达（%s）", okN, len(results), modeLabel)
+	summary := fmt.Sprintf("%d/%d 端口 TCP 可达（%s）", okN, len(results), modeLabel)
 	if okN > 0 {
 		avg := sumL / okN
-		summary = fmt.Sprintf("%d/%d 可达 · %s延迟 %d–%d ms（均 %d ms）", okN, len(results), modeLabel, minL, maxL, avg)
+		summary = fmt.Sprintf("%d/%d TCP 可达 · %s延迟 %d–%d ms（均 %d ms）", okN, len(results), modeLabel, minL, maxL, avg)
 		if failN > 0 && firstErr != "" {
 			summary += "；失败: " + firstErr
 		}
 	} else if firstErr != "" {
-		summary = fmt.Sprintf("0/%d 可达（%s） · %s", len(results), modeLabel, firstErr)
+		summary = fmt.Sprintf("0/%d TCP 可达（%s） · %s", len(results), modeLabel, firstErr)
 	} else {
-		summary = fmt.Sprintf("0/%d 可达（%s）", len(results), modeLabel)
+		summary = fmt.Sprintf("0/%d TCP 可达（%s）", len(results), modeLabel)
 	}
 
 	jsonOK(w, map[string]any{
@@ -865,149 +855,149 @@ func classifyProbeFail(raw, deployStatus string, port int) string {
 }
 
 // validateProxyConfigForSave runs soft checks on draft/patch save.
-	func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
-		p := strings.ToLower(strings.TrimSpace(protocol))
-		switch p {
-		case "vless":
-			var vc proxysvc.VLESSConfig
-			if err := json.Unmarshal(cfg, &vc); err != nil {
-				return nil
-			}
-			sec := proxysvc.NormalizeSecurity(vc.Security)
-			if sec == "tls" {
-				if strings.TrimSpace(vc.CertPEM) != "" || strings.TrimSpace(vc.KeyPEM) != "" {
-					return proxysvc.ValidateTLSCertPair(vc.CertPEM, vc.KeyPEM, vc.ServerName)
-				}
-			}
-			if !proxysvc.NetworkAllowed(sec, vc.Network) {
-				return fmt.Errorf("安全层 %s 不支持传输 %q", sec, proxysvc.NormalizeNetwork(vc.Network))
-			}
-		case "anytls":
-			var c proxysvc.AnyTLSConfig
-			if err := json.Unmarshal(cfg, &c); err != nil {
-				return nil
-			}
-			if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
-				return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
-			}
-		case "naive", "naiveproxy":
-			var c proxysvc.NaiveConfig
-			if err := json.Unmarshal(cfg, &c); err != nil {
-				return nil
-			}
-			if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
-				return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
+func validateProxyConfigForSave(protocol string, cfg json.RawMessage) error {
+	p := strings.ToLower(strings.TrimSpace(protocol))
+	switch p {
+	case "vless":
+		var vc proxysvc.VLESSConfig
+		if err := json.Unmarshal(cfg, &vc); err != nil {
+			return nil
+		}
+		sec := proxysvc.NormalizeSecurity(vc.Security)
+		if sec == "tls" {
+			if strings.TrimSpace(vc.CertPEM) != "" || strings.TrimSpace(vc.KeyPEM) != "" {
+				return proxysvc.ValidateTLSCertPair(vc.CertPEM, vc.KeyPEM, vc.ServerName)
 			}
 		}
+		if !proxysvc.NetworkAllowed(sec, vc.Network) {
+			return fmt.Errorf("安全层 %s 不支持传输 %q", sec, proxysvc.NormalizeNetwork(vc.Network))
+		}
+	case "anytls":
+		var c proxysvc.AnyTLSConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return nil
+		}
+		if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
+			return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
+		}
+	case "naive", "naiveproxy":
+		var c proxysvc.NaiveConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return nil
+		}
+		if strings.TrimSpace(c.CertPEM) != "" || strings.TrimSpace(c.KeyPEM) != "" {
+			return proxysvc.ValidateTLSCertPair(c.CertPEM, c.KeyPEM, c.ServerName)
+		}
+	}
+	return nil
+}
+
+// validateProxyConfigForPublish hard-validates before agent apply.
+func validateProxyConfigForPublish(protocol string, cfg json.RawMessage) error {
+	p := strings.ToLower(strings.TrimSpace(protocol))
+	switch p {
+	case "vless":
+		var vc proxysvc.VLESSConfig
+		if err := json.Unmarshal(cfg, &vc); err != nil {
+			return err
+		}
+		return proxysvc.ValidateVLESSDeploy(&vc)
+	case "shadowsocks", "ss":
+		var sc proxysvc.SSConfig
+		if err := json.Unmarshal(cfg, &sc); err != nil {
+			return err
+		}
+		return proxysvc.ValidateSSDeploy(&sc)
+	case "socks5", "socks":
+		var c proxysvc.Socks5Config
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return err
+		}
+		return proxysvc.ValidateSocks5Deploy(&c)
+	case "anytls":
+		var c proxysvc.AnyTLSConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return err
+		}
+		return proxysvc.ValidateAnyTLSDeploy(&c)
+	case "naive", "naiveproxy":
+		var c proxysvc.NaiveConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return err
+		}
+		return proxysvc.ValidateNaiveDeploy(&c)
+	case "mieru":
+		var c proxysvc.MieruConfig
+		if err := json.Unmarshal(cfg, &c); err != nil {
+			return err
+		}
+		return proxysvc.ValidateMieruDeploy(&c, 0)
+	default:
 		return nil
 	}
+}
 
-	// validateProxyConfigForPublish hard-validates before agent apply.
-	func validateProxyConfigForPublish(protocol string, cfg json.RawMessage) error {
-		p := strings.ToLower(strings.TrimSpace(protocol))
-		switch p {
-		case "vless":
-			var vc proxysvc.VLESSConfig
-			if err := json.Unmarshal(cfg, &vc); err != nil {
-				return err
-			}
-			return proxysvc.ValidateVLESSDeploy(&vc)
-		case "shadowsocks", "ss":
-			var sc proxysvc.SSConfig
-			if err := json.Unmarshal(cfg, &sc); err != nil {
-				return err
-			}
-			return proxysvc.ValidateSSDeploy(&sc)
-		case "socks5", "socks":
-			var c proxysvc.Socks5Config
-			if err := json.Unmarshal(cfg, &c); err != nil {
-				return err
-			}
-			return proxysvc.ValidateSocks5Deploy(&c)
-		case "anytls":
-			var c proxysvc.AnyTLSConfig
-			if err := json.Unmarshal(cfg, &c); err != nil {
-				return err
-			}
-			return proxysvc.ValidateAnyTLSDeploy(&c)
-		case "naive", "naiveproxy":
-				var c proxysvc.NaiveConfig
-				if err := json.Unmarshal(cfg, &c); err != nil {
-					return err
-				}
-				return proxysvc.ValidateNaiveDeploy(&c)
-			case "mieru":
-				var c proxysvc.MieruConfig
-				if err := json.Unmarshal(cfg, &c); err != nil {
-					return err
-				}
-				return proxysvc.ValidateMieruDeploy(&c, 0)
-			default:
-				return nil
-			}
-		}
-
-	// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
-		// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
-		// unrelated fields does not wipe cert_pem / private_key / passwords.
-		func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
-			if len(incoming) == 0 {
-				return stored
-			}
-			proto := strings.ToLower(strings.TrimSpace(protocol))
-			var keepKeys []string
-			switch proto {
-			case "vless":
-				keepKeys = []string{
-					"private_key", "public_key", "short_id",
-					"cert_pem", "key_pem", "cert_id",
-					"encryption", "decryption", "uuid",
-				}
-			case "shadowsocks", "ss":
-				keepKeys = []string{"password"}
-			case "mieru":
-				keepKeys = []string{"password", "username"}
-			case "socks5", "socks":
-				keepKeys = []string{"password", "username"}
-			case "anytls":
-				keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
-			case "naive", "naiveproxy":
-				keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
-			default:
-				return incoming
-			}
-		var oldM, newM map[string]any
-		if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
-			return incoming
-		}
-		if err := json.Unmarshal(nonzeroRaw(incoming), &newM); err != nil || newM == nil {
-			return incoming
-		}
-		for _, k := range keepKeys {
-			nv, ok := newM[k]
-			if !ok {
-				// Field omitted entirely → keep stored.
-				if ov, has := oldM[k]; has {
-					newM[k] = ov
-				}
-				continue
-			}
-			s, isStr := nv.(string)
-			if !isStr {
-				continue
-			}
-			if s == "" || isRedactedSecret(s) {
-				if ov, has := oldM[k]; has {
-					newM[k] = ov
-				}
-			}
-		}
-		out, err := json.Marshal(newM)
-		if err != nil {
-			return incoming
-		}
-		return out
+// mergePreservedProxySecrets restores sensitive fields that the UI may re-send
+// as empty or redacted markers (*** / __KEEP__). Used on PATCH so editing
+// unrelated fields does not wipe cert_pem / private_key / passwords.
+func mergePreservedProxySecrets(protocol string, stored, incoming json.RawMessage) json.RawMessage {
+	if len(incoming) == 0 {
+		return stored
 	}
+	proto := strings.ToLower(strings.TrimSpace(protocol))
+	var keepKeys []string
+	switch proto {
+	case "vless":
+		keepKeys = []string{
+			"private_key", "public_key", "short_id",
+			"cert_pem", "key_pem", "cert_id",
+			"encryption", "decryption", "uuid",
+		}
+	case "shadowsocks", "ss":
+		keepKeys = []string{"password"}
+	case "mieru":
+		keepKeys = []string{"password", "username"}
+	case "socks5", "socks":
+		keepKeys = []string{"password", "username"}
+	case "anytls":
+		keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
+	case "naive", "naiveproxy":
+		keepKeys = []string{"password", "username", "cert_pem", "key_pem", "cert_id"}
+	default:
+		return incoming
+	}
+	var oldM, newM map[string]any
+	if err := json.Unmarshal(nonzeroRaw(stored), &oldM); err != nil || oldM == nil {
+		return incoming
+	}
+	if err := json.Unmarshal(nonzeroRaw(incoming), &newM); err != nil || newM == nil {
+		return incoming
+	}
+	for _, k := range keepKeys {
+		nv, ok := newM[k]
+		if !ok {
+			// Field omitted entirely → keep stored.
+			if ov, has := oldM[k]; has {
+				newM[k] = ov
+			}
+			continue
+		}
+		s, isStr := nv.(string)
+		if !isStr {
+			continue
+		}
+		if s == "" || isRedactedSecret(s) {
+			if ov, has := oldM[k]; has {
+				newM[k] = ov
+			}
+		}
+	}
+	out, err := json.Marshal(newM)
+	if err != nil {
+		return incoming
+	}
+	return out
+}
 
 func nonzeroRaw(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {

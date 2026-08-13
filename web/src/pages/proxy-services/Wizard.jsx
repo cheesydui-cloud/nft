@@ -1196,7 +1196,7 @@ export default function ProxyServiceWizard() {
                         onChange={e => setCfg('share_host', e.target.value)}
                         placeholder="留空则用节点 IP / 中转地址"
                       />
-                      <p className="text-[11px] text-ink-mut mt-1">写入订阅链接的主机名；域名或 DDNS 时填写。</p>
+                      <p className="text-[11px] text-ink-mut mt-1">写入订阅链接的主机名；域名或 DDNS 时填写。勿用 Cloudflare 橙云代理的域名当分享地址，面板 TCP 测通也不等于 SS 握手成功。</p>
                     </div>
                   </FormSection>
 
@@ -1260,6 +1260,16 @@ export default function ProxyServiceWizard() {
                           </label>
                         )
                       })}
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">分享主机 share_host（可选）</label>
+                      <input
+                        className="input-field font-mono"
+                        value={config.share_host || ''}
+                        onChange={e => setCfg('share_host', e.target.value)}
+                        placeholder="留空则用节点 IP / 中转地址"
+                      />
+                      <p className="text-[11px] text-ink-mut mt-1">写入订阅链接的主机名；域名或 DDNS 时填写。勿填橙云代理域名。</p>
                     </div>
                   </FormSection>
 

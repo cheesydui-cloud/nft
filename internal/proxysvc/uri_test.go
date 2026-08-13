@@ -43,76 +43,111 @@ func TestEnsureSecretsAndBuildSS(t *testing.T) {
 	if !strings.HasPrefix(uri, "ss://") {
 		t.Fatalf("bad uri: %s", uri)
 	}
+	if strings.Contains(uri, "%2F") || strings.Contains(uri, "%2f") {
+		t.Fatalf("SIP002 userinfo must not percent-encode base64 slashes: %s", uri)
+	}
 }
 
-	func TestEnsureSecretsMieruDefaultsTCP(t *testing.T) {
-		raw, err := EnsureSecrets("mieru", json.RawMessage(`{}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var c MieruConfig
-		if err := json.Unmarshal(raw, &c); err != nil {
-			t.Fatal(err)
-		}
-		if len(c.Transports) != 1 || strings.ToUpper(c.Transports[0]) != "TCP" {
-			t.Fatalf("default transports = %v, want [TCP]", c.Transports)
-		}
-		uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(uri, "protocol=TCP") {
-			t.Fatalf("share missing TCP: %s", uri)
-		}
-		if strings.Contains(uri, "protocol=UDP") {
-			t.Fatalf("default share must not advertise UDP: %s", uri)
-		}
+func TestBuildShareURISSIP002SlashInPassword(t *testing.T) {
+	// SS2022 keys are std-base64 and often contain '/'.
+	raw := json.RawMessage(`{"method":"2022-blake3-aes-128-gcm","password":"AA/BB+CC=="}`)
+	uri, err := BuildShareURI("shadowsocks", "ss1", "1.2.3.4", 8388, raw)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if strings.Contains(uri, "%2F") || strings.Contains(uri, "%2f") {
+		t.Fatalf("slash must stay in raw userinfo, not %%2F: %s", uri)
+	}
+	if !strings.Contains(uri, "ss://") || !strings.Contains(uri, "@1.2.3.4:8388") {
+		t.Fatalf("bad uri: %s", uri)
+	}
+}
 
-		func TestEnsureSecretsAndBuildMieru(t *testing.T) {
-		raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Official simple share link for `mieru import config`.
-		if !strings.HasPrefix(uri, "mierus://") {
-			t.Fatalf("bad uri scheme: %s", uri)
-		}
-		if !strings.Contains(uri, "profile=m1") {
-			t.Fatalf("missing profile: %s", uri)
-		}
-		portTok := "port=" + strconv.Itoa(DefaultMieruListenPort)
-		if !strings.Contains(uri, portTok) {
-			t.Fatalf("missing port: %s", uri)
-		}
-		if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
-			t.Fatalf("missing protocols: %s", uri)
-		}
-		// Host must not embed :port in simple form (port is a query param).
-		if strings.Contains(uri, "9.9.9.9:"+strconv.Itoa(DefaultMieruListenPort)) {
-			t.Fatalf("host should not include listen port: %s", uri)
-		}
-		// Official pair order: port then protocol, repeated — not all ports first.
-		want := "profile=m1&" + portTok + "&protocol=TCP&" + portTok + "&protocol=UDP"
-		if !strings.Contains(uri, want) {
-			t.Fatalf("query order = %s, want substring %s", uri, want)
-		}
+func TestBuildShareURIMieruIPv6AndDefaultTCP(t *testing.T) {
+	raw := json.RawMessage(`{"username":"alice","password":"secret"}`)
+	uri, err := BuildShareURI("mieru", "m1", "2001:db8::1", 8964, raw)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !strings.Contains(uri, "[2001:db8::1]") {
+		t.Fatalf("IPv6 share host must be bracketed: %s", uri)
+	}
+	if strings.Contains(uri, "protocol=UDP") {
+		t.Fatalf("empty transports must default TCP only: %s", uri)
+	}
+	if !strings.Contains(uri, "protocol=TCP") {
+		t.Fatalf("missing TCP: %s", uri)
+	}
+}
 
-	func TestValidateMieruDeployRejectsPrivilegedPort(t *testing.T) {
-		c := &MieruConfig{Username: "u", Password: "p", ListenPort: 443}
-		if err := ValidateMieruDeploy(c, 0); err == nil {
-			t.Fatal("expected error for port 443")
-		}
-		c.ListenPort = DefaultMieruListenPort
-		if err := ValidateMieruDeploy(c, 0); err != nil {
-			t.Fatal(err)
-		}
+func TestEnsureSecretsMieruDefaultsTCP(t *testing.T) {
+	raw, err := EnsureSecrets("mieru", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
 	}
+	var c MieruConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Transports) != 1 || strings.ToUpper(c.Transports[0]) != "TCP" {
+		t.Fatalf("default transports = %v, want [TCP]", c.Transports)
+	}
+	uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(uri, "protocol=TCP") {
+		t.Fatalf("share missing TCP: %s", uri)
+	}
+	if strings.Contains(uri, "protocol=UDP") {
+		t.Fatalf("default share must not advertise UDP: %s", uri)
+	}
+}
+
+func TestEnsureSecretsAndBuildMieru(t *testing.T) {
+	raw, err := EnsureSecrets("mieru", json.RawMessage(`{"transports":["TCP","UDP"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri, err := BuildShareURI("mieru", "m1", "9.9.9.9", DefaultMieruListenPort, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Official simple share link for `mieru import config`.
+	if !strings.HasPrefix(uri, "mierus://") {
+		t.Fatalf("bad uri scheme: %s", uri)
+	}
+	if !strings.Contains(uri, "profile=m1") {
+		t.Fatalf("missing profile: %s", uri)
+	}
+	portTok := "port=" + strconv.Itoa(DefaultMieruListenPort)
+	if !strings.Contains(uri, portTok) {
+		t.Fatalf("missing port: %s", uri)
+	}
+	if !strings.Contains(uri, "protocol=TCP") || !strings.Contains(uri, "protocol=UDP") {
+		t.Fatalf("missing protocols: %s", uri)
+	}
+	// Host must not embed :port in simple form (port is a query param).
+	if strings.Contains(uri, "9.9.9.9:"+strconv.Itoa(DefaultMieruListenPort)) {
+		t.Fatalf("host should not include listen port: %s", uri)
+	}
+	// Official pair order: port then protocol, repeated — not all ports first.
+	want := "profile=m1&" + portTok + "&protocol=TCP&" + portTok + "&protocol=UDP"
+	if !strings.Contains(uri, want) {
+		t.Fatalf("query order = %s, want substring %s", uri, want)
+	}
+}
+
+func TestValidateMieruDeployRejectsPrivilegedPort(t *testing.T) {
+	c := &MieruConfig{Username: "u", Password: "p", ListenPort: 443}
+	if err := ValidateMieruDeploy(c, 0); err == nil {
+		t.Fatal("expected error for port 443")
+	}
+	c.ListenPort = DefaultMieruListenPort
+	if err := ValidateMieruDeploy(c, 0); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestEnsureSecretsStripsVlessEncQuotes(t *testing.T) {
 	raw, err := EnsureSecrets("vless", json.RawMessage(`{

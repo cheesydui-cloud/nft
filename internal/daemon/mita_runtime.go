@@ -417,14 +417,15 @@ func mitaProxyStop(mitaPath string) {
 	_, _ = runCmdTimeout(15*time.Second, mitaPath, "stop")
 }
 
-// mitaProxyListening is true when `mita status` reports the proxy is up.
-// Used to skip stop+start on an unchanged republish.
+// mitaProxyListening is true only when `mita status` reports the proxy
+// listen is up. systemd "active" just means `mita run` (RPC) is alive —
+// the proxy itself can still be IDLE. A status timeout must not be
+// treated as listening, or an unchanged republish skips apply while
+// nothing is accepting clients.
 func mitaProxyListening(mitaPath string) bool {
 	out, err := runCmdTimeout(6*time.Second, mitaPath, "status")
 	if err != nil {
-		// Timeout / RPC busy: do not report "down". A false negative here
-		// used to force apply + mita stop/start on every republish.
-		return mitaUnitHealthy()
+		return false
 	}
 	return mitaStatusIsRunning(out)
 }
