@@ -225,6 +225,26 @@ func ListNodeRepoByIDs(d *sql.DB, ids []int64) ([]NodeRepoEntry, error) {
 	return out, nil
 }
 
+// LookupNodeRepoProtocol returns the warehouse protocol for host:port.
+func LookupNodeRepoProtocol(d DBTX, host string, port int) string {
+	host = strings.TrimSpace(host)
+	if host == "" || port < 1 || port > 65535 {
+		return ""
+	}
+	var proto, uri string
+	err := d.QueryRow(`SELECT protocol, uri FROM node_repo WHERE host=? AND port=? ORDER BY id DESC LIMIT 1`, host, port).Scan(&proto, &uri)
+	if err != nil {
+		return ""
+	}
+	if p := strings.ToLower(strings.TrimSpace(proto)); p != "" {
+		return p
+	}
+	u := strings.ToLower(strings.TrimSpace(uri))
+	if i := strings.Index(u, "://"); i > 0 {
+		return u[:i]
+	}
+	return ""
+}
 
 // FindNodeRepoByHostPort returns the first node_repo row matching host:port (URI for protocol egress).
 func FindNodeRepoByHostPort(d *sql.DB, host string, port int) (NodeRepoEntry, error) {

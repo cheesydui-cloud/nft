@@ -57,6 +57,52 @@ func TestBuildRulesStampsRuleMeta(t *testing.T) {
 	}
 }
 
+func TestBuildRulesUpgradesMieruTCPToTCPUDP(t *testing.T) {
+	d := openDB(t)
+	n, err := db.CreateNode(d, "hop1", "https://p", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.UpdateNodeRelayHost(d, n.ID, "1.1.1.1")
+	if _, err := db.CreateNodeRepoEntry(d, "pro664-mieru", "mieru", "p1.cnodelink.com", 35765, "mierus://u:p@p1.cnodelink.com?port=35765", "", 0, "", db.NodeRepoCFFields{}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl := &db.Rule{NodeID: n.ID, Name: "IPLC", Proto: "tcp", ExitHost: "p1.cnodelink.com", ExitPort: 35765}
+	ruleID, err := db.CreateRule(tx, rl)
+	if err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	rl.ID = ruleID
+	if _, _, _, err = db.RegenerateRule(tx, rl, []db.HopInput{{NodeID: n.ID}}, nil); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	tx.Commit()
+
+	ruleHops, err := db.ActiveRuleHopsForPush(d, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := buildRules(d, ruleHops)
+	found := false
+	for _, r := range rules {
+		if r.RuleID == ruleID {
+			found = true
+			if r.Proto != "tcp+udp" {
+				t.Fatalf("mieru landing must dispatch tcp+udp, got %q", r.Proto)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected IPLC rule in dispatch set")
+	}
+}
+
 func TestComputeRevIgnoresRuleMeta(t *testing.T) {
 	base := []nft.Rule{{Proto: "tcp", SrcPort: 20000, DestIP: "10.0.0.2", DestPort: 20001}}
 	withMeta := []nft.Rule{{Proto: "tcp", SrcPort: 20000, DestIP: "10.0.0.2", DestPort: 20001,

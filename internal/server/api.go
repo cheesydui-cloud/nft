@@ -2539,6 +2539,7 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	proto = preferLandingProtoHint(pe.URI, landingProtocolHint(s.DB, pe.Host, pe.Port, sql.NullInt64{}), proto)
 	exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
@@ -2601,13 +2602,6 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		hops[0].DesiredPort = body.EntryPort
 	}
 
-	tx, err := s.DB.Begin()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer tx.Rollback()
-
 	// Determine the rule header's node_id: use the entry hop's node when the
 	// caller didn't supply an explicit node_id (e.g. when hops are given directly).
 	ruleNodeID := body.NodeID
@@ -2652,6 +2646,17 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Owner-aware hint before Begin: SQLite tests use one conn; a query
+	// on s.DB while a write tx is open deadlocks.
+	proto = preferLandingProtoHint(pe.URI, landingProtocolHint(s.DB, pe.Host, pe.Port, ownerID), proto)
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
 	rl := &db.Rule{
 		NodeID:         ruleNodeID,
 		OwnerID:        ownerID,
@@ -2950,6 +2955,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pe = preserveShareExitURI(pe, rl)
+	proto = preferLandingProtoHint(pe.URI, landingProtocolHint(s.DB, pe.Host, pe.Port, rl.OwnerID), proto)
 	exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
@@ -4073,6 +4079,7 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	proto = preferLandingProtoHint(pe.URI, landingProtocolHint(s.DB, pe.Host, pe.Port, nullInt64(u.ID)), proto)
 	exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
@@ -4281,6 +4288,7 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pe = preserveShareExitURI(pe, rl)
+	proto = preferLandingProtoHint(pe.URI, landingProtocolHint(s.DB, pe.Host, pe.Port, rl.OwnerID), proto)
 	exitMode, err := applyExitConstraints(pe.Type, proto, body.ExitMode)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())

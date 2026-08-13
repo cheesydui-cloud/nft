@@ -244,6 +244,28 @@ func ListUserLandingExits(d *sql.DB, userID int64) ([]*LandingExit, error) {
 		scanLandingExit, userID)
 }
 
+// LookupLandingExitProtocol returns the assigned-exit protocol for a user
+// host:port (present rows only).
+func LookupLandingExitProtocol(d DBTX, userID int64, host string, port int) string {
+	host = strings.TrimSpace(host)
+	if userID <= 0 || host == "" || port < 1 || port > 65535 {
+		return ""
+	}
+	var proto, uri string
+	err := d.QueryRow(`SELECT protocol, uri FROM user_landing_exits WHERE user_id=? AND host=? AND port=? AND present=1 LIMIT 1`, userID, host, port).Scan(&proto, &uri)
+	if err != nil {
+		return ""
+	}
+	if p := strings.ToLower(strings.TrimSpace(proto)); p != "" {
+		return p
+	}
+	u := strings.ToLower(strings.TrimSpace(uri))
+	if i := strings.Index(u, "://"); i > 0 {
+		return u[:i]
+	}
+	return ""
+}
+
 // PresentLandingExitsForUser returns only the rows that drive classification,
 // metering and push exclusion.
 func PresentLandingExitsForUser(d *sql.DB, userID int64) ([]*LandingExit, error) {
@@ -736,7 +758,6 @@ func PropagateRepoExitChange(d *sql.DB, oldHost, newHost string, oldPort, newPor
 	return out, nil
 }
 
-
 // RepoExitUser is one user who has a present, repo-sourced landing exit at host:port.
 type RepoExitUser struct {
 	UserID       int64  `json:"user_id"`
@@ -804,7 +825,6 @@ func ListRepoExitUsers(d *sql.DB, host string, port int) ([]RepoExitUser, error)
 	}
 	return out, rows.Err()
 }
-
 
 // FindAnyLandingURIByHostPort returns a present landing-exit URI for host:port
 // from any user (admin rule pickers often use warehouse/repo URIs mirrored here).

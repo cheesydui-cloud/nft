@@ -52,9 +52,9 @@ func TestParseExit(t *testing.T) {
 		{"1.2.3.4:80", false},
 		{"example.com:443", false},
 		{"[2001:db8::1]:80", false},
-		{"4212:80", true},  // 纯数字 host —— 被误填的端口
-		{"host:0", true},   // 端口非法
-		{":80", true},      // host 空
+		{"4212:80", true}, // 纯数字 host —— 被误填的端口
+		{"host:0", true},  // 端口非法
+		{":80", true},     // host 空
 		{"nohostport", true},
 	}
 	for _, c := range cases {
@@ -62,6 +62,21 @@ func TestParseExit(t *testing.T) {
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseExit(%q) err = %v, wantErr = %v", c.raw, err, c.wantErr)
 		}
+	}
+}
+
+func TestPreferLandingProtoMieru(t *testing.T) {
+	if got := preferLandingProto("mierus://u:p@h?port=1&protocol=TCP", "tcp"); got != "tcp+udp" {
+		t.Fatalf("share uri: got %q", got)
+	}
+	if got := preferLandingProtoHint("", "mieru", "tcp"); got != "tcp+udp" {
+		t.Fatalf("warehouse hint: got %q", got)
+	}
+	if got := preferLandingProtoHint("", "mieru", "udp"); got != "udp" {
+		t.Fatalf("explicit udp must stay, got %q", got)
+	}
+	if got := preferLandingProto("ss://x@h:1", "tcp"); got != "tcp" {
+		t.Fatalf("ss must stay tcp, got %q", got)
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 
 	"sync/atomic"
 
-	"nft/internal/forward"
 	"nft/internal/nft"
 	"nft/internal/resolver"
 )
@@ -20,11 +19,13 @@ var (
 	blockEgressV6 atomic.Bool
 )
 
-// applyEgressPolicy stores the lock and mirrors it into the userspace dialer.
+// applyEgressPolicy stores the lock for proxy cores (xray / sing-box / mita).
+// L4 nft / userspace forward is the tunnel to the landing or next hop — it
+// must keep dual-stack so a working AAAA landing is not dropped while the
+// panel probe (unrestricted TCP) still succeeds.
 func applyEgressPolicy(blockV4, blockV6 bool) {
 	blockEgressV4.Store(blockV4)
 	blockEgressV6.Store(blockV6)
-	forward.SetEgressPolicy(blockV4, blockV6)
 }
 
 // resolveFunc is the apply-time DNS resolver. Production points it at
@@ -37,7 +38,7 @@ type resolveFunc func(ctx context.Context, rules []nft.Rule) ([]nft.Rule, bool, 
 
 func defaultResolver(r *resolver.Resolver) resolveFunc {
 	return func(ctx context.Context, rules []nft.Rule) ([]nft.Rule, bool, error) {
-		return nft.ResolveHostsOpts(ctx, rules, r, blockEgressV4.Load(), blockEgressV6.Load())
+		return nft.ResolveHosts(ctx, rules, r)
 	}
 }
 

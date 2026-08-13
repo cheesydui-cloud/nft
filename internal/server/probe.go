@@ -268,15 +268,37 @@ func (s *Server) probeChainEndpoint(w http.ResponseWriter, r *http.Request) {
 		nodeID int64
 		name   string
 		target string
+		kind   string
 	}
 	var tasks []probeTask
+	// Client path starts at the rule entry listen. Node→landing TCP can
+	// be green while the port the proxy client dials is not listening.
+	// Probe 127.0.0.1 (not the public relay) so NAT hairpin cannot
+	// paint a working listen red.
+	if hops[0].ListenPort > 0 {
+		entryName := fmt.Sprintf("#%d", hops[0].NodeID)
+		if n, err := db.GetNode(s.DB, hops[0].NodeID); err == nil {
+			entryName = n.Name
+		}
+		tasks = append(tasks, probeTask{
+			idx:    0,
+			nodeID: hops[0].NodeID,
+			name:   entryName + " · 入口监听",
+			target: net.JoinHostPort("127.0.0.1", strconv.Itoa(hops[0].ListenPort)),
+			kind:   "listen",
+		})
+	}
 	for i, h := range hops {
 		target := net.JoinHostPort(h.TargetHost, strconv.Itoa(h.TargetPort))
 		nodeName := fmt.Sprintf("#%d", h.NodeID)
 		if n, err := db.GetNode(s.DB, h.NodeID); err == nil {
 			nodeName = n.Name
 		}
-		tasks = append(tasks, probeTask{idx: i, nodeID: h.NodeID, name: nodeName, target: target})
+		kind := "path"
+		if i == len(hops)-1 {
+			kind = "landing"
+		}
+		tasks = append(tasks, probeTask{idx: i, nodeID: h.NodeID, name: nodeName, target: target, kind: kind})
 	}
 
 	results := make([]hopProbe, len(tasks))
@@ -285,7 +307,7 @@ func (s *Server) probeChainEndpoint(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, t probeTask) {
 			defer wg.Done()
-			hp := hopProbe{Node: t.name, Target: t.target}
+			hp := hopProbe{Node: t.name, Target: t.target, Kind: t.kind}
 			ack, err := s.Hub.SendProbe(t.nodeID, t.target)
 			if err != nil {
 				hp.Error = err.Error()

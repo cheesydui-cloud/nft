@@ -81,8 +81,8 @@ func NewWithPaths(d *sql.DB, docsDir, dbPath string) (*Server, error) {
 		s.enforceUserQuota(userID)
 		s.enforceExitQuota(userID)
 	}
-		hub.Redispatch = s.redispatchNodes
-		hub.RepublishProxy = s.republishProxyInstancesOnNode
+	hub.Redispatch = s.redispatchNodes
+	hub.RepublishProxy = s.republishProxyInstancesOnNode
 	s.enforcerWg.Add(5)
 	safeGo(func() { defer s.enforcerWg.Done(); s.expiryEnforcer() })
 	safeGo(func() { defer s.enforcerWg.Done(); s.cycleResetEnforcer() })
@@ -563,6 +563,11 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 			HopCount: hopCounts[rh.RuleID],
 		}
 		if r := ruleMap[rh.RuleID]; r != nil {
+			if p := effectiveForwardProto(d, r); p != "" && p != rule.Proto {
+				// Existing TCP rules to a mieru landing must still
+				// forward UDP; hop rows stay tcp until the next rewire.
+				rule.Proto = p
+			}
 			rule.RuleID = r.ID
 			rule.RuleName = r.Name
 			if r.OwnerID.Valid {
@@ -685,11 +690,11 @@ func (s *Server) Router() http.Handler {
 	// --- JSON API ---
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.csrfProtect)
-			r.Post("/login", s.apiLogin)
-			r.Post("/logout", s.apiLogout)
-			r.Get("/branding", s.apiBranding)
-			// Public custom logo (or default favicon) for sidebar + browser tab icon.
-			r.Get("/branding/logo", s.apiServeBrandingLogo)
+		r.Post("/login", s.apiLogin)
+		r.Post("/logout", s.apiLogout)
+		r.Get("/branding", s.apiBranding)
+		// Public custom logo (or default favicon) for sidebar + browser tab icon.
+		r.Get("/branding/logo", s.apiServeBrandingLogo)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAPIAuth)
@@ -743,10 +748,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/nodes/{id}/downstream-bindings", s.apiUpdateNodeDownstreamBindings)
 			r.Get("/node-bindings", s.apiListAllNodeBindings)
 
-				r.Get("/settings", s.apiGetSettings)
-				r.Post("/settings", s.apiSaveSettings)
-				r.Post("/settings/logo", s.apiUploadPanelLogo)
-				r.Delete("/settings/logo", s.apiClearPanelLogo)
+			r.Get("/settings", s.apiGetSettings)
+			r.Post("/settings", s.apiSaveSettings)
+			r.Post("/settings/logo", s.apiUploadPanelLogo)
+			r.Delete("/settings/logo", s.apiClearPanelLogo)
 			r.Get("/system/update", s.apiGetPanelUpdate)
 			r.Post("/system/update/check", s.apiCheckPanelUpdate)
 			r.Get("/system/update/status", s.apiGetPanelUpdateStatus)
@@ -906,7 +911,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/info", s.apiTokenInfo)
 	})
 
-		r.NotFound(spaHandlerWithTitle(s.panelBrandName, s.spaFaviconOverride).ServeHTTP)
+	r.NotFound(spaHandlerWithTitle(s.panelBrandName, s.spaFaviconOverride).ServeHTTP)
 
 	return r
 }

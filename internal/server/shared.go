@@ -342,6 +342,61 @@ func validRuleProto(proto string) bool {
 	}
 }
 
+// preferLandingProto upgrades a default TCP rule to tcp+udp when the exit
+// is a mieru/mierus share. Official mieru listens TCP+UDP; panel 「测试」
+// only dials TCP, so a TCP-only forward looks green while clients that
+// handshake on UDP (or TCP+UDP) fail.
+func preferLandingProto(exitURI, proto string) string {
+	return preferLandingProtoHint(exitURI, "", proto)
+}
+
+func preferLandingProtoHint(exitURI, landingProto, proto string) string {
+	if proto != "tcp" {
+		return proto
+	}
+	if isMieruLanding(exitURI, landingProto) {
+		return "tcp+udp"
+	}
+	return proto
+}
+
+func isMieruLanding(exitURI, landingProto string) bool {
+	u := strings.ToLower(strings.TrimSpace(exitURI))
+	if strings.HasPrefix(u, "mieru://") || strings.HasPrefix(u, "mierus://") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(landingProto)) {
+	case "mieru", "mierus":
+		return true
+	default:
+		return false
+	}
+}
+
+// landingProtocolHint finds the warehouse / assigned-exit protocol for a
+// host:port when the rule did not persist a share URI (the form used to
+// strip mieru://). Empty when unknown.
+func landingProtocolHint(d db.DBTX, host string, port int, ownerID sql.NullInt64) string {
+	host = strings.TrimSpace(host)
+	if host == "" || port <= 0 {
+		return ""
+	}
+	if ownerID.Valid && ownerID.Int64 > 0 {
+		if p := db.LookupLandingExitProtocol(d, ownerID.Int64, host, port); p != "" {
+			return p
+		}
+	}
+	return db.LookupNodeRepoProtocol(d, host, port)
+}
+
+func effectiveForwardProto(d db.DBTX, r *db.Rule) string {
+	if r == nil {
+		return "tcp"
+	}
+	hint := landingProtocolHint(d, r.ExitHost, r.ExitPort, r.OwnerID)
+	return preferLandingProtoHint(r.ExitURI, hint, r.Proto)
+}
+
 // normalizeEntryFamily validates a client-supplied entry_family. Empty passes
 // through as empty so callers can tell "not sent" apart from an explicit
 // value: create defaults it to v4, while edit keeps the rule's stored family —
@@ -690,6 +745,11 @@ func (s *Server) regenerateRuleByID(ruleID int64) ([]int64, error) {
 	if len(hops) == 0 {
 		return nil, nil
 	}
+	upgradeProto := false
+	if p := effectiveForwardProto(s.DB, r); p != r.Proto {
+		r.Proto = p
+		upgradeProto = true
+	}
 	inputs := make([]db.HopInput, len(hops))
 	for i, h := range hops {
 		inputs[i] = db.HopInput{NodeID: h.NodeID, Mode: h.Mode, ViaNodeID: h.ViaNodeID}
@@ -699,6 +759,11 @@ func (s *Server) regenerateRuleByID(ruleID int64) ([]int64, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if upgradeProto {
+		if err := db.UpdateRuleHeader(tx, r); err != nil {
+			return nil, err
+		}
+	}
 	_, _, affected, err := db.RegenerateRule(tx, r, inputs, nil)
 	if err != nil {
 		return nil, err

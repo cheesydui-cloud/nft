@@ -44,14 +44,14 @@ type Rule struct {
 	RuleName  string `json:"rule_name,omitempty"`
 	OwnerName string `json:"owner_name,omitempty"`
 	HopCount  int    `json:"hop_count,omitempty"`
-// ShapeGroup/RateMBytes carry the per-grant shared rate limit: every rule
-		// in the same group (one user's rules on one panel node, priced by one
-		// grant) shares a single RateMBytes Mbps bucket, both directions combined.
-		// (RateMBytes is the historical wire name; the unit is megabits/s.)
-		// ShapeGroup is the panel-side grant id; 0 = no group. When the group is
-		// valid the data plane ignores the legacy per-rule BandwidthMbps, which
-		// new panels still fill so pre-group agents degrade to an approximate
-		// per-rule cap.
+	// ShapeGroup/RateMBytes carry the per-grant shared rate limit: every rule
+	// in the same group (one user's rules on one panel node, priced by one
+	// grant) shares a single RateMBytes Mbps bucket, both directions combined.
+	// (RateMBytes is the historical wire name; the unit is megabits/s.)
+	// ShapeGroup is the panel-side grant id; 0 = no group. When the group is
+	// valid the data plane ignores the legacy per-rule BandwidthMbps, which
+	// new panels still fill so pre-group agents degrade to an approximate
+	// per-rule cap.
 	ShapeGroup int64 `json:"shape_group,omitempty"`
 	RateMBytes int   `json:"rate_mbytes,omitempty"`
 	// ExitProxy is a SOCKS5 URI (socks5://user:pass@host:port) for the final
@@ -417,23 +417,30 @@ func ResolveHostsOpts(ctx context.Context, rules []Rule, r *resolver.Resolver, b
 				changed = true
 			}
 		}
-			if out[i].DestHost == "" {
-				continue
-			}
-			if lit := net.ParseIP(out[i].DestHost); lit != nil {
-				// Literal already handled above; never treat an IP as a hostname.
-				continue
-			}
-			var ip string
-			var err error
-			switch {
-			case blockV6 && !blockV4:
-				ip, err = r.LookupIPv4(ctx, out[i].DestHost)
-			case blockV4 && !blockV6:
+		if out[i].DestHost == "" {
+			continue
+		}
+		if lit := net.ParseIP(out[i].DestHost); lit != nil {
+			// Literal already handled above; never treat an IP as a hostname.
+			continue
+		}
+		var ip string
+		var err error
+		switch {
+		case blockV6 && !blockV4:
+			ip, err = r.LookupIPv4(ctx, out[i].DestHost)
+		case blockV4 && !blockV6:
+			ip, err = r.LookupIPv6(ctx, out[i].DestHost)
+		default:
+			// Prefer A (same as historical L4), then AAAA so an
+			// IPv6-only landing still works. Panel probe uses
+			// dual-stack Dial and would otherwise look "通" while
+			// IPv4-only resolve leaves DestIP empty.
+			ip, err = r.LookupIPv4(ctx, out[i].DestHost)
+			if err != nil {
 				ip, err = r.LookupIPv6(ctx, out[i].DestHost)
-			default:
-				ip, err = r.LookupIPv4(ctx, out[i].DestHost)
 			}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", out[i].DestHost, err))
 			continue
