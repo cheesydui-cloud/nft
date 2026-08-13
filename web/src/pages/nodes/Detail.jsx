@@ -297,6 +297,27 @@ export default function NodeDetail() {
     try { await api.post(`/nodes/${id}/toggle`); toast(node.disabled ? '已启用' : '已禁用'); load() } catch (err) { toast(err.message, 'error') }
   }
 
+  // Sticky disable / re-enable one IP family on dual-stack nodes. Disable
+  // clears that family's relay host and prevents agent hello from refilling it;
+  // enable only clears the sticky flag (hello or manual 中继地址 will refill).
+  const setRelayFamily = async (family, disabled) => {
+    const label = family === 'v4' ? 'IPv4' : 'IPv6'
+    if (disabled) {
+      const other = family === 'v4' ? (node.relay_host_v6 && !node.relay_v6_disabled) : (node.relay_host && !node.relay_v4_disabled)
+      const msg = other
+        ? `禁用 ${label} 后，该节点将只通过另一协议栈提供入口；已有规则会自动改写入口类型。Agent 重连也不会再自动填回 ${label}。`
+        : `禁用 ${label} 将清空该中继地址。若节点上仍有入口规则，操作会被拒绝。`
+      if (!(await confirm({ title: `禁用 ${label}`, message: msg, confirmText: `禁用 ${label}`, danger: true }))) return
+    } else {
+      if (!(await confirm({ title: `启用 ${label}`, message: `解除 ${label} 禁用后，下次 Agent 上报或手动填写中继地址即可恢复双栈。`, confirmText: `启用 ${label}` }))) return
+    }
+    try {
+      await api.post(`/nodes/${id}/relay-family`, { family, disabled })
+      toast(disabled ? `已禁用 ${label}` : `已启用 ${label}`)
+      load()
+    } catch (err) { toast(err.message, 'error') }
+  }
+
   const remove = async () => {
     if (!(await confirm({ title: '删除节点', message: `删除节点「${node.name}」？经过它的规则会被重新连接或清除，此操作不可撤销。`, confirmText: '删除', danger: true }))) return
     try { await api.del(`/nodes/${id}`); toast('节点已删除'); navigate('/nodes') } catch (err) { toast(err.message, 'error') }
@@ -442,6 +463,30 @@ export default function NodeDetail() {
             ) : (
               <button onClick={toggle} className="inline-flex items-center px-3.5 py-[9px] rounded-[10px] text-[13px] font-semibold bg-surface text-[#b42318] border border-[#f1c7c2] hover:bg-[#fef3f2] transition-colors cursor-pointer">禁用节点</button>
             )}
+            {/* Dual-stack family toggles: show when the node has (or had) both
+                stacks, or either family is sticky-disabled so the operator can
+                re-enable. Hidden for composite — edit members instead. */}
+            {!isComposite && (() => {
+              const hasV4 = !!node.relay_host || !!node.relay_v4_disabled
+              const hasV6 = !!node.relay_host_v6 || !!node.relay_v6_disabled
+              const dualOrSticky = (hasV4 && hasV6) || node.relay_v4_disabled || node.relay_v6_disabled
+              if (!dualOrSticky) return null
+              const btn = 'inline-flex items-center px-3.5 py-[9px] rounded-[10px] text-[13px] font-semibold border transition-colors cursor-pointer'
+              return (
+                <>
+                  {node.relay_v4_disabled ? (
+                    <button onClick={() => setRelayFamily('v4', false)} className={`${btn} bg-[#eafaf1] text-[#0a8a4f] border-[#c6ecd6] hover:brightness-95`}>启用 IPv4</button>
+                  ) : (
+                    <button onClick={() => setRelayFamily('v4', true)} className={`${btn} bg-surface text-[#b42318] border-[#f1c7c2] hover:bg-[#fef3f2]`} title={node.relay_host_declared ? '由 daemon --relay-host 管理，可能无法禁用' : undefined}>禁用 IPv4</button>
+                  )}
+                  {node.relay_v6_disabled ? (
+                    <button onClick={() => setRelayFamily('v6', false)} className={`${btn} bg-[#eafaf1] text-[#0a8a4f] border-[#c6ecd6] hover:brightness-95`}>启用 IPv6</button>
+                  ) : (
+                    <button onClick={() => setRelayFamily('v6', true)} className={`${btn} bg-surface text-[#b42318] border-[#f1c7c2] hover:bg-[#fef3f2]`} title={node.relay_host_v6_declared ? '由 daemon --relay-host-v6 管理，可能无法禁用' : undefined}>禁用 IPv6</button>
+                  )}
+                </>
+              )
+            })()}
             {!isComposite && (
               <button onClick={resync} className="inline-flex items-center px-3.5 py-[9px] rounded-[10px] text-[13px] font-semibold bg-surface text-ink-soft border border-[#d7dce3] hover:bg-[#f7f9fc] transition-colors cursor-pointer">重新同步</button>
             )}
@@ -481,9 +526,16 @@ export default function NodeDetail() {
           <section className={`${card} px-[26px] py-[22px] flex-col gap-0 hidden md:flex`}>
             <h2 className="m-0 mb-4 text-[15px] font-bold">节点配置</h2>
 
-            {!node.relay_host && (
+            {!node.relay_host && !node.relay_host_v6 && (
               <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-[13px]">
                 尚未设置<strong>线路地址</strong>：用户与上游连业务端口用的 IP/域名。未设置则无法进链路。
+              </div>
+            )}
+            {(node.relay_v4_disabled || node.relay_v6_disabled) && (
+              <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-[13px]">
+                已禁用协议栈：
+                {[node.relay_v4_disabled && 'IPv4', node.relay_v6_disabled && 'IPv6'].filter(Boolean).join('、')}
+                。Agent 重连不会自动回填；点标题栏「启用」或手动保存中继地址可恢复。
               </div>
             )}
 
@@ -499,20 +551,28 @@ export default function NodeDetail() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <ConfigField
                   label="线路地址"
-                  hint={node.relay_host_declared ? '由 daemon --relay-host 管理，UI 不可改' : '用户/上游连这里；开 CF 时填域名（灰云 A）'}
+                  hint={
+                    node.relay_host_declared ? '由 daemon --relay-host 管理，UI 不可改'
+                      : node.relay_v4_disabled ? '已禁用 IPv4：Agent 不会自动回填；手动保存地址可重新启用'
+                        : '用户/上游连这里；开 CF 时填域名（灰云 A）'
+                  }
                 >
                   <form onSubmit={saveRelay} className="flex gap-2">
-                    <input className="input-field font-mono flex-1" value={relayHost} onChange={e => setRelayHost(e.target.value)} placeholder="公网 IP 或域名" disabled={node.relay_host_declared} />
+                    <input className="input-field font-mono flex-1" value={relayHost} onChange={e => setRelayHost(e.target.value)} placeholder={node.relay_v4_disabled ? '已禁用（可手填恢复）' : '公网 IP 或域名'} disabled={node.relay_host_declared} />
                     <button type="submit" className="btn-primary flex-none px-4" disabled={node.relay_host_declared}>保存</button>
                   </form>
                 </ConfigField>
 
                 <ConfigField
                   label="IPv6 线路地址"
-                  hint={node.relay_host_v6_declared ? '由 daemon --relay-host-v6 管理' : '给 IPv6 目标用；留空=不支持'}
+                  hint={
+                    node.relay_host_v6_declared ? '由 daemon --relay-host-v6 管理'
+                      : node.relay_v6_disabled ? '已禁用 IPv6：Agent 不会自动回填；手动保存地址可重新启用'
+                        : '给 IPv6 目标用；留空=不支持'
+                  }
                 >
                   <form onSubmit={saveRelayV6} className="flex gap-2">
-                    <input className="input-field font-mono flex-1" value={relayHostV6} onChange={e => setRelayHostV6(e.target.value)} placeholder="IPv6（可选）" disabled={node.relay_host_v6_declared} />
+                    <input className="input-field font-mono flex-1" value={relayHostV6} onChange={e => setRelayHostV6(e.target.value)} placeholder={node.relay_v6_disabled ? '已禁用（可手填恢复）' : 'IPv6（可选）'} disabled={node.relay_host_v6_declared} />
                     <button type="submit" className="btn-primary flex-none px-4" disabled={node.relay_host_v6_declared}>保存</button>
                   </form>
                 </ConfigField>

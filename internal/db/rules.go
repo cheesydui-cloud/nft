@@ -253,6 +253,28 @@ func CountV6EntryRulesOnNode(d DBTX, nodeID int64) (int, error) {
 	return n, err
 }
 
+// CountV4EntryRulesOnNode counts rules whose entry hop runs on the node and
+// whose entry family requires the node's IPv4 relay address (v4 or both).
+// Used when sticky-disabling IPv4 so pure-v4 rules are not left without an
+// entry endpoint; "both" rules rewire to v6-only on the next regenerate.
+func CountV4EntryRulesOnNode(d DBTX, nodeID int64) (int, error) {
+	var n int
+	err := d.QueryRow(`SELECT COUNT(*) FROM rules r
+		JOIN rule_hops h ON h.rule_id = r.id AND h.position = 0
+		WHERE h.node_id = ? AND r.entry_family IN ('v4','both')`, nodeID).Scan(&n)
+	return n, err
+}
+
+// CountRulesOnNodeEntry counts every rule whose entry hop is this node
+// (any family). Used when disabling the only remaining family.
+func CountRulesOnNodeEntry(d DBTX, nodeID int64) (int, error) {
+	var n int
+	err := d.QueryRow(`SELECT COUNT(*) FROM rules r
+		JOIN rule_hops h ON h.rule_id = r.id AND h.position = 0
+		WHERE h.node_id = ?`, nodeID).Scan(&n)
+	return n, err
+}
+
 // HopInput is one ordered hop the caller wants the rule to have. Mode is the
 // requested data plane (udp coerces every hop to kernel). DesiredPort, when >0,
 // pins this hop's listen_port to an explicit value instead of the
@@ -670,7 +692,9 @@ func RegenerateRule(tx DBTX, r *Rule, hops []HopInput, avoid map[int64]int) (str
 		if err := tx.QueryRow(`SELECT name, relay_host, relay_host_v6, port_range FROM nodes WHERE id=?`, hop.NodeID).Scan(&name, &relay, &relayV6, &portRange); err != nil {
 			return "", "", nil, fmt.Errorf("节点 %d 不存在", hop.NodeID)
 		}
-		if relay == "" {
+		// At least one family must be set. V4-only is the common case; v6-only
+		// is allowed after an operator sticky-disables IPv4 on a dual-stack node.
+		if relay == "" && relayV6 == "" {
 			return "", "", nil, fmt.Errorf("节点 %s 未设置中继地址", name)
 		}
 		segs, err := ParsePortRange(portRange)
@@ -699,18 +723,25 @@ func RegenerateRule(tx DBTX, r *Rule, hops []HopInput, avoid map[int64]int) (str
 
 	// The entry family is derived from what the entry node can serve, not chosen
 	// by the caller: a rule exposes an entry endpoint for every IP family its
-	// entry node supports. relay_host (v4) is mandatory (checked above), so the
-	// only question is whether a v6 entry is also offered. v6 ingress rides the
-	// userspace relay (kernel DNAT can't cross address families, and there's no
-	// NAT64), which is TCP-only — so a v6 entry is offered only for a plain TCP
-	// rule; a udp / tcp+udp rule stays v4-only.
-	if rs[0].relayHostV6 != "" && r.Proto == "tcp" {
+	// entry node supports. v6 ingress rides the userspace relay (kernel DNAT
+	// can't cross address families, and there's no NAT64), which is TCP-only —
+	// so a v6 entry is offered only for a plain TCP rule; a udp / tcp+udp rule
+	// stays v4-only when v4 is available. V6-only nodes (sticky-disabled v4)
+	// require TCP and expose a pure v6 entry.
+	switch {
+	case rs[0].relayHost != "" && rs[0].relayHostV6 != "" && r.Proto == "tcp":
 		r.EntryFamily = "both"
 		// Silently run the entry segment in userspace — the only mode that
 		// accepts a v6 client and dials onward over v4. Overrides an entry hop
 		// left in kernel mode (single-node, composite first child, explicit hop).
 		rs[0].mode = "userspace"
-	} else {
+	case rs[0].relayHost == "" && rs[0].relayHostV6 != "":
+		if r.Proto != "tcp" {
+			return "", "", nil, fmt.Errorf("节点仅启用 IPv6 中继时只能创建 TCP 规则")
+		}
+		r.EntryFamily = "v6"
+		rs[0].mode = "userspace"
+	default:
 		r.EntryFamily = "v4"
 	}
 
@@ -771,7 +802,12 @@ func RegenerateRule(tx DBTX, r *Rule, hops []HopInput, avoid map[int64]int) (str
 		var targetHost string
 		var targetPort int
 		if i < len(rs)-1 {
+			// Prefer v4 for inter-hop dial; fall back to v6 when the next hop
+			// is sticky-disabled to IPv6-only.
 			targetHost = rs[i+1].relayHost
+			if targetHost == "" {
+				targetHost = rs[i+1].relayHostV6
+			}
 			targetPort = ports[i+1]
 		} else {
 			targetHost = r.ExitHost

@@ -1053,6 +1053,10 @@ func (s *Server) apiSetNodeRelayHost(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "中继地址须为 IPv4 或域名，IPv6 请使用 IPv6 中继地址字段")
 		return
 	}
+	if host != "" {
+		// Manual set re-enables the family (clears sticky disable).
+		_ = db.SetNodeRelayV4Disabled(s.DB, id, false)
+	}
 	if err := db.UpdateNodeRelayHost(s.DB, id, host); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1103,11 +1107,121 @@ func (s *Server) apiSetNodeRelayHostV6(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if host != "" {
+		// Manual set re-enables the family (clears sticky disable).
+		_ = db.SetNodeRelayV6Disabled(s.DB, id, false)
+	}
 	if err := db.UpdateNodeRelayHostV6(s.DB, id, host); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	db.WriteAudit(s.DB, u.ID, "node.set_relay_host_v6", strconv.FormatInt(id, 10), host)
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+// apiSetNodeRelayFamilyDisabled sticky-disables or re-enables one IP family
+// on a dual-stack node. Disable clears that family's relay host, sets the
+// sticky flag so hello will not re-seed it, and rewires rules so entry
+// family / hop targets drop the disabled stack. Enable only clears the
+// sticky flag; the next agent hello (or a manual relay-host set) refills.
+func (s *Server) apiSetNodeRelayFamilyDisabled(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	id, err := urlParamInt64(r, "id")
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	node, err := db.GetNode(s.DB, id)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "节点不存在")
+		return
+	}
+	if node.NodeType == "composite" {
+		jsonErr(w, http.StatusBadRequest, "组合节点请在成员单点上禁用协议栈")
+		return
+	}
+	var body struct {
+		Family   string `json:"family"` // "v4" | "v6"
+		Disabled bool   `json:"disabled"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "请求格式错误")
+		return
+	}
+	family := strings.ToLower(strings.TrimSpace(body.Family))
+	if family != "v4" && family != "v6" {
+		jsonErr(w, http.StatusBadRequest, "family 须为 v4 或 v6")
+		return
+	}
+
+	if body.Disabled {
+		// Refuse disabling the last remaining family while rules still enter here.
+		otherAlive := false
+		if family == "v4" {
+			otherAlive = node.RelayHostV6 != "" && !node.RelayV6Disabled
+		} else {
+			otherAlive = node.RelayHost != "" && !node.RelayV4Disabled
+		}
+		if !otherAlive {
+			if cnt, err := db.CountRulesOnNodeEntry(s.DB, id); err == nil && cnt > 0 {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("不能禁用唯一剩余的协议栈：该节点上仍有 %d 条入口规则", cnt))
+				return
+			}
+		}
+		// Daemon-declared hosts cannot be cleared from the panel.
+		if family == "v4" && node.RelayHostDeclared {
+			jsonErr(w, http.StatusConflict, "IPv4 中继由节点 daemon 的 --relay-host 管理，无法从面板禁用；请去掉该参数后重启 agent")
+			return
+		}
+		if family == "v6" && node.RelayHostV6Declared {
+			jsonErr(w, http.StatusConflict, "IPv6 中继由节点 daemon 的 --relay-host-v6 管理，无法从面板禁用；请去掉该参数后重启 agent")
+			return
+		}
+
+		if family == "v4" {
+			if err := db.SetNodeRelayV4Disabled(s.DB, id, true); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if err := db.UpdateNodeRelayHost(s.DB, id, ""); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "node.disable_relay_v4", strconv.FormatInt(id, 10), "")
+		} else {
+			if err := db.SetNodeRelayV6Disabled(s.DB, id, true); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if err := db.UpdateNodeRelayHostV6(s.DB, id, ""); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "node.disable_relay_v6", strconv.FormatInt(id, 10), "")
+		}
+		// Rewire so entry_family / hop targets drop the disabled stack.
+		// "both" → remaining family; pure-family rules that need the cleared
+		// stack fail regenerate with a clear error (operator must move them).
+		ruleIDs, _ := db.RulesReferencingNode(s.DB, id)
+		if len(ruleIDs) > 0 {
+			s.apiRewireRules(ruleIDs)
+		}
+	} else {
+		// Re-enable: clear sticky flag only. Hello / manual set will refill.
+		if family == "v4" {
+			if err := db.SetNodeRelayV4Disabled(s.DB, id, false); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "node.enable_relay_v4", strconv.FormatInt(id, 10), "")
+		} else {
+			if err := db.SetNodeRelayV6Disabled(s.DB, id, false); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			db.WriteAudit(s.DB, u.ID, "node.enable_relay_v6", strconv.FormatInt(id, 10), "")
+		}
+	}
 	jsonOK(w, map[string]any{"ok": true})
 }
 

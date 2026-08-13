@@ -127,37 +127,40 @@ func ListNodesForUser(d *sql.DB, userID int64) ([]*Node, []*UserNode, error) {
 	var nodes []*Node
 	var grants []*UserNode
 	for rows.Next() {
-		n := &Node{}
-		g := &UserNode{UserID: userID}
-		var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
-		var localMigratedAt, lastSeen sql.NullInt64
-		var agentVersion, agentArch sql.NullString
-		var ownerID sql.NullInt64
-		var luVersion, luStatus, luError sql.NullString
-		if err := rows.Scan(
-			&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
-			&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
-			&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
-			&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
-			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
-			&n.SortOrder, &n.RateMultiplier, &unidirectional,
-			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
-			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
-			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
-			&agentArch, &n.ListGroup,
-			&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
-		); err != nil {
-			return nil, nil, err
-		}
-		n.LastUpgradeVersion = luVersion.String
-		n.LastUpgradeStatus = luStatus.String
-		n.LastUpgradeError = luError.String
-		n.Disabled = disabled == 1
-		n.Unidirectional = unidirectional == 1
-		n.NoDirectExit = noDirectExit == 1
-		n.RelayHostDeclared = relayHostDeclared == 1
-		n.RelayHostV6Declared = relayHostV6Declared == 1
-		n.CFSync = cfSync == 1
+n := &Node{}
+			g := &UserNode{UserID: userID}
+			var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
+			var relayV4Disabled, relayV6Disabled int
+			var localMigratedAt, lastSeen sql.NullInt64
+			var agentVersion, agentArch sql.NullString
+			var ownerID sql.NullInt64
+			var luVersion, luStatus, luError sql.NullString
+			if err := rows.Scan(
+				&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
+				&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
+				&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
+				&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
+				&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
+				&n.SortOrder, &n.RateMultiplier, &unidirectional,
+				&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+				&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+				&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+				&agentArch, &n.ListGroup, &relayV4Disabled, &relayV6Disabled,
+				&g.MaxForwards, &g.TrafficQuotaBytes, &g.TrafficUsedBytes, &g.RateLimitMBytes, &g.GrantedAt,
+			); err != nil {
+				return nil, nil, err
+			}
+			n.LastUpgradeVersion = luVersion.String
+			n.LastUpgradeStatus = luStatus.String
+			n.LastUpgradeError = luError.String
+			n.Disabled = disabled == 1
+			n.Unidirectional = unidirectional == 1
+			n.NoDirectExit = noDirectExit == 1
+			n.RelayHostDeclared = relayHostDeclared == 1
+			n.RelayHostV6Declared = relayHostV6Declared == 1
+			n.RelayV4Disabled = relayV4Disabled == 1
+			n.RelayV6Disabled = relayV6Disabled == 1
+			n.CFSync = cfSync == 1
 		if ownerID.Valid {
 			v := ownerID.Int64
 			n.OwnerID = &v

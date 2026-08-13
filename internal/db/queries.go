@@ -59,10 +59,16 @@ type Node struct {
 	// user could otherwise impersonate the node). json:"-" makes leaking it opt-in:
 	// the admin node-detail endpoint re-adds it explicitly via nodeWithSecret.
 	Secret              string         `json:"-"`
-	RelayHost           string         `json:"relay_host"`
-	RelayHostV6         string         `json:"relay_host_v6"`
-	RelayHostDeclared   bool           `json:"relay_host_declared"`
-	RelayHostV6Declared bool           `json:"relay_host_v6_declared"`
+RelayHost           string         `json:"relay_host"`
+		RelayHostV6         string         `json:"relay_host_v6"`
+		RelayHostDeclared   bool           `json:"relay_host_declared"`
+		RelayHostV6Declared bool           `json:"relay_host_v6_declared"`
+		// RelayV4Disabled / RelayV6Disabled sticky-disable a family: the
+		// matching relay host stays empty and hello auto-fill will not re-seed
+		// it. Used to force dual-stack nodes to v4-only or v6-only without the
+		// agent undoing the clear on reconnect.
+		RelayV4Disabled bool `json:"relay_v4_disabled"`
+		RelayV6Disabled bool `json:"relay_v6_disabled"`
 	Online              int            `json:"online"`
 	AgentVersion        string         `json:"agent_version"`
 	AgentSHA            string         `json:"agent_sha"`
@@ -462,7 +468,7 @@ func ResetNodeSecret(d *sql.DB, id int64) (string, error) {
 
 // NOTE: scanNode and the inline scan in grants.go (ListNodesForUser) read these
 // columns in this exact order — keep all three in lockstep when adding a column.
-const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip,agent_arch,COALESCE(list_group,'')`
+const nodeCols = `id,name,node_type,owner_id,address,secret,relay_host,relay_host_v6,online,agent_version,agent_sha,last_seen,last_apply_at,last_error,last_warning,disabled,local_migrated_at,port_range,created_at,last_upgrade_at,last_upgrade_version,last_upgrade_status,last_upgrade_error,sort_order,rate_multiplier,unidirectional,relay_host_declared,relay_host_v6_declared,roles,no_direct_exit,backend_ip,cf_sync,cf_zone_id,cf_record_name,cf_last_sync_at,cf_last_error,cf_last_ip,agent_arch,COALESCE(list_group,''),COALESCE(relay_v4_disabled,0),COALESCE(relay_v6_disabled,0)`
 
 func GetNode(d *sql.DB, id int64) (*Node, error) {
 	row := d.QueryRow(`SELECT `+nodeCols+` FROM nodes WHERE id = ?`, id)
@@ -474,29 +480,32 @@ type rowScanner interface{ Scan(...any) error }
 func scanNode(r rowScanner) (*Node, error) {
 	n := &Node{}
 	var disabled, unidirectional, relayHostDeclared, relayHostV6Declared, noDirectExit, cfSync int
+	var relayV4Disabled, relayV6Disabled int
 	var localMigratedAt, lastSeen sql.NullInt64
 	var agentVersion, agentArch sql.NullString
 	var ownerID sql.NullInt64
 	var luVersion, luStatus, luError sql.NullString
 	if err := r.Scan(
-			&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
-			&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
-			&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
-			&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
-			&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
-			&n.SortOrder, &n.RateMultiplier, &unidirectional,
-			&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
-			&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
-			&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
-			&agentArch, &n.ListGroup,
-		); err != nil {
-			return nil, err
-		}
+		&n.ID, &n.Name, &n.NodeType, &ownerID, &n.Address, &n.Secret,
+		&n.RelayHost, &n.RelayHostV6, &n.Online, &agentVersion, &n.AgentSHA,
+		&lastSeen, &n.LastApplyAt, &n.LastError, &n.LastWarning,
+		&disabled, &localMigratedAt, &n.PortRange, &n.CreatedAt,
+		&n.LastUpgradeAt, &luVersion, &luStatus, &luError,
+		&n.SortOrder, &n.RateMultiplier, &unidirectional,
+		&relayHostDeclared, &relayHostV6Declared, &n.Roles, &noDirectExit,
+		&n.BackendIP, &cfSync, &n.CFZoneID, &n.CFRecordName,
+		&n.CFLastSyncAt, &n.CFLastError, &n.CFLastIP,
+		&agentArch, &n.ListGroup, &relayV4Disabled, &relayV6Disabled,
+	); err != nil {
+		return nil, err
+	}
 	n.Disabled = disabled == 1
 	n.Unidirectional = unidirectional == 1
 	n.NoDirectExit = noDirectExit == 1
 	n.RelayHostDeclared = relayHostDeclared == 1
 	n.RelayHostV6Declared = relayHostV6Declared == 1
+	n.RelayV4Disabled = relayV4Disabled == 1
+	n.RelayV6Disabled = relayV6Disabled == 1
 	n.CFSync = cfSync == 1
 	if ownerID.Valid {
 		v := ownerID.Int64
@@ -846,6 +855,26 @@ func SetNodeRelayHostV6Declared(d *sql.DB, id int64, declared bool) error {
 		v = 1
 	}
 	_, err := d.Exec(`UPDATE nodes SET relay_host_v6_declared=? WHERE id=?`, v, id)
+	return err
+}
+
+// SetNodeRelayV4Disabled sticky-disables (or re-enables) the v4 relay family.
+func SetNodeRelayV4Disabled(d *sql.DB, id int64, disabled bool) error {
+	v := 0
+	if disabled {
+		v = 1
+	}
+	_, err := d.Exec(`UPDATE nodes SET relay_v4_disabled=? WHERE id=?`, v, id)
+	return err
+}
+
+// SetNodeRelayV6Disabled sticky-disables (or re-enables) the v6 relay family.
+func SetNodeRelayV6Disabled(d *sql.DB, id int64, disabled bool) error {
+	v := 0
+	if disabled {
+		v = 1
+	}
+	_, err := d.Exec(`UPDATE nodes SET relay_v6_disabled=? WHERE id=?`, v, id)
 	return err
 }
 

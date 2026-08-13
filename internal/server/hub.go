@@ -1179,7 +1179,9 @@ func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, observedIP, probedV
 		}
 	}
 
-	if node.RelayHost == "" && declaredV4 == "" {
+	// Operator sticky-disable wins over auto-seed: keep the family empty so a
+	// dual-stack node forced to v4-only / v6-only does not get refilled on hello.
+	if node.RelayHost == "" && declaredV4 == "" && !node.RelayV4Disabled {
 		// Prefer public agent probe, then connectIP, then observed peer, then private.
 		v4 := pickV4(probedV4, connectIP, observedIP)
 		if v4 != "" {
@@ -1187,7 +1189,7 @@ func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, observedIP, probedV
 			node.RelayHost = v4
 		}
 	}
-	if node.RelayHostV6 == "" && declaredV6 == "" {
+	if node.RelayHostV6 == "" && declaredV6 == "" && !node.RelayV6Disabled {
 		v6 := pickV6(probedV6, connectIP, observedIP)
 		if v6 != "" {
 			_ = db.UpdateNodeRelayHostV6(d, node.ID, v6)
@@ -1205,8 +1207,11 @@ func fillNodeRelayHosts(d *sql.DB, node *db.Node, connectIP, observedIP, probedV
 // stops declaring a value (flag removed, daemon restarted), the DB field
 // unlocks but keeps its last value rather than going blank, so a live route
 // doesn't disappear out from under the running link.
+//
+// Sticky family disable (RelayV4Disabled / RelayV6Disabled) beats daemon flags:
+// the operator intentionally blanked that family and hello must not re-lock it.
 func applyDeclaredRelayHosts(d *sql.DB, node *db.Node, declaredV4, declaredV6 string) {
-	if declaredV4 != "" {
+	if declaredV4 != "" && !node.RelayV4Disabled {
 		if isValidRelayHost(declaredV4) {
 			if node.RelayHost != declaredV4 || !node.RelayHostDeclared {
 				_ = db.UpdateNodeRelayHost(d, node.ID, declaredV4)
@@ -1221,7 +1226,7 @@ func applyDeclaredRelayHosts(d *sql.DB, node *db.Node, declaredV4, declaredV6 st
 		node.RelayHostDeclared = false
 	}
 
-	if declaredV6 != "" {
+	if declaredV6 != "" && !node.RelayV6Disabled {
 		if isValidRelayHostV6(declaredV6) {
 			if node.RelayHostV6 != declaredV6 || !node.RelayHostV6Declared {
 				_ = db.UpdateNodeRelayHostV6(d, node.ID, declaredV6)
