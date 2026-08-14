@@ -154,3 +154,97 @@ func TestProtocolOnlyGrantCanCreateRule(t *testing.T) {
 		t.Fatalf("admin-for-user: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDeleteLastProtocolRuleDropsSubExport(t *testing.T) {
+	d := openDB(t)
+	s := newServer(t, d)
+	g, err := db.CreateNode(d, "线路7", "https://p", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateNodeRelayHost(d, g.ID, "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := db.CreateProxyService(d, "线路7-vless", db.ProxyProtoVLESS, db.ProxyCoreXray, []byte(`{"uuid":"11111111-1111-4111-8111-111111111111"}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertProxyInstance(d, svc.ID, g.ID, 443, "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateProxyInstanceDeploy(d, 1, db.ProxyDeployReady, "vless://x@1.1.1.1:443", "", "1"); err != nil {
+		// instance id may not be 1; look it up
+		insts, _ := db.ListProxyInstances(d, svc.ID)
+		if len(insts) == 0 {
+			t.Fatal("no instance")
+		}
+		if err := db.UpdateProxyInstanceDeploy(d, insts[0].ID, db.ProxyDeployReady, "vless://x@1.1.1.1:443", "", "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uid, cookie := loginAsUser(t, d, 10)
+	if err := db.GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.ListSubVisibleReadyInstancesForUser(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("grant-only must not export, got %+v", rows)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"node_id": g.ID, "name": "vless-rule", "proto": "tcp", "exit": "9.9.9.9:8443",
+		"proxy_service_id": svc.ID,
+	})
+	req := newTestRequest(http.MethodPost, "/api/my/rules", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rows, err = db.ListSubVisibleReadyInstancesForUser(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rule should export, got %+v", rows)
+	}
+	clients, err := db.ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].UserID != uid {
+		t.Fatalf("want one inbound client, got %+v", clients)
+	}
+
+	rules, _ := db.ListRulesByUser(d, uid)
+	if len(rules) == 0 {
+		t.Fatal("missing rule")
+	}
+	req = newTestRequest(http.MethodDelete, "/api/my/rules/"+strconv.FormatInt(rules[0].ID, 10), nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rows, err = db.ListSubVisibleReadyInstancesForUser(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("deleted rule must drop export, got %+v", rows)
+	}
+	clients, err = db.ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 0 {
+		t.Fatalf("deleted rule must drop inbound client, got %+v", clients)
+	}
+}

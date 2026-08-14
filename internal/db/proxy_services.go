@@ -551,23 +551,33 @@ type SubExportNode struct {
 //   - belong to services with sub_visible=1
 //   - are deploy_status=ready with non-empty uri
 //   - the user is granted the proxy service (user_proxy_services)
+//   - the user still has an enabled rule on that service (account enabled / not expired)
 //
 // A whole-node grant (user_nodes) is not required: that would also authorize
-// 单点/端口转发 on the same VPS.
+// 单点/端口转发 on the same VPS. A grant without a live rule must not export.
 func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNode, error) {
 	rows, err := d.Query(`
-				SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
-				       COALESCE(n.name, ''), COALESCE(s.config_json,''), COALESCE(n.address,''), COALESCE(n.backend_ip,''),
-				       COALESCE(n.relay_host,''), COALESCE(n.relay_host_v6,'')
-				FROM proxy_service_instances i
-				JOIN proxy_services s ON s.id = i.service_id
-				JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
-				LEFT JOIN nodes n ON n.id = i.node_id
-				WHERE s.sub_visible = 1
-				  AND i.deploy_status = ?
-				  AND TRIM(i.uri) != ''
-				ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
-		userID, ProxyDeployReady)
+					SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
+					       COALESCE(n.name, ''), COALESCE(s.config_json,''), COALESCE(n.address,''), COALESCE(n.backend_ip,''),
+					       COALESCE(n.relay_host,''), COALESCE(n.relay_host_v6,'')
+					FROM proxy_service_instances i
+					JOIN proxy_services s ON s.id = i.service_id
+					JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
+					LEFT JOIN nodes n ON n.id = i.node_id
+					WHERE s.sub_visible = 1
+					  AND i.deploy_status = ?
+					  AND TRIM(i.uri) != ''
+					  AND EXISTS (
+					    SELECT 1 FROM rules r
+					    JOIN users u ON u.id = r.owner_id
+					    WHERE r.owner_id = ?
+					      AND r.proxy_service_id = i.service_id
+					      AND COALESCE(r.disabled, 0) = 0
+					      AND u.disabled = 0
+					      AND (u.expires_at IS NULL OR u.expires_at = 0 OR u.expires_at >= strftime('%s','now'))
+					  )
+					ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
+		userID, ProxyDeployReady, userID)
 	if err != nil {
 		return nil, err
 	}

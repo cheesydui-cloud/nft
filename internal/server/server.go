@@ -129,6 +129,11 @@ func (s *Server) expiryEnforcer() {
 				log.Printf("expiry: query expired-user nodes: %v", err)
 				continue
 			}
+			if svcs, serr := db.ListExpiredUserProxyServiceIDs(s.DB); serr == nil {
+				s.syncProxyInboundForServices(svcs)
+			} else {
+				log.Printf("expiry: query expired-user proxy services: %v", serr)
+			}
 			for _, n := range nodes {
 				if err := s.dispatchToNode(n); err != nil {
 					log.Printf("expiry: re-dispatch node %d: %v", n, err)
@@ -191,6 +196,7 @@ func (s *Server) cycleResetEnforcer() {
 						}
 					}
 				}
+				s.syncProxyInboundForUser(u.ID)
 			}
 		}
 	}
@@ -343,10 +349,12 @@ func (s *Server) enforceUserQuota(userID int64) {
 	if u.Disabled || u.TrafficQuotaBytes <= 0 || billable < u.TrafficQuotaBytes {
 		return
 	}
+	svcIDs, _ := db.ListProxyServiceIDsForUserRules(s.DB, userID)
 	if err := db.SetUserDisabled(s.DB, userID, true, "流量超额"); err != nil {
 		log.Printf("quota: disable user %d: %v", userID, err)
 		return
 	}
+	s.syncProxyInboundForServices(svcIDs)
 	log.Printf("user %d disabled: traffic quota reached (billable %d = used %d × rate %g / quota %d bytes)",
 		userID, billable, u.TrafficUsedBytes, u.BillingRate, u.TrafficQuotaBytes)
 	nodes, err := db.DistinctUserNodes(s.DB, userID)

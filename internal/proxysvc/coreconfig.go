@@ -46,7 +46,8 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 	if listenPort <= 0 || listenPort > 65535 {
 		return nil, fmt.Errorf("invalid listen port %d", listenPort)
 	}
-	if c.UUID == "" {
+	clients := vlessClientsFromConfig(&c)
+	if len(clients) == 0 && c.UUID == "" {
 		return nil, fmt.Errorf("vless uuid missing")
 	}
 	sec := NormalizeSecurity(c.Security)
@@ -68,9 +69,18 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 	if flow != "" && flow != "xtls-rprx-vision" {
 		return nil, fmt.Errorf("unsupported flow %q（仅 xtls-rprx-vision 或关）", flow)
 	}
-	client := map[string]any{"id": c.UUID}
-	if flow != "" {
-		client["flow"] = flow
+	// Overlay set Clients (possibly empty): do not fall back to template UUID.
+	if c.Clients == nil && len(clients) == 0 {
+		clients = []map[string]any{{"id": c.UUID}}
+	}
+	for _, item := range clients {
+		if flow == "" {
+			delete(item, "flow")
+			continue
+		}
+		if _, ok := item["flow"]; !ok {
+			item["flow"] = flow
+		}
 	}
 
 	stream := map[string]any{
@@ -210,7 +220,7 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 		"port":     listenPort,
 		"protocol": "vless",
 		"settings": map[string]any{
-			"clients":    []any{client},
+			"clients":    clientsToAny(clients),
 			"decryption": decryption,
 		},
 		"streamSettings": stream,
@@ -572,6 +582,35 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 		"method":      method,
 		"password":    c.Password,
 	}
+	if c.Users != nil {
+		users := make([]any, 0, len(c.Users))
+		for _, u := range c.Users {
+			pass := strings.TrimSpace(u.Password)
+			if pass == "" {
+				continue
+			}
+			name := strings.TrimSpace(u.Name)
+			if name == "" {
+				name = "u"
+			}
+			users = append(users, map[string]any{"name": name, "password": pass})
+		}
+		if len(users) == 0 {
+			// Empty overlay: rotate inbound password so the published PSK dies.
+			inbound["password"] = GenerateSSPassword(method)
+			inbound["users"] = []any{}
+		} else if len(users) == 1 {
+			only := users[0].(map[string]any)
+			if strings.TrimSpace(fmt.Sprint(only["password"])) == strings.TrimSpace(c.Password) {
+				// Single user still on the published PSK — keep classic one-password inbound
+				// so existing ss://method:psk links keep working.
+			} else {
+				inbound["users"] = users
+			}
+		} else {
+			inbound["users"] = users
+		}
+	}
 	// tcp_fast_open remains a valid listen option; do NOT put sniff* on inbound —
 	// sing-box ≥1.11 deprecated them and ≥1.13 fails check with:
 	// "legacy inbound fields are deprecated".
@@ -659,11 +698,24 @@ func BuildSingBoxSocksConfig(listenPort int, raw json.RawMessage) ([]byte, error
 		mode = "password"
 	}
 	if mode == "password" {
-		inbound["users"] = []any{
-			map[string]any{
-				"username": c.Username,
-				"password": c.Password,
-			},
+		if c.Users != nil {
+			users := make([]any, 0, len(c.Users))
+			for _, u := range c.Users {
+				name := strings.TrimSpace(u.Username)
+				pass := strings.TrimSpace(u.Password)
+				if name == "" || pass == "" {
+					continue
+				}
+				users = append(users, map[string]any{"username": name, "password": pass})
+			}
+			inbound["users"] = users
+		} else {
+			inbound["users"] = []any{
+				map[string]any{
+					"username": c.Username,
+					"password": c.Password,
+				},
+			}
 		}
 	}
 	if c.TCPFastOpen {
@@ -736,17 +788,32 @@ func BuildSingBoxAnyTLSConfig(listenPort int, raw json.RawMessage) ([]byte, erro
 	if userName == "" {
 		userName = "default"
 	}
+	users := []any{
+		map[string]any{
+			"name":     userName,
+			"password": c.Password,
+		},
+	}
+	if c.Users != nil {
+		users = make([]any, 0, len(c.Users))
+		for _, u := range c.Users {
+			name := strings.TrimSpace(u.Name)
+			if name == "" {
+				name = "default"
+			}
+			pass := strings.TrimSpace(u.Password)
+			if pass == "" {
+				continue
+			}
+			users = append(users, map[string]any{"name": name, "password": pass})
+		}
+	}
 	inbound := map[string]any{
 		"type":        "anytls",
 		"tag":         "anytls-in",
 		"listen":      listen,
 		"listen_port": listenPort,
-		"users": []any{
-			map[string]any{
-				"name":     userName,
-				"password": c.Password,
-			},
-		},
+		"users":       users,
 	}
 	if len(c.PaddingScheme) > 0 {
 		inbound["padding_scheme"] = c.PaddingScheme
@@ -819,17 +886,29 @@ func BuildSingBoxNaiveConfig(listenPort int, raw json.RawMessage) ([]byte, error
 	if listen == "" {
 		listen = "::"
 	}
+	users := []any{
+		map[string]any{
+			"username": c.Username,
+			"password": c.Password,
+		},
+	}
+	if c.Users != nil {
+		users = make([]any, 0, len(c.Users))
+		for _, u := range c.Users {
+			name := strings.TrimSpace(u.Username)
+			pass := strings.TrimSpace(u.Password)
+			if name == "" || pass == "" {
+				continue
+			}
+			users = append(users, map[string]any{"username": name, "password": pass})
+		}
+	}
 	inbound := map[string]any{
 		"type":        "naive",
 		"tag":         "naive-in",
 		"listen":      listen,
 		"listen_port": listenPort,
-		"users": []any{
-			map[string]any{
-				"username": c.Username,
-				"password": c.Password,
-			},
-		},
+		"users":       users,
 	}
 	netw := strings.ToLower(strings.TrimSpace(c.Network))
 	if netw == "tcp" || netw == "udp" {

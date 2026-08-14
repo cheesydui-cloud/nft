@@ -86,8 +86,14 @@ func (s *Server) loadSubExportNodes(userID int64) ([]subexport.Node, error) {
 		})
 		port := r.ListenPort
 		uri := r.URI
+		cfg := r.ConfigJSON
+		if userID > 0 {
+			if cred, err := s.ensureUserProxyCred(userID, r.ServiceID, r.Protocol, cfg); err == nil && cred != nil {
+				cfg = proxysvc.ConfigWithUserSecret(r.Protocol, cfg, inboundFromCred(cred))
+			}
+		}
 		if host != "" && port > 0 {
-			if rebuilt, err := proxysvc.BuildShareURI(r.Protocol, r.Name, host, port, r.ConfigJSON); err == nil && rebuilt != "" {
+			if rebuilt, err := proxysvc.BuildShareURI(r.Protocol, r.Name, host, port, cfg); err == nil && rebuilt != "" {
 				uri = rebuilt
 			}
 		}

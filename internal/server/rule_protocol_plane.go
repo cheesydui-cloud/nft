@@ -113,6 +113,13 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if err := validateProxyConfigForPublish(svc.Protocol, cfg); err != nil {
 		return err
 	}
+	if r.OwnerID.Valid && r.OwnerID.Int64 > 0 {
+		if overlaid, oerr := s.overlayProxyConfigForUser(svc, cfg, r.OwnerID.Int64); oerr == nil {
+			cfg = overlaid
+		} else {
+			return oerr
+		}
+	}
 	forceCore := false
 	if proto == "vless" && proxysvc.NeedsVLESSEnc(cfg) {
 		forceCore = true
@@ -120,10 +127,10 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	if err := s.ensureCoreOnNodeForce(node, svc.Protocol, forceCore); err != nil {
 		return err
 	}
-		shareHost := proxysvc.ShareHostFromConfig(cfg)
-		if shareHost == "" {
-			shareHost = defaultProxyShareHost(node)
-		}
+	shareHost := proxysvc.ShareHostFromConfig(cfg)
+	if shareHost == "" {
+		shareHost = defaultProxyShareHost(node)
+	}
 	core := strings.TrimSpace(svc.Core)
 	if core == "" {
 		core = protocolEntryCore(proto)
@@ -137,18 +144,18 @@ func (s *Server) deployRuleProtocolPlane(r *db.Rule) error {
 	//   socks5 → open SOCKS (client destinations pass through exit_uri)
 	//   direct + landing share (ss/vless/…) → real protocol outbound
 	//   direct + bare host:port only → freedom redirect (L4-like tunnel)
-		apply := wsproto.ProxyServiceApply{
-			InstanceID:    instID,
-			ServiceID:     svc.ID,
-			Protocol:      svc.Protocol,
-			Core:          core,
-			ListenPort:    r.EntryListenPort,
-			ShareHost:     shareHost,
-			Name:          fmt.Sprintf("%s#r%d", svc.Name, r.ID),
-			Config:        cfg,
-			BlockEgressV4: node.RelayV4Disabled,
-			BlockEgressV6: node.RelayV6Disabled,
-		}
+	apply := wsproto.ProxyServiceApply{
+		InstanceID:    instID,
+		ServiceID:     svc.ID,
+		Protocol:      svc.Protocol,
+		Core:          core,
+		ListenPort:    r.EntryListenPort,
+		ShareHost:     shareHost,
+		Name:          fmt.Sprintf("%s#r%d", svc.Name, r.ID),
+		Config:        cfg,
+		BlockEgressV4: node.RelayV4Disabled,
+		BlockEgressV6: node.RelayV6Disabled,
+	}
 	exitType := strings.ToLower(strings.TrimSpace(r.ExitType))
 	if exitType == "socks5" {
 		uri := strings.TrimSpace(r.ExitURI)

@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"database/sql"
+	"testing"
+)
 
 func TestProxyServiceGrantIndependentOfSiblings(t *testing.T) {
 	d := openTestDB(t)
@@ -85,8 +88,21 @@ func TestListSubVisibleReadyInstancesDoesNotNeedNodeGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(rows) != 0 {
+		t.Fatalf("grant without an enabled rule must not export, got %+v", rows)
+	}
+	if _, err := CreateRule(d, &Rule{
+		NodeID: nid, OwnerID: sql.NullInt64{Int64: uid, Valid: true}, Name: "r1", Proto: "tcp",
+		ExitHost: "9.9.9.9", ExitPort: 443, ProxyServiceID: svc.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = ListSubVisibleReadyInstancesForUser(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rows) != 1 || rows[0].ServiceID != svc.ID {
-		t.Fatalf("want one instance from protocol grant, got %+v", rows)
+		t.Fatalf("want one instance from grant+rule, got %+v", rows)
 	}
 	if _, err := GetNodeGrant(d, uid, nid); err == nil {
 		t.Fatal("export must not require or create a node grant")
@@ -116,4 +132,79 @@ func TestUserMayUseRuleEntryProtocolOnly(t *testing.T) {
 	if UserMayUseRuleEntry(d, uid, nid, svc.ID+99) {
 		t.Fatal("ungranted service must be rejected")
 	}
+}
+
+func TestActiveProxyClientsFollowEnabledRules(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	nid := createTestNode(t, d, "线路7")
+	svc, err := CreateProxyService(d, "线路7-vless", ProxyProtoVLESS, ProxyCoreXray, []byte(`{"uuid":"11111111-1111-4111-8111-111111111111"}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertProxyInstance(d, svc.ID, nid, 443, "1.2.3.4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := InsertUserProxyCred(d, uid, svc.ID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	clients, err := ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 0 {
+		t.Fatalf("no rule → no inbound client, got %+v", clients)
+	}
+
+	rid, err := CreateRule(d, &Rule{
+		NodeID: nid, OwnerID: sql.NullInt64{Int64: uid, Valid: true}, Name: "r1", Proto: "tcp",
+		ExitHost: "9.9.9.9", ExitPort: 443, ProxyServiceID: svc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients, err = ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].UserID != uid || clients[0].UUID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("want user cred after rule create, got %+v", clients)
+	}
+
+	if _, err := DeleteRule(d, rid); err != nil {
+		t.Fatal(err)
+	}
+	clients, err = ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 0 {
+		t.Fatalf("delete last rule must drop inbound client, got %+v", clients)
+	}
+
+	rid, err = CreateRule(d, &Rule{
+		NodeID: nid, OwnerID: sql.NullInt64{Int64: uid, Valid: true}, Name: "r2", Proto: "tcp",
+		ExitHost: "9.9.9.9", ExitPort: 443, ProxyServiceID: svc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetUserDisabled(d, uid, true, "管理员手动禁用"); err != nil {
+		t.Fatal(err)
+	}
+	clients, err = ListActiveProxyClients(d, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 0 {
+		t.Fatalf("disabled user must drop inbound client, got %+v", clients)
+	}
+	if UserHasActiveProxyRule(d, uid, svc.ID) {
+		t.Fatal("disabled user must not have an active proxy rule")
+	}
+	_ = rid
 }

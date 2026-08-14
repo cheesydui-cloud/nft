@@ -37,7 +37,10 @@ type VLESSConfig struct {
 	Encryption        string `json:"encryption"` // client URI (optional ML-KEM / vlessenc)
 	Decryption        string `json:"decryption"` // server settings.decryption (optional)
 	UUID              string `json:"uuid"`
-	SubVisible        bool   `json:"sub_visible"`
+	// Clients is the live inbound UUID list. When set, builders emit every
+	// entry instead of the single UUID (shared-secret → per-user isolation).
+	Clients    []VLESSClient `json:"clients,omitempty"`
+	SubVisible bool          `json:"sub_visible"`
 	// Sniffing enables inbound traffic sniffing (http/tls/quic destOverride).
 	// nil = default on (matches historical hard-coded behavior); false disables.
 	Sniffing *bool `json:"sniffing,omitempty"`
@@ -61,6 +64,12 @@ type VLESSConfig struct {
 	// Not set by panel; never required in config_json from API.
 	CertFile string `json:"cert_file,omitempty"`
 	KeyFile  string `json:"key_file,omitempty"`
+}
+
+// VLESSClient is one inbound UUID (xray clients[]).
+type VLESSClient struct {
+	ID   string `json:"id"`
+	Flow string `json:"flow,omitempty"`
 }
 
 // NetworksForSecurity returns allowed transport networks for a security mode.
@@ -193,6 +202,16 @@ type SSConfig struct {
 	// Sniffing: yyds inbound has none. nil / omitted → off.
 	Sniffing   *bool `json:"sniffing,omitempty"`
 	SubVisible bool  `json:"sub_visible"`
+	// Users is the live inbound list (sing-box shadowsocks users[]).
+	// Each password is a per-user key; SS2022 user keys are combined with
+	// the inbound PSK at apply time.
+	Users []SSUser `json:"users,omitempty"`
+}
+
+// SSUser is one Shadowsocks inbound user.
+type SSUser struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
 }
 
 // SSMethods lists supported ciphers for Wizard / validation.
@@ -290,6 +309,15 @@ type MieruConfig struct {
 	Username      string `json:"username"`
 	Password      string `json:"password"`
 	SubVisible    bool   `json:"sub_visible"`
+	// Users is the live mita user list. When set, deploy prefers this over
+	// the single username/password pair.
+	Users []MieruUser `json:"users,omitempty"`
+}
+
+// MieruUser is one mita account.
+type MieruUser struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
 }
 
 // ValidateMieruDeploy checks fields required to publish mieru/mita.
@@ -321,11 +349,18 @@ type Socks5Config struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	// UDP enables UDP ASSOCIATE. Default true when nil.
-	UDP         *bool `json:"udp,omitempty"`
-	NTP         *bool `json:"ntp,omitempty"`
-	Sniffing    *bool `json:"sniffing,omitempty"`
-	TCPFastOpen bool  `json:"tcp_fast_open,omitempty"`
-	SubVisible  bool  `json:"sub_visible"`
+	UDP         *bool       `json:"udp,omitempty"`
+	NTP         *bool       `json:"ntp,omitempty"`
+	Sniffing    *bool       `json:"sniffing,omitempty"`
+	TCPFastOpen bool        `json:"tcp_fast_open,omitempty"`
+	SubVisible  bool        `json:"sub_visible"`
+	Users       []SocksUser `json:"users,omitempty"`
+}
+
+// SocksUser is one SOCKS inbound account.
+type SocksUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // AnyTLSConfig is sing-box anytls inbound (TLS required; matches anytls-go + sing-box).
@@ -346,11 +381,18 @@ type AnyTLSConfig struct {
 	CertFile      string `json:"cert_file,omitempty"`
 	KeyFile       string `json:"key_file,omitempty"`
 	// PaddingScheme optional; empty → sing-box default.
-	PaddingScheme []string `json:"padding_scheme,omitempty"`
-	NTP           *bool    `json:"ntp,omitempty"`
-	Sniffing      *bool    `json:"sniffing,omitempty"`
-	TCPFastOpen   bool     `json:"tcp_fast_open,omitempty"`
-	SubVisible    bool     `json:"sub_visible"`
+	PaddingScheme []string     `json:"padding_scheme,omitempty"`
+	NTP           *bool        `json:"ntp,omitempty"`
+	Sniffing      *bool        `json:"sniffing,omitempty"`
+	TCPFastOpen   bool         `json:"tcp_fast_open,omitempty"`
+	SubVisible    bool         `json:"sub_visible"`
+	Users         []AnyTLSUser `json:"users,omitempty"`
+}
+
+// AnyTLSUser is one anytls inbound account.
+type AnyTLSUser struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
 }
 
 // NaiveConfig is sing-box naive inbound (protocol-compatible; not Caddy original stack).
@@ -372,11 +414,18 @@ type NaiveConfig struct {
 	CertFile      string `json:"cert_file,omitempty"`
 	KeyFile       string `json:"key_file,omitempty"`
 	// QuicCongestionControl since sing-box 1.13; empty → default bbr.
-	QuicCongestionControl string `json:"quic_congestion_control,omitempty"`
-	NTP                   *bool  `json:"ntp,omitempty"`
-	Sniffing              *bool  `json:"sniffing,omitempty"`
-	TCPFastOpen           bool   `json:"tcp_fast_open,omitempty"`
-	SubVisible            bool   `json:"sub_visible"`
+	QuicCongestionControl string      `json:"quic_congestion_control,omitempty"`
+	NTP                   *bool       `json:"ntp,omitempty"`
+	Sniffing              *bool       `json:"sniffing,omitempty"`
+	TCPFastOpen           bool        `json:"tcp_fast_open,omitempty"`
+	SubVisible            bool        `json:"sub_visible"`
+	Users                 []NaiveUser `json:"users,omitempty"`
+}
+
+// NaiveUser is one naive inbound account.
+type NaiveUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // ValidateSocks5Deploy checks fields required to publish SOCKS5.
@@ -1018,6 +1067,9 @@ func randomHex(nBytes int) string {
 	return hex.EncodeToString(b)
 }
 
+// RandomHex is the exported form of randomHex for per-user inbound secrets.
+func RandomHex(nBytes int) string { return randomHex(nBytes) }
+
 func randomB64URL(nBytes int) string {
 	b := make([]byte, nBytes)
 	_, _ = rand.Read(b)
@@ -1029,6 +1081,9 @@ func randomB64Std(nBytes int) string {
 	_, _ = rand.Read(b)
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// RandomB64Std is the exported form of randomB64Std for per-user inbound secrets.
+func RandomB64Std(nBytes int) string { return randomB64Std(nBytes) }
 
 // GenerateRealityKeyPair returns a REALITY X25519 key pair (raw base64url, no padding),
 // matching xray-core `xray x25519` output format used by clients as pbk.
@@ -1074,3 +1129,6 @@ func newUUID() string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
+
+// NewUUID is the exported form of newUUID for per-user VLESS clients.
+func NewUUID() string { return newUUID() }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,12 @@ func TestPublicSubAndMySubscription(t *testing.T) {
 	}
 	// Subscription export requires the protocol-level grant only.
 	if err := db.GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateRule(d, &db.Rule{
+		NodeID: node.ID, OwnerID: sql.NullInt64{Int64: uid, Valid: true}, Name: "sub-rule", Proto: "tcp",
+		ExitHost: "9.9.9.9", ExitPort: 443, ProxyServiceID: svc.ID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	inst, err := db.UpsertProxyInstance(d, svc.ID, node.ID, 443, "10.0.0.1")

@@ -2736,6 +2736,9 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if body.ProxyServiceID > 0 {
+		s.syncProxyInboundForService(body.ProxyServiceID)
+	}
 	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
 		if err := s.syncRuleProtocolPlane(rl2); err != nil {
@@ -2936,6 +2939,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "规则不存在")
 		return
 	}
+	prevProxyServiceID := rl.ProxyServiceID
 	var body struct {
 		NodeID    int64  `json:"node_id"`
 		OwnerID   *int64 `json:"owner_id,omitempty"`
@@ -3169,6 +3173,7 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	s.syncProxyInboundForServices([]int64{prevProxyServiceID, rl.ProxyServiceID})
 	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
 		if err := s.syncRuleProtocolPlane(rl2); err != nil {
@@ -3190,7 +3195,9 @@ func (s *Server) apiDeleteRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	var droppedSvc int64
 	if rl, err := db.GetRule(s.DB, id); err == nil {
+		droppedSvc = ruleProxyServiceID(rl)
 		s.stopRuleProtocolPlane(rl)
 	}
 	nodes, err := db.DeleteRule(s.DB, id)
@@ -3200,6 +3207,9 @@ func (s *Server) apiDeleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.delete", strconv.FormatInt(id, 10), "")
 	s.apiDispatchFanout(nodes)
+	if droppedSvc > 0 {
+		s.syncProxyInboundForService(droppedSvc)
+	}
 	jsonOK(w, map[string]any{"ok": true})
 }
 
@@ -3523,6 +3533,7 @@ func (s *Server) apiRevokeProxyService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.apiDispatchFanout(affected)
+	s.syncProxyInboundForService(serviceID)
 	db.WriteAudit(s.DB, u.ID, "user.revoke_proxy_service", strconv.FormatInt(userID, 10), strconv.FormatInt(serviceID, 10))
 	jsonOK(w, map[string]any{"ok": true, "removed_rule_nodes": len(affected)})
 }
@@ -3561,6 +3572,7 @@ func (s *Server) apiBatchRevokeNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		affected = append(affected, nodes...)
+		s.syncProxyInboundForService(sid)
 		db.WriteAudit(s.DB, u.ID, "user.revoke_proxy_service", strconv.FormatInt(userID, 10), strconv.FormatInt(sid, 10))
 	}
 	for _, nid := range body.NodeIDs {
@@ -3802,6 +3814,7 @@ func (s *Server) apiToggleUser(w http.ResponseWriter, r *http.Request) {
 	if willDisable {
 		reason = "管理员手动禁用"
 	}
+	svcIDs, _ := db.ListProxyServiceIDsForUserRules(s.DB, id)
 	if err := db.SetUserDisabled(s.DB, id, willDisable, reason); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -3811,6 +3824,7 @@ func (s *Server) apiToggleUser(w http.ResponseWriter, r *http.Request) {
 	if nodes, err := db.DistinctUserNodes(s.DB, id); err == nil {
 		s.apiDispatchFanout(nodes)
 	}
+	s.syncProxyInboundForServices(svcIDs)
 	db.WriteAudit(s.DB, u.ID, "user.toggle", strconv.FormatInt(id, 10), fmt.Sprintf("disabled=%v", willDisable))
 	jsonOK(w, map[string]any{"ok": true, "disabled": willDisable})
 }
@@ -3866,6 +3880,7 @@ func (s *Server) apiDeleteUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "不支持删除管理员")
 		return
 	}
+	svcIDs, _ := db.ListProxyServiceIDsForUserRules(s.DB, id)
 	affected, err := db.DeleteRulesForUser(s.DB, id)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -3876,6 +3891,7 @@ func (s *Server) apiDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.apiDispatchFanout(affected)
+	s.syncProxyInboundForServices(svcIDs)
 	db.WriteAudit(s.DB, u.ID, "user.delete", strconv.FormatInt(id, 10), "")
 	jsonOK(w, map[string]any{"ok": true})
 }
@@ -4219,6 +4235,9 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_create", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	if body.ProxyServiceID > 0 {
+		s.syncProxyInboundForService(body.ProxyServiceID)
+	}
 	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
 		if err := s.syncRuleProtocolPlane(rl2); err != nil {
@@ -4262,6 +4281,7 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "无权操作该规则")
 		return
 	}
+	prevMyProxyServiceID := rl.ProxyServiceID
 	var body struct {
 		NodeID    int64  `json:"node_id"`
 		Name      string `json:"name"`
@@ -4440,6 +4460,7 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_save", strconv.FormatInt(id, 10), name)
 	s.apiDispatchFanout(affected)
+	s.syncProxyInboundForServices([]int64{prevMyProxyServiceID, rl.ProxyServiceID})
 	var planeErr string
 	if rl2, err := db.GetRule(s.DB, id); err == nil {
 		if err := s.syncRuleProtocolPlane(rl2); err != nil {
@@ -4470,6 +4491,7 @@ func (s *Server) apiMyDeleteRule(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusForbidden, "无权操作该规则")
 		return
 	}
+	droppedSvc := ruleProxyServiceID(rl)
 	s.stopRuleProtocolPlane(rl)
 	nodes, err := db.DeleteRule(s.DB, id)
 	if err != nil {
@@ -4478,6 +4500,9 @@ func (s *Server) apiMyDeleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 	db.WriteAudit(s.DB, u.ID, "rule.user_delete", strconv.FormatInt(id, 10), "")
 	s.apiDispatchFanout(nodes)
+	if droppedSvc > 0 {
+		s.syncProxyInboundForService(droppedSvc)
+	}
 	jsonOK(w, map[string]any{"ok": true})
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -311,8 +312,14 @@ func (s *Server) apiPublishProxyService(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Try live apply on agent.
-		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
+		// Try live apply on agent. Overlay active-rule clients; do not persist that list.
+		liveCfg := cfg
+		if overlaid, oerr := s.overlayProxyConfigForPublish(svc, cfg); oerr == nil {
+			liveCfg = overlaid
+		} else {
+			log.Printf("proxy publish overlay svc=%d: %v", svc.ID, oerr)
+		}
+		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, liveCfg)
 		if applyRes.OK {
 			status := db.ProxyDeployReady
 			finalURI := uri

@@ -234,11 +234,23 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if mtu < 1280 {
 		mtu = 1280
 	}
+	mitaUsers := []map[string]string{
+		{"name": cfg.Username, "password": cfg.Password},
+	}
+	if cfg.Users != nil {
+		mitaUsers = make([]map[string]string, 0, len(cfg.Users))
+		for _, u := range cfg.Users {
+			name := strings.TrimSpace(u.Name)
+			pass := strings.TrimSpace(u.Password)
+			if name == "" || pass == "" {
+				continue
+			}
+			mitaUsers = append(mitaUsers, map[string]string{"name": name, "password": pass})
+		}
+	}
 	serverCfg := map[string]any{
 		"portBindings": mitaPortBindings(port, transports),
-		"users": []map[string]string{
-			{"name": cfg.Username, "password": cfg.Password},
-		},
+		"users":        mitaUsers,
 		"loggingLevel": "INFO",
 		"mtu":          mtu,
 	}

@@ -32,48 +32,48 @@ func (s *Server) apiIssueProxyServiceACME(w http.ResponseWriter, r *http.Request
 		return
 	}
 	proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
-		if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
-			jsonErr(w, http.StatusBadRequest, "仅 VLESS / AnyTLS / Naive 支持 ACME 证书")
-			return
-		}
-		var body struct {
-			Domain    string `json:"domain"`
-			Email     string `json:"email"`
-			Staging   bool   `json:"staging"`
-			Republish *bool  `json:"republish"` // default true when instances exist
-		}
-		if r.Body != nil && r.ContentLength != 0 {
-			_ = json.NewDecoder(r.Body).Decode(&body)
-		}
+	if proto != "vless" && proto != "anytls" && proto != "naive" && proto != "naiveproxy" {
+		jsonErr(w, http.StatusBadRequest, "仅 VLESS / AnyTLS / Naive 支持 ACME 证书")
+		return
+	}
+	var body struct {
+		Domain    string `json:"domain"`
+		Email     string `json:"email"`
+		Staging   bool   `json:"staging"`
+		Republish *bool  `json:"republish"` // default true when instances exist
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
 
-		// Read server_name from generic config map (works for vless/anytls/naive).
-		var cfgMap map[string]any
-		_ = json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &cfgMap)
-		domain := strings.TrimSpace(body.Domain)
-		if domain == "" {
-			if sn, _ := cfgMap["server_name"].(string); strings.TrimSpace(sn) != "" {
-				domain = strings.TrimSpace(sn)
-			}
+	// Read server_name from generic config map (works for vless/anytls/naive).
+	var cfgMap map[string]any
+	_ = json.Unmarshal(nonzeroRaw(svc.ConfigJSON), &cfgMap)
+	domain := strings.TrimSpace(body.Domain)
+	if domain == "" {
+		if sn, _ := cfgMap["server_name"].(string); strings.TrimSpace(sn) != "" {
+			domain = strings.TrimSpace(sn)
 		}
-		if domain == "" {
-			jsonErr(w, http.StatusBadRequest, "请填写域名（server_name 或 body.domain）")
-			return
-		}
+	}
+	if domain == "" {
+		jsonErr(w, http.StatusBadRequest, "请填写域名（server_name 或 body.domain）")
+		return
+	}
 
-		res, err := s.issueACMEForDomain(r.Context(), domain, body.Email, body.Staging)
-		if err != nil {
-			// Persist last error into config for UI.
-			_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
-			jsonErr(w, http.StatusBadGateway, err.Error())
-			return
-		}
+	res, err := s.issueACMEForDomain(r.Context(), domain, body.Email, body.Staging)
+	if err != nil {
+		// Persist last error into config for UI.
+		_ = s.patchProxyConfigACMEMeta(svc, domain, "", nil, err.Error())
+		jsonErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
 
-		// Merge PEM + metadata into config (protocol-aware).
-		cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
-		if err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	// Merge PEM + metadata into config (protocol-aware).
+	cfgBytes, err := mergeACMEIntoConfigJSON(svc.ConfigJSON, proto, domain, res)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := db.UpdateProxyService(s.DB, id, svc.Name, cfgBytes, svc.SubVisible); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -177,39 +177,39 @@ func (s *Server) issueACMEForDomain(ctx context.Context, domain, email string, s
 }
 
 func mergeACMEIntoConfig(raw json.RawMessage, vc *proxysvc.VLESSConfig, res *acmeclient.Result) (json.RawMessage, error) {
-		return mergeACMEIntoConfigJSON(raw, "vless", vc.ServerName, res)
-	}
+	return mergeACMEIntoConfigJSON(raw, "vless", vc.ServerName, res)
+}
 
-	// mergeACMEIntoConfigJSON writes cert/key + ACME metadata for TLS-bearing protocols.
-	// VLESS also flips security=tls; AnyTLS/Naive already require TLS and only need PEM + SNI.
-	func mergeACMEIntoConfigJSON(raw json.RawMessage, protocol, domain string, res *acmeclient.Result) (json.RawMessage, error) {
-		var m map[string]any
-		if err := json.Unmarshal(nonzeroRaw(raw), &m); err != nil || m == nil {
-			m = map[string]any{}
-		}
-		proto := strings.ToLower(strings.TrimSpace(protocol))
-		if proto == "vless" {
-			m["security"] = "tls"
-		}
-		if strings.TrimSpace(domain) != "" {
-			m["server_name"] = domain
-		}
-		// Prefer certificate domain as share host when empty (client import friendlier).
-		if sh, _ := m["share_host"].(string); strings.TrimSpace(sh) == "" && strings.TrimSpace(domain) != "" {
-			m["share_host"] = domain
-		}
-		m["cert_pem"] = res.CertPEM
-		m["key_pem"] = res.KeyPEM
-		m["acme_enabled"] = true
-		m["acme_provider"] = "cloudflare-dns01"
-		m["acme_domain"] = res.Domain
-		m["acme_issuer"] = res.Issuer
-		m["acme_not_before"] = res.NotBefore.UTC().Format(time.RFC3339)
-		m["acme_not_after"] = res.NotAfter.UTC().Format(time.RFC3339)
-		m["acme_last_renew_at"] = time.Now().UTC().Format(time.RFC3339)
-		m["acme_last_error"] = ""
-		return json.Marshal(m)
+// mergeACMEIntoConfigJSON writes cert/key + ACME metadata for TLS-bearing protocols.
+// VLESS also flips security=tls; AnyTLS/Naive already require TLS and only need PEM + SNI.
+func mergeACMEIntoConfigJSON(raw json.RawMessage, protocol, domain string, res *acmeclient.Result) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(nonzeroRaw(raw), &m); err != nil || m == nil {
+		m = map[string]any{}
 	}
+	proto := strings.ToLower(strings.TrimSpace(protocol))
+	if proto == "vless" {
+		m["security"] = "tls"
+	}
+	if strings.TrimSpace(domain) != "" {
+		m["server_name"] = domain
+	}
+	// Prefer certificate domain as share host when empty (client import friendlier).
+	if sh, _ := m["share_host"].(string); strings.TrimSpace(sh) == "" && strings.TrimSpace(domain) != "" {
+		m["share_host"] = domain
+	}
+	m["cert_pem"] = res.CertPEM
+	m["key_pem"] = res.KeyPEM
+	m["acme_enabled"] = true
+	m["acme_provider"] = "cloudflare-dns01"
+	m["acme_domain"] = res.Domain
+	m["acme_issuer"] = res.Issuer
+	m["acme_not_before"] = res.NotBefore.UTC().Format(time.RFC3339)
+	m["acme_not_after"] = res.NotAfter.UTC().Format(time.RFC3339)
+	m["acme_last_renew_at"] = time.Now().UTC().Format(time.RFC3339)
+	m["acme_last_error"] = ""
+	return json.Marshal(m)
+}
 
 func (s *Server) patchProxyConfigACMEMeta(svc *db.ProxyService, domain, issuer string, notAfter *time.Time, lastErr string) error {
 	if svc == nil {
@@ -298,10 +298,10 @@ func (s *Server) publishProxyToNodes(serviceID int64, nodeIDs []int64, forceCore
 		if it := instByNode[nodeID]; it != nil && it.ListenPort > 0 {
 			port = it.ListenPort
 		}
-			shareHost := cfgShare
-			if shareHost == "" {
-				shareHost = defaultProxyShareHost(node)
-			}
+		shareHost := cfgShare
+		if shareHost == "" {
+			shareHost = defaultProxyShareHost(node)
+		}
 		inst, err := db.UpsertProxyInstance(s.DB, serviceID, nodeID, port, shareHost)
 		if err != nil {
 			fail++
@@ -323,7 +323,13 @@ func (s *Server) publishProxyToNodes(serviceID int64, nodeIDs []int64, forceCore
 			fail++
 			continue
 		}
-		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, cfg)
+		liveCfg := cfg
+		if overlaid, oerr := s.overlayProxyConfigForPublish(svc, cfg); oerr == nil {
+			liveCfg = overlaid
+		} else {
+			log.Printf("proxy republish overlay svc=%d: %v", svc.ID, oerr)
+		}
+		applyRes := s.applyProxyInstance(nodeID, svc, inst, shareHost, port, liveCfg)
 		if applyRes.OK {
 			status := db.ProxyDeployReady
 			finalURI := uri

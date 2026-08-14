@@ -7,6 +7,57 @@ import (
 	"testing"
 )
 
+func TestOverlayInboundClientsEmptyVLESSDropsTemplateUUID(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{UUID: "11111111-2222-3333-4444-555555555555"})
+	over, err := OverlayInboundClients("vless", raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildXrayVLESSConfig(443, mustVLESSDeploy(over))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cfg), "11111111-2222-3333-4444-555555555555") {
+		t.Fatalf("empty overlay must not keep template uuid:\n%s", cfg)
+	}
+}
+
+func mustVLESSDeploy(raw []byte) []byte {
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	if m == nil {
+		m = map[string]any{}
+	}
+	priv, pub := GenerateRealityKeyPair()
+	m["server_name"] = "www.cloudflare.com"
+	m["private_key"] = priv
+	m["public_key"] = pub
+	m["short_id"] = "abcd1234"
+	m["security"] = "reality"
+	m["network"] = "tcp"
+	out, _ := json.Marshal(m)
+	return out
+}
+
+func TestOverlayInboundClientsVLESSKeepsActiveUUID(t *testing.T) {
+	raw, _ := json.Marshal(VLESSConfig{UUID: "11111111-2222-3333-4444-555555555555"})
+	over, err := OverlayInboundClients("vless", raw, []InboundClient{{UUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := BuildXrayVLESSConfig(443, mustVLESSDeploy(over))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	if !strings.Contains(s, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") {
+		t.Fatalf("missing active uuid:\n%s", s)
+	}
+	if strings.Contains(s, "11111111-2222-3333-4444-555555555555") {
+		t.Fatalf("template uuid must be gone:\n%s", s)
+	}
+}
+
 func TestGenerateRealityKeyPairValidLength(t *testing.T) {
 	priv, pub := GenerateRealityKeyPair()
 	if priv == "" || pub == "" {

@@ -278,36 +278,45 @@ func (s *Server) classifyRuleExit(it *ruleListItem, idx map[string]landing.Node,
 			shareProto, shareURI, shareName = p, u, n
 			_ = ok
 		}
-		// Prefer building share from service config when instance URI missing
-		// (protocol-entry rules do not require a published instance on the node).
-		if shareURI == "" || shareProto == "" {
-			if svc, err := db.GetProxyService(s.DB, it.ProxyServiceID); err == nil && svc != nil {
-				if shareProto == "" {
-					shareProto = svc.Protocol
-				}
-				if shareName == "" {
-					shareName = svc.Name
-				}
-				if shareURI == "" && withURI {
-					host, port, eok := splitEntry(it.Entry)
-					if !eok {
-						if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
+		if svc, err := db.GetProxyService(s.DB, it.ProxyServiceID); err == nil && svc != nil {
+			if shareProto == "" {
+				shareProto = svc.Protocol
+			}
+			if shareName == "" {
+				shareName = svc.Name
+			}
+			if withURI {
+				host, port, eok := splitEntry(it.Entry)
+				if !eok {
+					if n, err := db.GetNode(s.DB, it.NodeID); err == nil && n != nil {
+						host = liveProxyShareHost(svc.ConfigJSON, "", n)
+						if host == "" {
 							host = firstNonEmpty(n.RelayHost, n.Address)
 							if h, _, e := splitHostPortLoose(host); e == nil && h != "" {
 								host = h
 							}
-							port = it.EntryListenPort
-							eok = host != "" && port > 0
+						}
+						port = it.EntryListenPort
+						eok = host != "" && port > 0
+					}
+				}
+				if !eok && shareURI != "" {
+					if ep, ok := parseProxyEndpoint(shareURI); ok {
+						host, port, eok = ep.host, ep.port, true
+					}
+				}
+				if eok {
+					cfg := svc.ConfigJSON
+					if fixed, err := proxysvc.EnsureSecrets(svc.Protocol, cfg); err == nil {
+						cfg = fixed
+					}
+					if it.OwnerID.Valid && it.OwnerID.Int64 > 0 {
+						if cred, err := s.ensureUserProxyCred(it.OwnerID.Int64, svc.ID, svc.Protocol, cfg); err == nil && cred != nil {
+							cfg = proxysvc.ConfigWithUserSecret(svc.Protocol, cfg, inboundFromCred(cred))
 						}
 					}
-					if eok {
-						cfg := svc.ConfigJSON
-						if fixed, err := proxysvc.EnsureSecrets(svc.Protocol, cfg); err == nil {
-							cfg = fixed
-						}
-						if u, err := proxysvc.BuildShareURI(svc.Protocol, svc.Name, host, port, cfg); err == nil {
-							shareURI = u
-						}
+					if u, err := proxysvc.BuildShareURI(svc.Protocol, svc.Name, host, port, cfg); err == nil && u != "" {
+						shareURI = u
 					}
 				}
 			}
