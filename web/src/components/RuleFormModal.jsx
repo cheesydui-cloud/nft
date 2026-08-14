@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { Modal, Select, ProbeButton, nodeStack, NodeTypeIcon } from './ui'
 import { useToast } from './Layout'
 import { tryParseURI } from '../lib/landing'
@@ -31,9 +31,9 @@ const PROTO_LABEL = {
    fields for edit/copy prefills and is re-applied every time the modal opens.
 
    variant: 'port' | 'chain' | undefined
-     - port: single-hop only (no composite entry, no via cascade, no SK5)
-     - chain: via/composite allowed; exit may be direct host:port or SOCKS5
-     - undefined: legacy full form (both)
+     - port: no extra via cascade, no SK5; composite entry is allowed (uses built-in hops)
+     - chain: via cascade + SK5; composite entry also allowed
+     - undefined: in-modal 端口/链式 switch (create/edit on user detail)
 
    When `landingNodes` is provided (the user side passes the merged landing-node
    list — admin-assigned plus the user's own browser-local URIs, even when
@@ -47,6 +47,7 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   const [loading, setLoading] = useState(false)
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
   const [localVariant, setLocalVariant] = useState(variant === 'chain' ? 'chain' : 'port')
+  const pickedVariantRef = useRef(false)
   // Select value for 选择线路: plain node_id or proxy:<serviceId>:<nodeId>.
   // Must match option values so 代理 tab labels stick (form only stores node_id).
   const [entrySelectValue, setEntrySelectValue] = useState('')
@@ -132,19 +133,22 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     const sid = Number(seed.proxy_service_id) || 0
     const nid = seed.node_id != null && seed.node_id !== '' ? String(seed.node_id) : ''
     setEntrySelectValue(sid > 0 && nid ? `proxy:${sid}:${nid}` : nid)
-    if (allowTypeSwitch) {
-      // Prefill chain when editing a chain-like rule; default create to port.
-      const looksChain = (seed.via_node_ids || []).length > 0
-        || nodes.find(n => String(n.id) === String(seed.node_id))?.node_type === 'composite'
-        || seed.exit_type === 'socks5'
-      setLocalVariant(looksChain ? 'chain' : 'port')
+    if (allowTypeSwitch && !pickedVariantRef.current) {
+      // Prefill chain only for extra vias / SK5. A composite entry alone is
+      // still 端口转发 (组合内置 hop)，否则点「端口转发」会被立刻打回链式。
+      setLocalVariant(ruleLooksChain(seed) ? 'chain' : 'port')
     }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) pickedVariantRef.current = false
   }, [open])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const switchLocalVariant = (next) => {
     if (next === localVariant) return
+    pickedVariantRef.current = true
     setLocalVariant(next)
     setForm(f => ({
       ...f,
@@ -886,10 +890,13 @@ export function ruleFormToPayload(form) {
   return payload
 }
 
+/** Extra vias or SOCKS5 exit — not a composite entry by itself. */
+export function ruleLooksChain(rule) {
+  if ((rule?.via_node_ids || []).length > 0) return true
+  return rule?.exit_type === 'socks5'
+}
+
 /** Port vs chain classification for list tabs. */
-export function isChainRule(rule, nodeMap = {}) {
-  if (rule?.via_node_ids?.length) return true
-  if (rule?.exit_type === 'socks5') return true
-  const n = nodeMap[rule?.node_id]
-  return n?.node_type === 'composite'
+export function isChainRule(rule, _nodeMap = {}) {
+  return ruleLooksChain(rule)
 }
