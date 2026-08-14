@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,9 @@ import (
 
 	"nft/internal/wsproto"
 )
+
+var xrayStatPairRe = regexp.MustCompile(`(?is)inbound>>>([^>\s"]+)>>>traffic>>>(uplink|downlink)"[^"]{0,80}"value"\s*:\s*"?(-?\d+)`)
+var xrayStatLineRe = regexp.MustCompile(`inbound>>>([^>\s"]+)>>>traffic>>>(uplink|downlink)\D+(-?\d+)`)
 
 // proxyStats tracks cumulative up/down per instance for delta samples.
 type proxyStatsState struct {
@@ -158,11 +162,14 @@ func (s *proxyStatsState) sample() []wsproto.ProxyCounterSample {
 		if bin == "" {
 			continue
 		}
-		up, down, ok := queryXrayInboundStats(bin, port, "vless-in")
-		if !ok {
-			continue
-		}
-		live[id] = cum{up, down}
+			up, down, ok := queryXrayInboundStats(bin, port, "vless-in")
+			if !ok {
+				up, down, ok = queryXrayInboundStats(bin, port, "")
+			}
+			if !ok {
+				continue
+			}
+			live[id] = cum{up, down}
 	}
 
 	// sing-box instances (ss / socks5 / anytls / naive)
@@ -523,28 +530,36 @@ func pidFileAlive(pidPath string) bool {
 }
 
 // queryXrayInboundStats runs `xray api statsquery` against the local API port.
-// Returns cumulative uplink/downlink for the named inbound tag.
+// inboundTag selects inbound>>>TAG>>>traffic>>>; empty tag matches any inbound.
 func queryXrayInboundStats(xrayBin string, apiPort int, inboundTag string) (up, down int64, ok bool) {
-	// xray api statsquery --server=127.0.0.1:PORT -pattern "inbound>>>TAG>>>traffic>>>"
 	server := fmt.Sprintf("127.0.0.1:%d", apiPort)
-	pattern := fmt.Sprintf("inbound>>>%s>>>traffic>>>", inboundTag)
+	pattern := "inbound>>>"
+	if inboundTag != "" {
+		pattern = fmt.Sprintf("inbound>>>%s>>>traffic>>>", inboundTag)
+	}
 	ctxDone := time.After(2 * time.Second)
 	type result struct {
 		up, down int64
 		ok       bool
 	}
 	ch := make(chan result, 1)
-	go func() {
-		cmd := exec.Command(xrayBin, "api", "statsquery", "--server="+server, "-pattern", pattern)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			// Soft-fail: binary may lack api subcommand or instance still starting.
+		go func() {
+			args := [][]string{
+				{"api", "statsquery", "--server=" + server, "-pattern", pattern},
+				{"api", "statsquery", "--server=" + server, "--pattern=" + pattern},
+				{"api", "statsquery", "-s", server, "-pattern", pattern},
+			}
+			for _, a := range args {
+				cmd := exec.Command(xrayBin, a...)
+				out, _ := cmd.CombinedOutput()
+				u, d, parsed := parseXrayStatsQuery(string(out))
+				if parsed {
+					ch <- result{u, d, true}
+					return
+				}
+			}
 			ch <- result{}
-			return
-		}
-		u, d, parsed := parseXrayStatsQuery(string(out))
-		ch <- result{u, d, parsed}
-	}()
+		}()
 	select {
 	case r := <-ch:
 		return r.up, r.down, r.ok
@@ -553,51 +568,121 @@ func queryXrayInboundStats(xrayBin string, apiPort int, inboundTag string) (up, 
 	}
 }
 
-// parseXrayStatsQuery extracts uplink/downlink from statsquery text/JSON output.
-// Accepts both JSON (`"name":"...uplink","value":"123"`) and plain text forms.
+func jsonInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	case float64:
+		return int64(n), true
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		return i, err == nil
+	case json.RawMessage:
+		s := strings.TrimSpace(string(n))
+		s = strings.Trim(s, `"`)
+		i, err := strconv.ParseInt(s, 10, 64)
+		return i, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func inboundTrafficFromName(name string) (kind string, ok bool) {
+	// inbound>>>vless-in>>>traffic>>>uplink
+	if !strings.HasPrefix(name, "inbound>>>") || !strings.Contains(name, ">>>traffic>>>") {
+		return "", false
+	}
+	if strings.HasSuffix(name, ">>>uplink") {
+		return "up", true
+	}
+	if strings.HasSuffix(name, ">>>downlink") {
+		return "down", true
+	}
+	return "", false
+}
+
+// parseXrayStatsQuery extracts inbound uplink/downlink from statsquery output.
+// Xray protojson prints value as a number (`"value": 123`), not a string.
 func parseXrayStatsQuery(out string) (up, down int64, ok bool) {
-	// Prefer JSON array form.
-	var doc struct {
-		Stat []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		} `json:"stat"`
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return 0, 0, false
 	}
-	if err := json.Unmarshal([]byte(out), &doc); err == nil && len(doc.Stat) > 0 {
-		for _, s := range doc.Stat {
-			v, _ := strconv.ParseInt(s.Value, 10, 64)
-			if strings.HasSuffix(s.Name, ">>>uplink") {
-				up = v
+	if i := strings.Index(out, "{"); i > 0 {
+		out = out[i:]
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	dec.UseNumber()
+	var raw map[string]any
+	if err := dec.Decode(&raw); err == nil {
+		for _, key := range []string{"stat", "Stat"} {
+			arr, _ := raw[key].([]any)
+			for _, item := range arr {
+				m, okm := item.(map[string]any)
+				if !okm {
+					continue
+				}
+				name, _ := m["name"].(string)
+				if name == "" {
+					name, _ = m["Name"].(string)
+				}
+				kind, okk := inboundTrafficFromName(name)
+				if !okk {
+					continue
+				}
+				v, okv := jsonInt64(m["value"])
+				if !okv {
+					v, okv = jsonInt64(m["Value"])
+				}
+				if !okv {
+					continue
+				}
+				if kind == "up" {
+					up = v
+					ok = true
+				} else {
+					down = v
+					ok = true
+				}
+			}
+		}
+		if ok {
+			return up, down, true
+		}
+	}
+	// Pretty-printed JSON / text: name and value may sit on adjacent lines.
+	if m := xrayStatPairRe.FindAllStringSubmatch(out, -1); len(m) > 0 {
+		for _, g := range m {
+			n, err := strconv.ParseInt(g[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			if g[2] == "uplink" {
+				up = n
+				ok = true
+			} else {
+				down = n
 				ok = true
 			}
-			if strings.HasSuffix(s.Name, ">>>downlink") {
-				down = v
+		}
+		if ok {
+			return up, down, true
+		}
+	}
+	if m := xrayStatLineRe.FindAllStringSubmatch(out, -1); len(m) > 0 {
+		for _, g := range m {
+			n, err := strconv.ParseInt(g[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			if g[2] == "uplink" {
+				up = n
+				ok = true
+			} else {
+				down = n
 				ok = true
 			}
-		}
-		return up, down, ok
-	}
-	// Text fallback: lines containing uplink/downlink and a number.
-	sc := bufio.NewScanner(strings.NewReader(out))
-	for sc.Scan() {
-		line := sc.Text()
-		low := strings.ToLower(line)
-		// pull last integer on the line
-		fields := strings.Fields(line)
-		var num int64
-		for i := len(fields) - 1; i >= 0; i-- {
-			if n, err := strconv.ParseInt(strings.Trim(fields[i], `",`), 10, 64); err == nil {
-				num = n
-				break
-			}
-		}
-		if strings.Contains(low, "uplink") {
-			up = num
-			ok = true
-		}
-		if strings.Contains(low, "downlink") {
-			down = num
-			ok = true
 		}
 	}
 	return up, down, ok

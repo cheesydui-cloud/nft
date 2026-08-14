@@ -25,13 +25,34 @@ func TestProxyStatsReAddAndSamplePark(t *testing.T) {
 }
 
 func TestParseXrayStatsQueryJSON(t *testing.T) {
-	out := `{"stat":[
-		{"name":"inbound>>>vless-in>>>traffic>>>uplink","value":"1234"},
-		{"name":"inbound>>>vless-in>>>traffic>>>downlink","value":"5678"}
-	]}`
-	up, down, ok := parseXrayStatsQuery(out)
-	if !ok || up != 1234 || down != 5678 {
-		t.Fatalf("got up=%d down=%d ok=%v", up, down, ok)
+	cases := []string{
+		`{"stat":[
+			{"name":"inbound>>>vless-in>>>traffic>>>uplink","value":"1234"},
+			{"name":"inbound>>>vless-in>>>traffic>>>downlink","value":"5678"}
+		]}`,
+		`{"stat":[
+			{"name":"inbound>>>vless-in>>>traffic>>>uplink","value":1234},
+			{"name":"inbound>>>vless-in>>>traffic>>>downlink","value":5678}
+		]}`,
+		`{
+  "stat": [
+    {
+      "name": "inbound>>>vless-in>>>traffic>>>uplink",
+      "value": 1234
+    },
+    {
+      "name": "inbound>>>vless-in>>>traffic>>>downlink",
+      "value": 5678
+    }
+  ]
+}`,
+		`{"Stat":[{"Name":"inbound>>>vless-in>>>traffic>>>uplink","Value":1234},{"Name":"inbound>>>vless-in>>>traffic>>>downlink","Value":5678}]}`,
+	}
+	for i, out := range cases {
+		up, down, ok := parseXrayStatsQuery(out)
+		if !ok || up != 1234 || down != 5678 {
+			t.Fatalf("case %d got up=%d down=%d ok=%v", i, up, down, ok)
+		}
 	}
 }
 

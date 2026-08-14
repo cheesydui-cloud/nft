@@ -19,11 +19,11 @@ func InjectXrayStatsAPI(cfg []byte, apiPort int) ([]byte, error) {
 	if err := json.Unmarshal(cfg, &m); err != nil {
 		return nil, err
 	}
-	m["stats"] = map[string]any{}
-	m["api"] = map[string]any{
-		"tag":      "api",
-		"services": []string{"StatsService"},
-	}
+		m["stats"] = map[string]any{}
+		m["api"] = map[string]any{
+			"tag":      "api",
+			"services": []string{"StatsService"},
+		}
 	m["policy"] = map[string]any{
 		"system": map[string]any{
 			"statsInboundUplink":   true,
@@ -36,11 +36,13 @@ func InjectXrayStatsAPI(cfg []byte, apiPort int) ([]byte, error) {
 	apiInbound := map[string]any{
 		"listen":   "127.0.0.1",
 		"port":     apiPort,
-		"protocol": "dokodemo-door",
-		"settings": map[string]any{
-			"address": "127.0.0.1",
-		},
-		"tag": "api",
+			"protocol": "dokodemo-door",
+			"settings": map[string]any{
+				"address": "127.0.0.1",
+				"port":    apiPort,
+				"network": "tcp",
+			},
+			"tag": "api",
 	}
 	inbounds, _ := m["inbounds"].([]any)
 	// Ensure no duplicate api inbound from a previous inject.

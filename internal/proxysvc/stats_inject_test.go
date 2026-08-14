@@ -39,9 +39,9 @@ func TestInjectXrayStatsAPI(t *testing.T) {
 	if !strings.Contains(s, "StatsService") {
 		t.Fatalf("missing StatsService: %s", s)
 	}
-	if !strings.Contains(s, "10085") {
-		t.Fatalf("missing api port: %s", s)
-	}
+		if !strings.Contains(s, "10085") {
+			t.Fatalf("missing api port: %s", s)
+		}
 	if !strings.Contains(s, "statsInboundUplink") {
 		t.Fatalf("missing policy stats flags: %s", s)
 	}

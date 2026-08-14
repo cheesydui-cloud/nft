@@ -99,7 +99,7 @@ function UserRoute({ children }) {
   return children
 }
 
-// 用户端「线路 + 落地」双满足才可进 代理转发 / 落地。我的代理只看协议授权。
+// 用户端「线路 + 落地」双满足才可进 代理转发 / 落地。我的代理始终可进。
 function UserForwardRoute({ children }) {
   const { user } = useUser()
   if (user === undefined) return <Loading />
@@ -115,10 +115,6 @@ function ProxiesGate() {
   const { user } = useUser()
   if (user === undefined) return <Loading />
   if (user === null) return <Navigate to="/login" replace />
-  // Admin keeps optional 我的代理; user needs a protocol-level proxy grant.
-  if (user.role !== 'admin' && !user.has_proxy_grant) {
-    return <Navigate to="/my" replace />
-  }
   return <Proxies />
 }
 
@@ -177,7 +173,7 @@ export default function App() {
           <Route path="/my/landing" element={<UserForwardRoute><MyLandingNodes /></UserForwardRoute>} />
           <Route path="/my/docs" element={<UserRoute><MyDocs /></UserRoute>} />
 
-          {/* Shared routes — 我的代理：管理员可进；用户须代理协议授权 */}
+          {/* Shared routes — 我的代理：登录即可进 */}
           <Route path="/proxies" element={<ProtectedRoute><ProxiesGate /></ProtectedRoute>} />
           <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
 
