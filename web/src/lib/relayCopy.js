@@ -91,6 +91,30 @@ export function formatRuleCopyText(rule, opts = {}) {
   return formatRuleCopyParts(rule, opts).join('\n').trim()
 }
 
+/** True when text is a single client-importable share URI (not host:port / YAML). */
+export function isImportableShareURI(s) {
+  if (!s || typeof s !== 'string') return false
+  const t = s.trim()
+  if (!t || t.includes('\n') || t.includes('\r')) return false
+  const i = t.indexOf('://')
+  if (i <= 0) return false
+  const scheme = t.slice(0, i).toLowerCase()
+  return /^(vless|vmess|ss|shadowsocks|trojan|hy2|hysteria2|mieru|mierus|socks|socks5|naive|naive\+https|anytls|tuic|hysteria)$/.test(scheme)
+}
+
+/**
+ * QR payload for one rule. Scanners import a single URI — never YAML,
+ * never dual-stack joined by newline, never bare host:port.
+ */
+export function formatRuleQRText(rule, opts = {}) {
+  const parts = formatRuleCopyParts(rule, { ...opts, asYaml: false })
+  for (const p of parts) {
+    const line = String(p || '').trim()
+    if (isImportableShareURI(line)) return line
+  }
+  return ''
+}
+
 /** Batch-rename relay URIs with unique names (for 复制全部). */
 export function formatRelayBatch(items, { asYaml = false } = {}) {
   const alloc = allocateRelayDisplayNames(items.map((it, i) => ({

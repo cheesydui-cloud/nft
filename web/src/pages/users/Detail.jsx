@@ -8,7 +8,7 @@ import { IdentityBar, DetailTabs, StatTile, SectionCard, TableBox, InfoGrid } fr
 import { copyToClipboard } from '../../lib/clipboard'
 import { useRuleSpeed, fmtSpeed } from '../../lib/useSpeed'
 import { fetchNodeRoles, nodeHasRole, ROLE_LANDING } from '../../lib/landing'
-import { formatRuleCopyText } from '../../lib/relayCopy'
+import { formatRuleCopyText, formatRuleQRText } from '../../lib/relayCopy'
 import { createLimiter } from '../../lib/limiter'
 import { RuleFormModal, ruleToForm, ruleFormToPayload } from '../../components/RuleFormModal'
 import UserConfigCard from './UserConfigCard'
@@ -543,11 +543,9 @@ export default function UserDetail() {
                       expiryMap,
                       asYaml: copyFmt === 'yaml',
                     })
-                    // QR always uses raw URI (not YAML) for client scanners.
-                    const ruleQRText = formatRuleCopyText(r, {
+                    const ruleQRText = formatRuleQRText(r, {
                       username: user.username,
                       expiryMap,
-                      asYaml: false,
                     })
                     const copyRuleLink = async () => {
                       if (!ruleCopyText) { toast('该规则没有可复制的链接', 'error'); return }

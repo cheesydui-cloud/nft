@@ -4,7 +4,7 @@ import { Badge, ProtoBadge, SensText, CopyText, Tooltip, Spinner, NodeTypeIcon }
 import { useCopyFmt, useToast } from './Layout'
 import { fmtBytes, fmtDate, isExpired, expiryBadge } from '../lib/fmt'
 import { buildRelayDisplayName } from '../lib/landing'
-import { formatRelayCopyText, formatRuleCopyText, relayExpiryFromMap } from '../lib/relayCopy'
+import { formatRelayCopyText, formatRuleQRText, relayExpiryFromMap } from '../lib/relayCopy'
 import { createLimiter } from '../lib/limiter'
 import { useIsMobile } from '../lib/useIsMobile'
 import { useRuleSpeed, fmtSpeed } from '../lib/useSpeed'
@@ -58,11 +58,10 @@ export function RulesTable({ rules, nodeMap, blurred, variant = 'my', onDelete, 
 
   const ownerForCopy = (r) => r.owner_name || copyUsername || ''
 
-  // QR always uses raw URI (not YAML) for client scanners.
-  const ruleQRText = (r) => formatRuleCopyText(r, {
+  // QR: one importable URI only (not YAML / dual-stack / host:port).
+  const ruleQRText = (r) => formatRuleQRText(r, {
     username: ownerForCopy(r),
     expiryMap: landingExpiry,
-    asYaml: false,
   })
 
   const renderLandingExpiry = (r) => {
