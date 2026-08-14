@@ -231,24 +231,11 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	if mtu <= 0 {
 		mtu = proxysvc.DefaultMieruMTU
 	}
-	if mtu < 1280 {
-		mtu = 1280
-	}
-	mitaUsers := []map[string]string{
-		{"name": cfg.Username, "password": cfg.Password},
-	}
-	if cfg.Users != nil {
-		mitaUsers = make([]map[string]string, 0, len(cfg.Users))
-		for _, u := range cfg.Users {
-			name := strings.TrimSpace(u.Name)
-			pass := strings.TrimSpace(u.Password)
-			if name == "" || pass == "" {
-				continue
-			}
-			mitaUsers = append(mitaUsers, map[string]string{"name": name, "password": pass})
+		if mtu < 1280 {
+			mtu = 1280
 		}
-	}
-	serverCfg := map[string]any{
+		mitaUsers := mitaUsersFromConfig(cfg)
+		serverCfg := map[string]any{
 		"portBindings": mitaPortBindings(port, transports),
 		"users":        mitaUsers,
 		"loggingLevel": "INFO",
@@ -399,7 +386,33 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 	}
 }
 
-func mitaPortBindings(port int, transports []string) []map[string]any {
+	// mitaUsersFromConfig builds the mita account list. A present-but-empty
+	// Users overlay (isolation republish with no protocol-entry rules) must
+	// fall back to the published username/password, otherwise warehouse
+	// mierus:// links die after apply+reset.
+	func mitaUsersFromConfig(cfg proxysvc.MieruConfig) []map[string]string {
+		out := make([]map[string]string, 0, 1)
+		if cfg.Users != nil {
+			for _, u := range cfg.Users {
+				name := strings.TrimSpace(u.Name)
+				pass := strings.TrimSpace(u.Password)
+				if name == "" || pass == "" {
+					continue
+				}
+				out = append(out, map[string]string{"name": name, "password": pass})
+			}
+		}
+		if len(out) == 0 {
+			name := strings.TrimSpace(cfg.Username)
+			pass := strings.TrimSpace(cfg.Password)
+			if name != "" && pass != "" {
+				out = append(out, map[string]string{"name": name, "password": pass})
+			}
+		}
+		return out
+	}
+
+	func mitaPortBindings(port int, transports []string) []map[string]any {
 	var out []map[string]any
 	seen := map[string]bool{}
 	for _, t := range transports {

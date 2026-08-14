@@ -102,7 +102,8 @@ func ConfigWithUserSecret(protocol string, raw json.RawMessage, cl InboundClient
 }
 
 // OverlayInboundClients writes the live client list into config_json so core
-// builders / mita deploy only accept those identities. Empty list = nobody.
+// builders / mita deploy only accept those identities. Empty list = nobody,
+// except mieru: omit users so deploy keeps the published template account.
 func OverlayInboundClients(protocol string, raw json.RawMessage, clients []InboundClient) (json.RawMessage, error) {
 	var m map[string]any
 	if err := json.Unmarshal(nonzeroJSON(raw), &m); err != nil {
@@ -160,16 +161,18 @@ func OverlayInboundClients(protocol string, raw json.RawMessage, clients []Inbou
 			if firstUser == "" {
 				firstUser, firstPass = u, p
 			}
-			arr = append(arr, map[string]any{"name": u, "password": p})
-		}
-		m["users"] = arr
-		if firstUser != "" {
-			m["username"] = firstUser
-			m["password"] = firstPass
-		} else {
-			// Keep template fields so ValidateMieruDeploy still passes;
-			// deployMieru prefers users when present.
-		}
+				arr = append(arr, map[string]any{"name": u, "password": p})
+			}
+			if firstUser != "" {
+				m["users"] = arr
+				m["username"] = firstUser
+				m["password"] = firstPass
+			} else {
+				// Warehouse mieru is the published template account. An empty
+				// overlay must not emit users:[] — deployMieru treats a present
+				// Users slice as authoritative and would wipe the share URI.
+				delete(m, "users")
+			}
 	case "socks5", "socks":
 		arr := make([]any, 0, len(clients))
 		firstUser, firstPass := "", ""

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"nft/internal/db"
 	"nft/internal/proxysvc"
@@ -42,7 +43,9 @@ func inboundFromCred(c *db.UserProxyCred) proxysvc.InboundClient {
 }
 
 // overlayProxyConfigForPublish rebuilds inbound clients from users who still
-// have an enabled rule on the service. Empty set = nobody can auth.
+// have an enabled rule on the service. Empty set = nobody can auth, except
+// warehouse mieru which keeps the published template account so copied
+// mierus:// links stay valid when nobody has a protocol-entry rule.
 func (s *Server) overlayProxyConfigForPublish(svc *db.ProxyService, cfg json.RawMessage) (json.RawMessage, error) {
 	if svc == nil {
 		return cfg, nil
@@ -64,7 +67,26 @@ func (s *Server) overlayProxyConfigForPublish(svc *db.ProxyService, cfg json.Raw
 		}
 		live = append(live, cl)
 	}
+	if strings.EqualFold(svc.Protocol, "mieru") {
+		live = ensureMieruTemplateClient(cfg, live)
+		if len(live) == 0 {
+			return cfg, nil
+		}
+	}
 	return proxysvc.OverlayInboundClients(svc.Protocol, cfg, live)
+}
+
+func ensureMieruTemplateClient(cfg json.RawMessage, live []proxysvc.InboundClient) []proxysvc.InboundClient {
+	_, tuser, tpass := proxysvc.TemplateSecret("mieru", cfg)
+	if tuser == "" || tpass == "" {
+		return live
+	}
+	for _, cl := range live {
+		if strings.TrimSpace(cl.Username) == tuser && strings.TrimSpace(cl.Password) == tpass {
+			return live
+		}
+	}
+	return append([]proxysvc.InboundClient{{Username: tuser, Password: tpass}}, live...)
 }
 
 // overlayProxyConfigForUser is a single-user overlay (rule-scoped entry plane

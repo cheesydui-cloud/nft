@@ -88,6 +88,31 @@ func TestHandleProxyServiceApplyMissingCores(t *testing.T) {
 	}
 }
 
+func TestMitaUsersFromConfigEmptyOverlayKeepsTemplate(t *testing.T) {
+	got := mitaUsersFromConfig(proxysvc.MieruConfig{
+		Username: "warehouse",
+		Password: "sharepass",
+		Users:    []proxysvc.MieruUser{},
+	})
+	if len(got) != 1 || got[0]["name"] != "warehouse" || got[0]["password"] != "sharepass" {
+		t.Fatalf("empty users overlay must fall back to template: %+v", got)
+	}
+}
+
+func TestMitaUsersFromConfigPrefersLiveUsers(t *testing.T) {
+	got := mitaUsersFromConfig(proxysvc.MieruConfig{
+		Username: "warehouse",
+		Password: "sharepass",
+		Users: []proxysvc.MieruUser{
+			{Name: "u1", Password: "p1"},
+			{Name: "warehouse", Password: "sharepass"},
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("want live users, got %+v", got)
+	}
+}
+
 func TestDeployMieruMissingMita(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{
 		"username": "u1", "password": "p1", "listen_port": proxysvc.DefaultMieruListenPort,

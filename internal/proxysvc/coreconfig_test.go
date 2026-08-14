@@ -39,6 +39,49 @@ func mustVLESSDeploy(raw []byte) []byte {
 	return out
 }
 
+func TestOverlayInboundClientsEmptyMieruKeepsTemplateAccount(t *testing.T) {
+	raw, _ := json.Marshal(MieruConfig{Username: "warehouse", Password: "sharepass", ListenPort: 8964})
+	over, err := OverlayInboundClients("mieru", raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got MieruConfig
+	if err := json.Unmarshal(over, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Username != "warehouse" || got.Password != "sharepass" {
+		t.Fatalf("template secret lost: %+v", got)
+	}
+	if got.Users != nil {
+		t.Fatalf("empty overlay must omit users, got %+v", got.Users)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(over, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["users"]; ok {
+		t.Fatalf("empty overlay must not emit users key: %s", over)
+	}
+}
+
+func TestOverlayInboundClientsMieruKeepsActiveUsers(t *testing.T) {
+	raw, _ := json.Marshal(MieruConfig{Username: "warehouse", Password: "sharepass"})
+	over, err := OverlayInboundClients("mieru", raw, []InboundClient{
+		{Username: "u1", Password: "p1"},
+		{Username: "warehouse", Password: "sharepass"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got MieruConfig
+	if err := json.Unmarshal(over, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Users) != 2 {
+		t.Fatalf("want 2 users, got %+v", got.Users)
+	}
+}
+
 func TestOverlayInboundClientsVLESSKeepsActiveUUID(t *testing.T) {
 	raw, _ := json.Marshal(VLESSConfig{UUID: "11111111-2222-3333-4444-555555555555"})
 	over, err := OverlayInboundClients("vless", raw, []InboundClient{{UUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}})
