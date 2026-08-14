@@ -565,6 +565,29 @@ func ListNodes(d *sql.DB) ([]*Node, error) {
 	return queryAll(d, `SELECT `+nodeCols+` FROM nodes ORDER BY sort_order, id`, scanNode)
 }
 
+// ListNodesByIDs returns nodes whose id is in ids, preserving sort_order.
+func ListNodesByIDs(d *sql.DB, ids []int64) ([]*Node, error) {
+	if len(ids) == 0 {
+		return []*Node{}, nil
+	}
+	seen := map[int64]bool{}
+	args := make([]any, 0, len(ids))
+	ph := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, id)
+		ph = append(ph, "?")
+	}
+	if len(args) == 0 {
+		return []*Node{}, nil
+	}
+	q := `SELECT ` + nodeCols + ` FROM nodes WHERE id IN (` + strings.Join(ph, ",") + `) ORDER BY sort_order, id`
+	return queryAll(d, q, scanNode, args...)
+}
+
 // SetNodeListGroupBatch sets nodes.list_group for many nodes.
 // group "" = default (单点/组合); "landing" = 落地 tab.
 func SetNodeListGroupBatch(d *sql.DB, ids []int64, group string) error {

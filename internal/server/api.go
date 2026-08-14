@@ -420,6 +420,50 @@ func (s *Server) apiListNodes(w http.ResponseWriter, r *http.Request) {
 // created without an explicit value.
 const defaultGrantMaxForwards = 10
 
+// proxyGrantNodesForUser returns the physical nodes that host the user's
+// granted proxy services. Used by 规则弹窗「代理」tab so a protocol grant
+// can appear without a whole-node 单点 grant.
+func (s *Server) proxyGrantNodesForUser(userID int64, serviceIDs []int64) ([]*db.Node, []int64) {
+	nids, err := db.ListProxyServiceNodeIDs(s.DB, serviceIDs)
+	if err != nil || len(nids) == 0 {
+		return []*db.Node{}, []int64{}
+	}
+	nodes, err := db.ListNodesByIDs(s.DB, nids)
+	if err != nil {
+		return []*db.Node{}, []int64{}
+	}
+	if nodes == nil {
+		nodes = []*db.Node{}
+	}
+	outIDs := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n != nil && n.ID > 0 {
+			outIDs = append(outIDs, n.ID)
+		}
+	}
+	return nodes, outIDs
+}
+
+// grantedProxyPickerFields is the 代理 tab payload for user-scoped rule forms:
+// protocol summaries (no secrets) plus the physical nodes they sit on.
+func (s *Server) grantedProxyPickerFields(userID int64) map[string]any {
+	svcIDs, err := db.ListProxyServiceIDsForUser(s.DB, userID)
+	if err != nil || svcIDs == nil {
+		svcIDs = []int64{}
+	}
+	summaries, err := db.ListGrantedProxyServiceSummaries(s.DB, userID)
+	if err != nil || summaries == nil {
+		summaries = []*db.ProxyServiceSummary{}
+	}
+	nodes, nids := s.proxyGrantNodesForUser(userID, svcIDs)
+	return map[string]any{
+		"proxy_service_ids":      svcIDs,
+		"granted_proxy_services": summaries,
+		"proxy_nodes":            nodes,
+		"granted_proxy_node_ids": nids,
+	}
+}
+
 // grantInitialUsers grants the given users access to a freshly created node
 // with the same defaults the per-user grant endpoint applies (max_forwards
 // fallback, quota inherited from the global user quota). Grant failures do
@@ -2630,11 +2674,13 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 		}
 		ownerID = sql.NullInt64{Int64: *body.OwnerID, Valid: true}
 		if target.Role == "user" {
-			if ruleNodeID > 0 {
-				if _, gerr := db.GetNodeGrant(s.DB, target.ID, ruleNodeID); gerr != nil {
+			if ruleNodeID > 0 && !db.UserMayUseRuleEntry(s.DB, target.ID, ruleNodeID, body.ProxyServiceID) {
+				if body.ProxyServiceID > 0 {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
+				} else {
 					jsonErr(w, http.StatusForbidden, "该用户未授权所选线路节点，请先在「授权线路」中授权")
-					return
 				}
+				return
 			}
 			for _, viaID := range vias {
 				if viaID <= 0 {
@@ -2644,10 +2690,6 @@ func (s *Server) apiCreateRule(w http.ResponseWriter, r *http.Request) {
 					jsonErr(w, http.StatusForbidden, "该用户未授权所选中间层节点，请先在「授权线路」中授权")
 					return
 				}
-			}
-			if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, target.ID, body.ProxyServiceID) {
-				jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
-				return
 			}
 		}
 	}
@@ -3087,11 +3129,13 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 			if entryID <= 0 && len(hops) > 0 {
 				entryID = hops[0].NodeID
 			}
-			if entryID > 0 {
-				if _, gerr := db.GetNodeGrant(s.DB, owner.ID, entryID); gerr != nil {
+			if entryID > 0 && !db.UserMayUseRuleEntry(s.DB, owner.ID, entryID, rl.ProxyServiceID) {
+				if rl.ProxyServiceID > 0 {
+					jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
+				} else {
 					jsonErr(w, http.StatusForbidden, "该用户未授权所选线路节点，请先在「授权线路」中授权")
-					return
 				}
+				return
 			}
 			for _, viaID := range rl.ViaNodeIDs {
 				if viaID <= 0 {
@@ -3101,10 +3145,6 @@ func (s *Server) apiUpdateRule(w http.ResponseWriter, r *http.Request) {
 					jsonErr(w, http.StatusForbidden, "该用户未授权所选中间层节点，请先在「授权线路」中授权")
 					return
 				}
-			}
-			if rl.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, owner.ID, rl.ProxyServiceID) {
-				jsonErr(w, http.StatusForbidden, "该用户未授权所选代理协议，请先在「授权线路」中按协议授权")
-				return
 			}
 		}
 	}
@@ -3284,11 +3324,7 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 	if proxyNodeIDs == nil {
 		proxyNodeIDs = []int64{}
 	}
-	proxyServiceIDs, _ := db.ListProxyServiceIDsForUser(s.DB, id)
-	if proxyServiceIDs == nil {
-		proxyServiceIDs = []int64{}
-	}
-	jsonOK(w, map[string]any{
+	out := map[string]any{
 		"user": apiUserFullView(target), "nodes": grantedNodes,
 		"grants": grants, "all_nodes": allNodes,
 		"rules":               ruleViews,
@@ -3298,8 +3334,11 @@ func (s *Server) apiGetUser(w http.ResponseWriter, r *http.Request) {
 		"yesterday_raw_bytes": yesterdayRaw,
 		"yesterday_day":       db.DayKeyYesterday(),
 		"proxy_node_ids":      proxyNodeIDs,
-		"proxy_service_ids":   proxyServiceIDs,
-	})
+	}
+	for k, v := range s.grantedProxyPickerFields(id) {
+		out[k] = v
+	}
+	jsonOK(w, out)
 }
 
 func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -3952,17 +3991,16 @@ func (s *Server) apiMyListRules(w http.ResponseWriter, r *http.Request) {
 	if proxyNodeIDs == nil {
 		proxyNodeIDs = []int64{}
 	}
-	proxyServiceIDs, _ := db.ListProxyServiceIDsForUser(s.DB, u.ID)
-	if proxyServiceIDs == nil {
-		proxyServiceIDs = []int64{}
-	}
-	jsonOK(w, map[string]any{
+	out := map[string]any{
 		"rules": views, "nodes": grantedNodes,
 		"node_by_id": grantedByID, "show_rate": showRate == "1",
-		"bindings":          edges,
-		"proxy_node_ids":    proxyNodeIDs,
-		"proxy_service_ids": proxyServiceIDs,
-	})
+		"bindings":       edges,
+		"proxy_node_ids": proxyNodeIDs,
+	}
+	for k, v := range s.grantedProxyPickerFields(u.ID) {
+		out[k] = v
+	}
+	jsonOK(w, out)
 }
 
 func (s *Server) apiMyGetRule(w http.ResponseWriter, r *http.Request) {
@@ -4089,19 +4127,23 @@ func (s *Server) apiMyCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The grant on the selected node both authorizes the request and carries
-	// the per-node forward cap. A composite node is the unit of authorization:
-	// granting it authorizes the whole chain, so the check is on the composite
-	// itself, not its sub-nodes.
-	grant, gerr := db.GetNodeGrant(s.DB, u.ID, body.NodeID)
-	if gerr != nil {
-		jsonErr(w, http.StatusForbidden, "无权使用该节点")
+	// Protocol-entry (代理 tab) is authorized by user_proxy_services on a
+	// deployed instance. Plain L4 still requires a whole-node grant.
+	if !db.UserMayUseRuleEntry(s.DB, u.ID, body.NodeID, body.ProxyServiceID) {
+		if body.ProxyServiceID > 0 {
+			jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
+		} else {
+			jsonErr(w, http.StatusForbidden, "无权使用该节点")
+		}
 		return
 	}
-	// Protocol-entry (代理 tab) also requires a per-service grant.
-	if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, u.ID, body.ProxyServiceID) {
-		jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
-		return
+	grant, _ := db.GetNodeGrant(s.DB, u.ID, body.NodeID)
+	if grant == nil {
+		max := u.MaxForwards
+		if max <= 0 {
+			max = defaultGrantMaxForwards
+		}
+		grant = &db.UserNode{UserID: u.ID, NodeID: body.NodeID, MaxForwards: max}
 	}
 
 	// Each middle-layer node is authorized on its own grant before the chain
@@ -4304,17 +4346,21 @@ func (s *Server) apiMyUpdateRule(w http.ResponseWriter, r *http.Request) {
 	if body.ViaNodeIDs != nil {
 		vias = *body.ViaNodeIDs
 	}
-	// The grant on the target node authorizes the rule and carries the per-node
-	// cap; a composite is the unit of authorization (granting it covers the
-	// whole chain), so the check is on the selected node itself.
-	grant, gerr := db.GetNodeGrant(s.DB, u.ID, entryID)
-	if gerr != nil {
-		jsonErr(w, http.StatusForbidden, "无权使用该节点")
+	if !db.UserMayUseRuleEntry(s.DB, u.ID, entryID, body.ProxyServiceID) {
+		if body.ProxyServiceID > 0 {
+			jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
+		} else {
+			jsonErr(w, http.StatusForbidden, "无权使用该节点")
+		}
 		return
 	}
-	if body.ProxyServiceID > 0 && !db.HasProxyServiceGrant(s.DB, u.ID, body.ProxyServiceID) {
-		jsonErr(w, http.StatusForbidden, "无权使用该代理协议，请联系管理员授权")
-		return
+	grant, _ := db.GetNodeGrant(s.DB, u.ID, entryID)
+	if grant == nil {
+		max := u.MaxForwards
+		if max <= 0 {
+			max = defaultGrantMaxForwards
+		}
+		grant = &db.UserNode{UserID: u.ID, NodeID: entryID, MaxForwards: max}
 	}
 	// Each middle-layer node is authorized on its own grant before the chain
 	// is validated, so a revoked via is rejected as forbidden rather than

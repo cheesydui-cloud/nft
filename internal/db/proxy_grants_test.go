@@ -92,3 +92,28 @@ func TestListSubVisibleReadyInstancesDoesNotNeedNodeGrant(t *testing.T) {
 		t.Fatal("export must not require or create a node grant")
 	}
 }
+
+func TestUserMayUseRuleEntryProtocolOnly(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	nid := createTestNode(t, d, "线路7")
+	svc, err := CreateProxyService(d, "线路7-vless", ProxyProtoVLESS, ProxyCoreXray, []byte(`{}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertProxyInstance(d, svc.ID, nid, 443, "1.2.3.4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if UserMayUseRuleEntry(d, uid, nid, 0) {
+		t.Fatal("plain L4 must still require user_nodes")
+	}
+	if !UserMayUseRuleEntry(d, uid, nid, svc.ID) {
+		t.Fatal("protocol grant on deployed node must authorize 代理 entry")
+	}
+	if UserMayUseRuleEntry(d, uid, nid, svc.ID+99) {
+		t.Fatal("ungranted service must be rejected")
+	}
+}

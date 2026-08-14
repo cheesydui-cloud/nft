@@ -42,7 +42,7 @@ const PROTO_LABEL = {
    the browser, so the modal only deals in host:port here; the rules page
    resolves the relay URI client-side. Admin callers omit the prop and keep the
    plain host:port box. */
-export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant, proxyNodeIds, proxyServiceIds }) {
+export function RuleFormModal({ open, onClose, title, submitLabel = '保存', nodes = [], landingNodes, bindings = [], initial, onSubmit, onAddProxyURI, showRate, showStack = true, users, variant, proxyNodeIds, proxyServiceIds, proxyNodes = [], grantedProxyServices }) {
   const [form, setForm] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
   // When parent does not fix variant, allow in-modal 端口/链式 switch (admin user-create).
@@ -67,15 +67,21 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
     return new Set((proxyServiceIds instanceof Set ? [...proxyServiceIds] : (proxyServiceIds || [])).map(Number).filter(id => id > 0))
   }, [proxyServiceIds])
 
-  // Admin surfaces can load 代理服务 for service-name labels on the 代理 tab.
+  // Prefer parent-supplied summaries (user-scoped GET /users/:id or /my/rules).
+  // Admin surfaces still load /proxy-services for service-name labels.
   useEffect(() => {
     if (!open) return
+    const seeded = Array.isArray(grantedProxyServices) ? grantedProxyServices : null
+    if (seeded && seeded.length) {
+      setProxyServices(seeded)
+      return
+    }
     let cancelled = false
     api.get('/proxy-services')
-      .then(d => { if (!cancelled) setProxyServices(d?.services || []) })
-      .catch(() => { if (!cancelled) setProxyServices([]) })
+      .then(d => { if (!cancelled) setProxyServices(d?.services || seeded || []) })
+      .catch(() => { if (!cancelled) setProxyServices(seeded || []) })
     return () => { cancelled = true }
-  }, [open])
+  }, [open, grantedProxyServices])
 
   // 链式 SK5 候选：管理员从落地仓库；用户端从已分配落地（landingNodes）筛 SOCKS5。
   useEffect(() => {
@@ -284,40 +290,55 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   // so old deployments keep working until an admin explicitly narrows roles.
   //
   // `nodes` is already scoped by the parent:
-  //   - 替用户创建 / 用户侧：仅已授权线路
+  //   - 替用户创建 / 用户侧：仅已授权单点/组合
   //   - 管理员全局规则：全部节点
-  // 代理 tab 必须落在同一集合内，绝不能用全局 proxy-services 展开未授权节点。
+  // 代理 tab 用协议授权节点池（proxyNodes），不再要求同一 VPS 也在 user_nodes。
   const entryNodes = nodes.filter(n => ((n.roles ?? 1) & 1) !== 0)
-  const allowedNodeIds = useMemo(
+  const grantedNodeIds = useMemo(
     () => new Set((nodes || []).map(n => Number(n.id)).filter(id => id > 0)),
     [nodes],
+  )
+  const proxyPool = useMemo(() => {
+    const byId = {}
+    for (const n of nodes || []) {
+      if (n?.id) byId[Number(n.id)] = n
+    }
+    for (const n of proxyNodes || []) {
+      if (n?.id && !byId[Number(n.id)]) byId[Number(n.id)] = n
+    }
+    return Object.values(byId)
+  }, [nodes, proxyNodes])
+  const proxyPoolById = useMemo(
+    () => Object.fromEntries(proxyPool.map(n => [Number(n.id), n])),
+    [proxyPool],
   )
   // Tabbed groups: 单点 [+ 组合 for chain] + 代理 (proxy-service deployed nodes).
   // Port variant never shows the composite tab; proxy tab still filters composites out for port.
   const singleOpts = entryNodes.filter(n => n.node_type !== 'composite').map(nodeOption)
   const compositeOpts = entryNodes.filter(n => n.node_type === 'composite').map(nodeOption)
-  // 代理 tab: 每条覆盖后的代理服务单独一项（同节点多协议并列）；value 仍为 node_id。
-  // 只展示「已在 nodes 里」且（若提供了 proxyNodeIds）确实部署了代理服务的节点。
-  const entryById = Object.fromEntries(entryNodes.map(n => [Number(n.id), n]))
+  // 代理 tab: 每条已授权代理服务单独一项。用户侧只看 grantedSvcIds；
+  // 管理员未传 grantedSvcIds 时展示全部已部署服务。
   const proxyOptsFromServices = []
   for (const s of proxyServices || []) {
-    // User-scoped: hide services not in the protocol grant set.
     if (grantedSvcIds && !grantedSvcIds.has(Number(s.id))) continue
     const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
     for (const nid of nids) {
-      // Hard gate: never list a node outside the parent-provided pool.
-      if (!allowedNodeIds.has(nid)) continue
-      // When proxyNodeIds is supplied, require membership (deployed ∩ allowed).
-      if (proxyIds.size > 0 && !proxyIds.has(nid)) continue
-      const n = entryById[nid]
-      if (!n) continue
+      if (grantedSvcIds) {
+        // User-scoped: protocol grant is enough; node does not need 单点.
+        if (proxyIds.size > 0 && !proxyIds.has(nid) && !proxyPoolById[nid]) continue
+      } else {
+        // Admin: stay inside the parent node pool (usually all nodes).
+        if (!grantedNodeIds.has(nid)) continue
+        if (proxyIds.size > 0 && !proxyIds.has(nid)) continue
+      }
+      const n = proxyPoolById[nid] || entryNodes.find(x => Number(x.id) === nid)
+      if (n && ((n.roles ?? 1) & 1) === 0) continue
       const proto = PROTO_LABEL[s.protocol] || s.protocol || ''
-      let label = s.name || n.name || '(未命名)'
-      if (n.name && n.name !== s.name) label = `${s.name || '(未命名)'} · ${n.name}`
+      const nodeName = n?.name || ''
+      let label = s.name || nodeName || '(未命名)'
+      if (nodeName && nodeName !== s.name) label = `${s.name || '(未命名)'} · ${nodeName}`
       if (proto) label = `[${proto}] ${label}`
-      const base = nodeOption(n)
-      // Unique value per service so Select can list multi-proto on same node;
-      // form still stores node_id via onChange remap below.
+      const base = n ? nodeOption(n) : { icon: null, label: '' }
       const rateSuffix = (showRate !== false && base.label.includes('(×'))
         ? ` ${base.label.slice(base.label.indexOf('(×'))}`
         : ''
@@ -331,11 +352,10 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
   }
   const proxyOpts = proxyOptsFromServices.length
     ? proxyOptsFromServices
-    : entryNodes
+    : (grantedSvcIds ? proxyPool : entryNodes)
       .filter(n => {
         const id = Number(n.id)
-        if (!allowedNodeIds.has(id)) return false
-        // Fallback when /proxy-services unavailable: only nodes known to host proxy.
+        if (((n.roles ?? 1) & 1) === 0) return false
         return proxyIds.size === 0 ? false : proxyIds.has(id)
       })
       .map(nodeOption)

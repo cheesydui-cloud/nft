@@ -389,3 +389,27 @@ func ListProxyServiceNodeIDs(d *sql.DB, serviceIDs []int64) ([]int64, error) {
 	}
 	return out, rows.Err()
 }
+
+// HasProxyServiceOnNode reports whether serviceID is deployed on nodeID.
+func HasProxyServiceOnNode(d *sql.DB, serviceID, nodeID int64) bool {
+	if serviceID <= 0 || nodeID <= 0 {
+		return false
+	}
+	var n int
+	err := d.QueryRow(`SELECT 1 FROM proxy_service_instances WHERE service_id=? AND node_id=? LIMIT 1`, serviceID, nodeID).Scan(&n)
+	return err == nil
+}
+
+// UserMayUseRuleEntry authorizes a rule entry hop.
+// A protocol grant covers that service on its deployed nodes and does not
+// require a whole-node grant (单点). Plain L4 rules still need user_nodes.
+func UserMayUseRuleEntry(d *sql.DB, userID, nodeID, proxyServiceID int64) bool {
+	if userID <= 0 || nodeID <= 0 {
+		return false
+	}
+	if proxyServiceID > 0 {
+		return HasProxyServiceGrant(d, userID, proxyServiceID) && HasProxyServiceOnNode(d, proxyServiceID, nodeID)
+	}
+	_, err := GetNodeGrant(d, userID, nodeID)
+	return err == nil
+}

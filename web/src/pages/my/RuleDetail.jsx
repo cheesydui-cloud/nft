@@ -19,6 +19,8 @@ export default function MyRuleDetail() {
   const [bindings, setBindings] = useState([])
   const [proxyServiceIds, setProxyServiceIds] = useState([])
   const [proxyNodeIds, setProxyNodeIds] = useState([])
+  const [proxyNodes, setProxyNodes] = useState([])
+  const [grantedProxyServices, setGrantedProxyServices] = useState([])
   // Admin-assigned landing nodes live on the server (unlike the user's own
   // browser-local URIs) — without this fetch the edit modal's exit picker
   // would only offer local nodes and silently fall back to a custom exit.
@@ -45,8 +47,9 @@ export default function MyRuleDetail() {
     api.get('/my/rules').then(d => {
       setBindings(d?.bindings || [])
       setProxyServiceIds((d?.proxy_service_ids || []).map(Number).filter(x => x > 0))
-      const granted = new Set((d?.nodes || []).map(n => Number(n.id)).filter(x => x > 0))
-      setProxyNodeIds((d?.proxy_node_ids || []).map(Number).filter(x => granted.has(x)))
+      setProxyNodeIds((d?.granted_proxy_node_ids || []).map(Number).filter(x => x > 0))
+      setProxyNodes(Array.isArray(d?.proxy_nodes) ? d.proxy_nodes : [])
+      setGrantedProxyServices(Array.isArray(d?.granted_proxy_services) ? d.granted_proxy_services : [])
     }).catch(console.error)
     api.get('/my/landing-nodes').then(d => setServerLanding(d?.nodes || [])).catch(console.error)
   }
@@ -137,7 +140,8 @@ export default function MyRuleDetail() {
       <RuleFormModal
         open={showEdit} onClose={() => setShowEdit(false)} title="编辑规则" submitLabel="保存并重下发"
         nodes={nodes} landingNodes={landingNodes} bindings={bindings} initial={showEdit ? ruleToForm(rule) : null}
-        proxyNodeIds={proxyNodeIds} proxyServiceIds={proxyServiceIds}
+        proxyNodeIds={proxyNodeIds} proxyServiceIds={proxyServiceIds} proxyNodes={proxyNodes}
+        grantedProxyServices={grantedProxyServices}
         onSubmit={saveEdit} showRate={show_rate} showStack={false} />
     </Layout>
   )

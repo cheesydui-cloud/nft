@@ -291,6 +291,48 @@ func GetProxyService(d *sql.DB, id int64) (*ProxyService, error) {
 	return scanProxyService(row)
 }
 
+// ProxyServiceSummary is a secret-free view of a granted protocol service
+// for rule pickers (用户侧拿不到管理员 /proxy-services).
+type ProxyServiceSummary struct {
+	ID              int64   `json:"id"`
+	Name            string  `json:"name"`
+	Protocol        string  `json:"protocol"`
+	DeployedNodeIDs []int64 `json:"deployed_node_ids"`
+}
+
+// ListGrantedProxyServiceSummaries returns the user's protocol grants with
+// deployed node ids. Config/secrets are omitted.
+func ListGrantedProxyServiceSummaries(d *sql.DB, userID int64) ([]*ProxyServiceSummary, error) {
+	if userID <= 0 {
+		return []*ProxyServiceSummary{}, nil
+	}
+	ids, err := ListProxyServiceIDsForUser(d, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*ProxyServiceSummary, 0, len(ids))
+	for _, id := range ids {
+		svc, err := GetProxyService(d, id)
+		if err != nil || svc == nil {
+			continue
+		}
+		nids, err := ListProxyServiceNodeIDs(d, []int64{id})
+		if err != nil {
+			nids = []int64{}
+		}
+		if nids == nil {
+			nids = []int64{}
+		}
+		out = append(out, &ProxyServiceSummary{
+			ID:              svc.ID,
+			Name:            svc.Name,
+			Protocol:        svc.Protocol,
+			DeployedNodeIDs: nids,
+		})
+	}
+	return out, nil
+}
+
 // ListDeployedProxyNodeIDs returns distinct node_ids that host any proxy_service instance.
 func ListDeployedProxyNodeIDs(d *sql.DB) ([]int64, error) {
 	rows, err := d.Query(`SELECT DISTINCT node_id FROM proxy_service_instances WHERE node_id > 0 ORDER BY node_id`)

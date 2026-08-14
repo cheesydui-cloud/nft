@@ -63,16 +63,24 @@ export default function UserDetail() {
     () => rawLanding.filter(n => nodeHasRole(nodeRoles, n, ROLE_LANDING)),
     [rawLanding, nodeRoles],
   )
-  // 代理页签 = 已授权线路 ∩ 部署了代理服务的节点（全局 proxy_node_ids 不能直接用）。
-  const grantedProxyNodeIds = useMemo(() => {
-    const granted = new Set((data?.nodes || []).map(n => Number(n.id)).filter(id => id > 0))
-    const deployed = data?.proxy_node_ids || []
-    return (Array.isArray(deployed) ? deployed : []).map(Number).filter(id => granted.has(id))
-  }, [data?.nodes, data?.proxy_node_ids])
   // 协议级授权：只展示/可选这些 proxy_service_id（同节点其它协议不出现）。
   const grantedProxyServiceIds = useMemo(
     () => (Array.isArray(data?.proxy_service_ids) ? data.proxy_service_ids : []).map(Number).filter(id => id > 0),
     [data?.proxy_service_ids],
+  )
+  // 代理页签节点池：协议授权覆盖的部署节点，不要求同时有单点授权。
+  const grantedProxyNodeIds = useMemo(() => {
+    const fromGrant = (data?.granted_proxy_node_ids || []).map(Number).filter(id => id > 0)
+    if (fromGrant.length) return fromGrant
+    return []
+  }, [data?.granted_proxy_node_ids])
+  const grantedProxyNodes = useMemo(
+    () => (Array.isArray(data?.proxy_nodes) ? data.proxy_nodes : []),
+    [data?.proxy_nodes],
+  )
+  const grantedProxyServices = useMemo(
+    () => (Array.isArray(data?.granted_proxy_services) ? data.granted_proxy_services : []),
+    [data?.granted_proxy_services],
   )
 
   if (loading) return <Layout><Loading /></Layout>
@@ -635,6 +643,8 @@ export default function UserDetail() {
         initial={{ owner_id: Number(id) }}
         proxyNodeIds={grantedProxyNodeIds}
         proxyServiceIds={grantedProxyServiceIds}
+        proxyNodes={grantedProxyNodes}
+        grantedProxyServices={grantedProxyServices}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.post('/rules', payload)
@@ -656,6 +666,8 @@ export default function UserDetail() {
         initial={editRule ? { ...ruleToForm(editRule), owner_id: Number(id) } : null}
         proxyNodeIds={grantedProxyNodeIds}
         proxyServiceIds={grantedProxyServiceIds}
+        proxyNodes={grantedProxyNodes}
+        grantedProxyServices={grantedProxyServices}
         onSubmit={async (form) => {
           const payload = ruleFormToPayload({ ...form, owner_id: Number(id) })
           const res = await api.put(`/rules/${editRule.id}`, payload)
