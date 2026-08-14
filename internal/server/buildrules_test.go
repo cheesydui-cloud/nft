@@ -57,7 +57,7 @@ func TestBuildRulesStampsRuleMeta(t *testing.T) {
 	}
 }
 
-func TestBuildRulesUpgradesMieruTCPToTCPUDP(t *testing.T) {
+func TestBuildRulesKeepsMieruTCP(t *testing.T) {
 	d := openDB(t)
 	n, err := db.CreateNode(d, "hop1", "https://p", "tok")
 	if err != nil {
@@ -93,8 +93,8 @@ func TestBuildRulesUpgradesMieruTCPToTCPUDP(t *testing.T) {
 	for _, r := range rules {
 		if r.RuleID == ruleID {
 			found = true
-			if r.Proto != "tcp+udp" {
-				t.Fatalf("mieru landing must dispatch tcp+udp, got %q", r.Proto)
+			if r.Proto != "tcp" {
+				t.Fatalf("mieru landing must keep chosen proto, got %q", r.Proto)
 			}
 		}
 	}

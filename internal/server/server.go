@@ -571,11 +571,6 @@ func buildRules(d *sql.DB, ruleHops []*db.RuleHop) []nft.Rule {
 			HopCount: hopCounts[rh.RuleID],
 		}
 		if r := ruleMap[rh.RuleID]; r != nil {
-			if p := effectiveForwardProto(d, r); p != "" && p != rule.Proto {
-				// Existing TCP rules to a mieru landing must still
-				// forward UDP; hop rows stay tcp until the next rewire.
-				rule.Proto = p
-			}
 			rule.RuleID = r.ID
 			rule.RuleName = r.Name
 			if r.OwnerID.Valid {

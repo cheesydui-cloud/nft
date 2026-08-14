@@ -750,17 +750,12 @@ export function RuleFormModal({ open, onClose, title, submitLabel = '保存', no
                 {landingOptions.length ? (
                   <Select value={form.exit} onChange={v => {
                     const node = (landingNodes || []).find(n => `${n.host}:${n.port}` === v)
-                    const p = String(node?.protocol || node?.uri || '').toLowerCase()
-                    const mieru = p.includes('mieru')
                     setForm(f => ({
                       ...f,
                       exit: v,
                       exit_kind: 'landing',
                       // 落地分享链写入 exit_uri，协议入口出站用（VLESS→SS 等）
                       exit_uri: node?.uri || f.exit_uri || '',
-                      // Official mieru is TCP+UDP; default TCP-only looks
-                      // green on panel TCP probe but clients miss UDP.
-                      proto: mieru && f.proto === 'tcp' ? 'tcp+udp' : f.proto,
                     }))
                   }} placeholder="-- 选择落地IP --" searchable options={landingOptions} className="flex-1 min-w-0" />
                 ) : (

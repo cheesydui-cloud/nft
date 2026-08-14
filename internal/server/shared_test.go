@@ -66,11 +66,11 @@ func TestParseExit(t *testing.T) {
 }
 
 func TestPreferLandingProtoMieru(t *testing.T) {
-	if got := preferLandingProto("mierus://u:p@h?port=1&protocol=TCP", "tcp"); got != "tcp+udp" {
-		t.Fatalf("share uri: got %q", got)
+	if got := preferLandingProto("mierus://u:p@h?port=1&protocol=TCP", "tcp"); got != "tcp" {
+		t.Fatalf("share uri must keep tcp, got %q", got)
 	}
-	if got := preferLandingProtoHint("", "mieru", "tcp"); got != "tcp+udp" {
-		t.Fatalf("warehouse hint: got %q", got)
+	if got := preferLandingProtoHint("", "mieru", "tcp"); got != "tcp" {
+		t.Fatalf("warehouse hint must keep tcp, got %q", got)
 	}
 	if got := preferLandingProtoHint("", "mieru", "udp"); got != "udp" {
 		t.Fatalf("explicit udp must stay, got %q", got)
