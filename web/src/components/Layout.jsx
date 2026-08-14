@@ -249,7 +249,7 @@ export function Layout({ children }) {
                   {user.has_line_grant && user.has_landing_source && (
                     <SideLink to="/my/landing" icon={<IconProxy />}>落地节点</SideLink>
                   )}
-                  {user.has_line_grant && user.has_landing_source && (
+                  {user.has_proxy_grant && (
                     <SideLink to="/proxies" icon={<IconProxy />}>我的代理</SideLink>
                   )}
                 </NavGroup>

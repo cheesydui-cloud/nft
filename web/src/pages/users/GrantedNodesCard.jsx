@@ -285,7 +285,7 @@ function GrantNodeForm({ userId, allNodes, grantedNodes, proxyNodeIds, proxyServ
   }
   return (
     <>
-      <div className="text-xs font-bold text-ink-mut uppercase tracking-wider mb-3">授权新节点</div>
+      <div className="text-xs font-bold text-ink-mut uppercase tracking-wider mb-3">授权线路</div>
       <form onSubmit={submit} className="space-y-3 max-w-xl">
         <div className="grid grid-cols-[140px_1fr] gap-4 items-center">
           <label className="fl">节点规则数上限</label>
@@ -337,14 +337,17 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
     [proxyServiceIds],
   )
 
-  // 代理 tab 行：按已授权的 proxy_service 展开（服务 · 节点），不再展示整节点全部协议。
+  const grantByNode = {}
+  nodes.forEach((n, i) => { grantByNode[n.id] = grants[i] })
+
+  // 代理 tab 行：按已授权的 proxy_service 展开。节点名来自全部节点，
+  // 不要求该 VPS 也在 user_nodes（否则授权代理会误显示成单点）。
   const proxyRows = useMemo(() => {
-    const nodeById = Object.fromEntries((nodes || []).map(n => [Number(n.id), n]))
+    const allById = Object.fromEntries((allNodes || []).map(n => [Number(n.id), n]))
     const rows = []
     for (const s of proxyServices || []) {
       if (!grantedSvcIds.has(Number(s.id))) continue
-      const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0 && nodeById[id])
-      // Service granted but its nodes not yet in user_nodes: still show with first name.
+      const nids = (s.deployed_node_ids || []).map(Number).filter(id => id > 0)
       if (!nids.length) {
         rows.push({
           key: `svc:${s.id}:0`,
@@ -360,21 +363,18 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
           key: `svc:${s.id}:${nid}`,
           serviceId: Number(s.id),
           nodeId: nid,
-          node: nodeById[nid],
+          node: allById[nid] || null,
           service: s,
         })
       }
     }
     return rows
-  }, [proxyServices, grantedSvcIds, nodes])
+  }, [proxyServices, grantedSvcIds, allNodes])
 
   const singleNodes = nodes.filter(n => n.node_type !== 'composite')
   const compositeNodes = nodes.filter(n => n.node_type === 'composite')
-  // 单点/组合列表：排除「仅因代理服务授权而挂上」且没有其它用途的节点——
-  // 仍展示全部已授权节点（配额/限速仍按节点）；代理 tab 单独用 proxyRows。
+  // 单点/组合只展示显式授权的 user_nodes；授权代理不再写入节点授权。
   const tabNodes = tab === 'composite' ? compositeNodes : tab === 'proxy' ? [] : singleNodes
-  const grantByNode = {}
-  nodes.forEach((n, i) => { grantByNode[n.id] = grants[i] })
 
   const toggleOne = (id) => setSelected(s => {
     const next = new Set(s)
@@ -465,7 +465,7 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
       <div className={embedded ? 'detail-panel-header' : 'card-header'}>
         <div className="min-w-0">
           <h3 className={embedded ? 'detail-panel-title' : 'text-sm font-bold'}>已授权线路</h3>
-          {embedded && <div className="detail-panel-sub">{nodes.length} 条线路 · 单点/组合/代理配额与限速</div>}
+          {embedded && <div className="detail-panel-sub">{nodes.length} 条单点/组合 · {proxyRows.length} 个代理协议</div>}
         </div>
         <div className="flex items-center gap-1.5 ml-auto">
           {nodes.length > 0 && <button onClick={copyGrants} className="btn-secondary text-xs">复制授权</button>}
@@ -493,12 +493,11 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
               <th className="w-8"><input type="checkbox" className="accent-emerald-600"
                 checked={proxyRows.length > 0 && proxyRows.every(r => selected.has(r.key))}
                 onChange={toggleAll} /></th>
-              <th>代理协议</th><th>节点</th><th>规则上限</th><th>流量配额</th><th>限速</th><th>已用</th><th className="text-right">操作</th>
+              <th>代理协议</th><th>节点</th><th className="text-right">操作</th>
             </tr></thead>
             <tbody>
               {proxyRows.map(row => {
                 const n = row.node
-                const g = n ? grantByNode[n.id] : null
                 const proto = PROTO_LABEL[row.service?.protocol] || row.service?.protocol || ''
                 const svcLabel = proto ? `[${proto}] ${row.service?.name || ''}` : (row.service?.name || `服务 #${row.serviceId}`)
                 return (
@@ -507,25 +506,6 @@ function GrantedNodesCard({ userId, nodes, grants, allNodes, allUsers, userSpeed
                     <td className="font-semibold">{svcLabel}</td>
                     <td className="font-semibold">
                       {n ? <Link to={`/nodes/${n.id}`} className="text-emerald-600 hover:underline">{n.name}</Link> : <span className="text-ink-mut">—</span>}
-                    </td>
-                    <td>
-                      {n ? <PerNodeMaxForwardsForm userId={userId} nodeId={n.id} maxForwards={g?.max_forwards} onDone={onDone} /> : '—'}
-                    </td>
-                    <td>
-                      {n ? <PerNodeQuotaForm userId={userId} nodeId={n.id} quotaBytes={g?.traffic_quota_bytes} onDone={onDone} /> : '—'}
-                    </td>
-                    <td>
-                      {n ? (
-                        <>
-                          <PerNodeRateForm userId={userId} nodeId={n.id} rateMBytes={g?.rate_limit_mbytes} onDone={onDone} />
-                          {!g?.rate_limit_mbytes && userSpeedLimitMBytes > 0 && (
-                            <div className="mt-1 text-[11px] text-ink-mut">取用户全局值 {userSpeedLimitMBytes} Mbps</div>
-                          )}
-                        </>
-                      ) : '—'}
-                    </td>
-                    <td className="font-mono text-sm">
-                      {n ? fmtTrafficGB(g?.traffic_used_bytes, g?.traffic_quota_bytes) : '—'}
                     </td>
                     <td className="text-right">
                       <button onClick={() => revokeProxyService(row.serviceId)} className="btn-danger-sm text-xs">撤销协议</button>

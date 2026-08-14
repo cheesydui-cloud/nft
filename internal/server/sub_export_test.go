@@ -22,9 +22,6 @@ func TestPublicSubAndMySubscription(t *testing.T) {
 	_ = db.UpdateNodeRelayHost(d, node.ID, "10.0.0.1")
 
 	uid, userCookie := loginAsUser(t, d, 10)
-	if err := db.GrantNode(d, uid, node.ID, 5, 0); err != nil {
-		t.Fatal(err)
-	}
 
 	priv, pub := proxysvc.GenerateRealityKeyPair()
 	cfg, _ := json.Marshal(map[string]any{
@@ -43,7 +40,7 @@ func TestPublicSubAndMySubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Subscription export requires both node grant and protocol-level service grant.
+	// Subscription export requires the protocol-level grant only.
 	if err := db.GrantProxyService(d, uid, svc.ID); err != nil {
 		t.Fatal(err)
 	}

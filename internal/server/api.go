@@ -264,6 +264,11 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 	} else {
 		userView["has_line_grant"] = false
 	}
+	if ok, err := db.UserHasProxyServiceGrant(s.DB, u.ID); err == nil {
+		userView["has_proxy_grant"] = ok
+	} else {
+		userView["has_proxy_grant"] = false
+	}
 	out := map[string]any{
 		"user":           userView,
 		"panel_name":     panelName,
@@ -3369,9 +3374,10 @@ func (s *Server) apiGrantNode(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		NodeID  int64   `json:"node_id"`
 		NodeIDs []int64 `json:"node_ids"`
-		// ProxyServiceIDs grants protocol-level access. Each service also
-		// ensures its deployed nodes are in user_nodes (quota/caps still key
-		// on the node). Sibling protocols on the same node are NOT auto-granted.
+		// ProxyServiceIDs grants protocol-level access only (user_proxy_services).
+		// Deployed nodes are NOT written to user_nodes — that would also
+		// authorize 单点/端口转发 on the same VPS. Sibling protocols on the
+		// same node are NOT auto-granted.
 		ProxyServiceIDs   []int64 `json:"proxy_service_ids"`
 		MaxForwards       int     `json:"max_forwards"`
 		TrafficQuotaBytes int64   `json:"traffic_quota_bytes"`
@@ -3388,7 +3394,6 @@ func (s *Server) apiGrantNode(w http.ResponseWriter, r *http.Request) {
 		ids = []int64{body.NodeID}
 	}
 	svcIDs := body.ProxyServiceIDs
-	// Expand proxy services → their deployed nodes so rule caps still work.
 	if len(svcIDs) > 0 {
 		for _, sid := range svcIDs {
 			if sid <= 0 {
@@ -3397,23 +3402,6 @@ func (s *Server) apiGrantNode(w http.ResponseWriter, r *http.Request) {
 			if _, err := db.GetProxyService(s.DB, sid); err != nil {
 				jsonErr(w, http.StatusBadRequest, "代理服务不存在: "+strconv.FormatInt(sid, 10))
 				return
-			}
-		}
-		extra, err := db.ListProxyServiceNodeIDs(s.DB, svcIDs)
-		if err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		seen := map[int64]bool{}
-		for _, nid := range ids {
-			if nid > 0 {
-				seen[nid] = true
-			}
-		}
-		for _, nid := range extra {
-			if nid > 0 && !seen[nid] {
-				ids = append(ids, nid)
-				seen[nid] = true
 			}
 		}
 	}

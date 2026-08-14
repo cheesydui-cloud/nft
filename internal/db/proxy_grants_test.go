@@ -22,10 +22,7 @@ func TestProxyServiceGrantIndependentOfSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Grant only VLESS (and its node for caps).
-	if err := GrantNode(d, uid, nid, 10, 0); err != nil {
-		t.Fatal(err)
-	}
+	// Grant only VLESS. Node grant is independent and must not be implied.
 	if err := GrantProxyService(d, uid, vless.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +57,38 @@ func TestProxyServiceGrantIndependentOfSiblings(t *testing.T) {
 	if HasProxyServiceGrant(d, uid, vless.ID) {
 		t.Fatal("revoke should clear grant")
 	}
-	// Node grant remains.
-	if _, err := GetNodeGrant(d, uid, nid); err != nil {
-		t.Fatal("node grant must survive service revoke")
+	if _, err := GetNodeGrant(d, uid, nid); err == nil {
+		t.Fatal("protocol grant must not create a node grant")
+	}
+}
+
+func TestListSubVisibleReadyInstancesDoesNotNeedNodeGrant(t *testing.T) {
+	d := openTestDB(t)
+	uid := createTestUser(t, d)
+	nid := createTestNode(t, d, "线路7")
+	svc, err := CreateProxyService(d, "线路7-vless", ProxyProtoVLESS, ProxyCoreXray, []byte(`{}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := UpsertProxyInstance(d, svc.ID, nid, 443, "1.2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateProxyInstanceDeploy(d, inst.ID, ProxyDeployReady, "vless://x@1.2.3.4:443", "", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := GrantProxyService(d, uid, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := ListSubVisibleReadyInstancesForUser(d, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ServiceID != svc.ID {
+		t.Fatalf("want one instance from protocol grant, got %+v", rows)
+	}
+	if _, err := GetNodeGrant(d, uid, nid); err == nil {
+		t.Fatal("export must not require or create a node grant")
 	}
 }

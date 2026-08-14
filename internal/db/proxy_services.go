@@ -509,7 +509,9 @@ type SubExportNode struct {
 //   - belong to services with sub_visible=1
 //   - are deploy_status=ready with non-empty uri
 //   - the user is granted the proxy service (user_proxy_services)
-//   - run on a line node the user is granted (user_nodes)
+//
+// A whole-node grant (user_nodes) is not required: that would also authorize
+// 单点/端口转发 on the same VPS.
 func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNode, error) {
 	rows, err := d.Query(`
 				SELECT i.id, i.service_id, i.node_id, s.name, s.protocol, i.uri, i.share_host, i.listen_port,
@@ -518,13 +520,12 @@ func ListSubVisibleReadyInstancesForUser(d *sql.DB, userID int64) ([]SubExportNo
 				FROM proxy_service_instances i
 				JOIN proxy_services s ON s.id = i.service_id
 				JOIN user_proxy_services ups ON ups.service_id = i.service_id AND ups.user_id = ?
-				JOIN user_nodes g ON g.node_id = i.node_id AND g.user_id = ?
 				LEFT JOIN nodes n ON n.id = i.node_id
 				WHERE s.sub_visible = 1
 				  AND i.deploy_status = ?
 				  AND TRIM(i.uri) != ''
 				ORDER BY s.name COLLATE NOCASE, n.name COLLATE NOCASE, i.id`,
-		userID, userID, ProxyDeployReady)
+		userID, ProxyDeployReady)
 	if err != nil {
 		return nil, err
 	}
