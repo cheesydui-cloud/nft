@@ -336,6 +336,18 @@ func GetRule(d DBTX, id int64) (*Rule, error) {
 	return scanRule(d.QueryRow(`SELECT `+ruleCols+` FROM rules WHERE id=?`, id))
 }
 
+// ListEnabledOwnedRulesForProxyServiceOnNode returns enabled rules that use
+// serviceID as the 代理 entry on nodeID and still have an owner. Used to
+// fold published-instance traffic onto a unique owner when only one such
+// rule exists (shared inbound otherwise stays instance-only).
+func ListEnabledOwnedRulesForProxyServiceOnNode(d *sql.DB, serviceID, nodeID int64) ([]*Rule, error) {
+	if serviceID <= 0 || nodeID <= 0 {
+		return nil, nil
+	}
+	return listRulesWhere(d, `proxy_service_id=? AND node_id=? AND COALESCE(disabled,0)=0 AND owner_id IS NOT NULL AND owner_id>0`,
+		serviceID, nodeID)
+}
+
 // UpdateRuleHeader persists editable header fields (node/name/proto/exit).
 // node_id is the logical entry node the rule belongs to; switching it goes
 // hand in hand with RegenerateRule rebuilding the hops for the new node.

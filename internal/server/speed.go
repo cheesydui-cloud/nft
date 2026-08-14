@@ -2,6 +2,7 @@ package server
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -103,9 +104,13 @@ func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 	ns.lastSeen = now
 
 	// Empty batch = agent is alive but no port had a non-zero delta this tick.
-	// Zero every hop immediately so UI matches "idle" instead of hopIdleTTL stickiness.
+	// Zero L4 hops immediately so UI matches "idle" instead of hopIdleTTL stickiness.
+	// Leave proxy/* rates to applyProxyCounters (this path is L4 heartbeats).
 	if len(samples) == 0 {
-		for _, hs := range ns.hops {
+		for key, hs := range ns.hops {
+			if strings.HasPrefix(key, "proxy/") {
+				continue
+			}
 			hs.upBps = 0
 			hs.downBps = 0
 			hs.lastTime = now
@@ -114,9 +119,15 @@ func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 	}
 
 	seen := make(map[string]bool, len(samples))
+	incomingProxy, incomingL4 := false, false
 	for _, s := range samples {
 		key := s.proto + "/" + s.listenPortStr
 		seen[key] = true
+		if s.proto == "proxy" {
+			incomingProxy = true
+		} else {
+			incomingL4 = true
+		}
 		hs, ok := ns.hops[key]
 		if !ok {
 			hs = &hopState{lastTime: now, hopPos: -1}
@@ -150,12 +161,22 @@ func (sc *speedCache) update(nodeID int64, samples []counterDelta) {
 		hs.lastTime = now
 	}
 	// Ports not in this non-empty batch had zero delta this tick — zero them.
+	// L4 and proxy cores are independent feeds; only zero hops of the
+	// family that arrived in this batch.
 	for key, hs := range ns.hops {
-		if !seen[key] {
-			hs.upBps = 0
-			hs.downBps = 0
-			hs.lastTime = now
+		if seen[key] {
+			continue
 		}
+		isProxy := strings.HasPrefix(key, "proxy/")
+		if isProxy && !incomingProxy {
+			continue
+		}
+		if !isProxy && !incomingL4 {
+			continue
+		}
+		hs.upBps = 0
+		hs.downBps = 0
+		hs.lastTime = now
 	}
 }
 

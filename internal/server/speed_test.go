@@ -190,3 +190,27 @@ func TestSpeedCacheMissingPortZeroed(t *testing.T) {
 		t.Fatalf("rule 10: up=%d want 80000", got.Up)
 	}
 }
+
+// L4 heartbeats and L4-only batches must not wipe protocol-core rates.
+func TestSpeedCacheProxySurvivesL4Heartbeat(t *testing.T) {
+	sc := newSpeedCache()
+	sc.update(1, []counterDelta{
+		{proto: "tcp", listenPortStr: "1000", bytesUp: 10_000, bytesDown: 10_000, elapsedSec: 1, ownerID: 1, ruleID: 10, hopPos: 0},
+		{proto: "proxy", listenPortStr: "2000000001", bytesUp: 40_000, bytesDown: 60_000, elapsedSec: 1, ownerID: 1, ruleID: 11, hopPos: 0},
+	})
+	sc.update(1, nil)
+	rules := entryByRule(sc.snapshotRules())
+	if _, ok := rules[10]; ok {
+		t.Fatalf("L4 heartbeat must zero rule 10, got %+v", rules[10])
+	}
+	if got := rules[11]; got.Up != 40_000 || got.Down != 60_000 {
+		t.Fatalf("proxy rule must survive L4 heartbeat: %+v", got)
+	}
+	// Proxy-only batch must not zero remaining L4 (already zero) or itself.
+	sc.update(1, []counterDelta{
+		{proto: "proxy", listenPortStr: "2000000001", bytesUp: 80_000, bytesDown: 20_000, elapsedSec: 1, ownerID: 1, ruleID: 11, hopPos: 0},
+	})
+	if got := entryByRule(sc.snapshotRules())[11]; got.Up != 80_000 || got.Down != 20_000 {
+		t.Fatalf("proxy-only update: %+v", got)
+	}
+}

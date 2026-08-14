@@ -1732,13 +1732,89 @@ func (h *Hub) applyCounters(nodeID int64, samples []wsproto.CounterSample) (ok b
 	return persistOK, persistErr
 }
 
-// applyProxyCounters folds agent proxy_counters samples into per-instance
-// traffic ledgers. Returns (true,"") on success so the agent can drop the
-// batch; (false, reason) triggers retransmit via proxy_counters_ack NACK.
+// applyProxyCounters folds agent proxy_counters into instance / node raw
+// ledgers and, when the sample can be attributed, the same user / rule /
+// landing / speed path as L4 applyCounters.
+//
+//   instance_id >= 2e9  → rule-scoped protocol plane (ruleID = id-2e9)
+//   published instance  → bill a user only when exactly one enabled owned
+//                         protocol rule on that (service, node) exists
 func (h *Hub) applyProxyCounters(nodeID int64, samples []wsproto.ProxyCounterSample) (bool, string) {
 	if len(samples) == 0 {
 		return true, ""
 	}
+	type userNode struct{ userID, nodeID int64 }
+	type proxyBill struct {
+		userID, ruleID, grantNodeID int64
+		exitHost                    string
+		exitPort                    int
+		meterExit                   bool
+	}
+
+	userAdds := map[int64]int64{}
+	totalUserAdds := map[int64]int64{}
+	ruleExitAdds := map[int64]int64{}
+	userNodeAdds := map[userNode]int64{}
+	exitAdds := map[db.UserExitKey]int64{}
+	touched := map[userNode]bool{}
+	var rawAdd int64
+	var speedDeltas []counterDelta
+
+	billCache := map[int64]*proxyBill{} // instanceID → attribution (nil = none)
+	// Resolve owners before Begin(): MaxOpenConns(1) deadlocks a pool read
+	// while a transaction holds the only connection.
+	for _, s := range samples {
+		if s.InstanceID <= 0 {
+			continue
+		}
+		if _, seen := billCache[s.InstanceID]; seen {
+			continue
+		}
+		var r *db.Rule
+		if s.InstanceID >= ruleCoreInstanceBase {
+			got, err := db.GetRule(h.DB, s.InstanceID-ruleCoreInstanceBase)
+			if err != nil || got == nil {
+				billCache[s.InstanceID] = nil
+				continue
+			}
+			r = got
+		} else {
+			inst, err := db.GetProxyInstance(h.DB, s.InstanceID)
+			if err != nil || inst == nil || inst.NodeID != nodeID {
+				billCache[s.InstanceID] = nil
+				continue
+			}
+			rules, err := db.ListEnabledOwnedRulesForProxyServiceOnNode(h.DB, inst.ServiceID, nodeID)
+			if err != nil || len(rules) != 1 {
+				billCache[s.InstanceID] = nil
+				continue
+			}
+			r = rules[0]
+		}
+		if r == nil || !r.OwnerID.Valid || r.OwnerID.Int64 <= 0 {
+			billCache[s.InstanceID] = nil
+			continue
+		}
+		grantNode := r.NodeID
+		if grantNode <= 0 {
+			grantNode = nodeID
+		}
+		b := &proxyBill{
+			userID:      r.OwnerID.Int64,
+			ruleID:      r.ID,
+			grantNodeID: grantNode,
+			exitHost:    r.ExitHost,
+			exitPort:    r.ExitPort,
+		}
+		if r.ExitHost != "" && r.ExitPort > 0 {
+			if set, err := db.PresentLandingExitSet(h.DB, []int64{r.OwnerID.Int64}); err == nil &&
+				set[db.UserExitKey{UserID: r.OwnerID.Int64, Host: r.ExitHost, Port: r.ExitPort}] {
+				b.meterExit = true
+			}
+		}
+		billCache[s.InstanceID] = b
+	}
+
 	tx, err := h.DB.Begin()
 	if err != nil {
 		log.Printf("hub: node %d proxy_counters tx begin: %v", nodeID, err)
@@ -1750,28 +1826,120 @@ func (h *Hub) applyProxyCounters(nodeID int64, samples []wsproto.ProxyCounterSam
 		if s.InstanceID <= 0 || (s.BytesUp == 0 && s.BytesDown == 0) {
 			continue
 		}
-		if err := db.AddProxyInstanceTraffic(tx, s.InstanceID, nodeID, s.BytesUp, s.BytesDown); err != nil {
-			// Unknown instance (deleted) is non-fatal for the rest of the batch.
-			if strings.Contains(err.Error(), "not on node") {
-				log.Printf("hub: node %d proxy_counters skip instance %d: %v", nodeID, s.InstanceID, err)
-				continue
-			}
-			log.Printf("hub: node %d proxy_counters instance %d: %v", nodeID, s.InstanceID, err)
-			ok = false
-			errMsg = err.Error()
-			break
-		}
-		// Count proxy raw bytes toward the node's raw ledger (same as forward).
 		raw := s.BytesUp + s.BytesDown
-		if raw > 0 {
-			if err := db.AddNodeRawTraffic(tx, nodeID, raw); err != nil {
-				log.Printf("hub: node %d proxy raw traffic: %v", nodeID, err)
+		if s.InstanceID < ruleCoreInstanceBase {
+			if err := db.AddProxyInstanceTraffic(tx, s.InstanceID, nodeID, s.BytesUp, s.BytesDown); err != nil {
+				if strings.Contains(err.Error(), "not on node") {
+					log.Printf("hub: node %d proxy_counters skip instance %d: %v", nodeID, s.InstanceID, err)
+					continue
+				}
+				log.Printf("hub: node %d proxy_counters instance %d: %v", nodeID, s.InstanceID, err)
 				ok = false
 				errMsg = err.Error()
 				break
 			}
-			if err := db.AddNodeDailyRawTraffic(tx, nodeID, raw); err != nil {
+		}
+		rawAdd += raw
+
+		elapsedSec := 0.0
+		if s.ElapsedMs > 0 {
+			elapsedSec = float64(s.ElapsedMs) / 1000.0
+		}
+		delta := counterDelta{
+			proto:         "proxy",
+			listenPortStr: strconv.FormatInt(s.InstanceID, 10),
+			bytesUp:       s.BytesUp,
+			bytesDown:     s.BytesDown,
+			elapsedSec:    elapsedSec,
+			hopPos:        0,
+		}
+		if b := billCache[s.InstanceID]; b != nil {
+			delta.ownerID = b.userID
+			delta.ruleID = b.ruleID
+			userAdds[b.userID] += raw
+			totalUserAdds[b.userID] += raw
+			if b.ruleID > 0 {
+				ruleExitAdds[b.ruleID] += raw
+			}
+			if b.grantNodeID > 0 {
+				un := userNode{b.userID, b.grantNodeID}
+				userNodeAdds[un] += raw
+				touched[un] = true
+			}
+			if b.meterExit {
+				k := db.UserExitKey{UserID: b.userID, Host: b.exitHost, Port: b.exitPort}
+				exitAdds[k] += raw
+				touched[userNode{b.userID, nodeID}] = true
+			}
+		}
+		speedDeltas = append(speedDeltas, delta)
+	}
+	if ok && rawAdd > 0 {
+		if err := db.AddNodeRawTraffic(tx, nodeID, rawAdd); err != nil {
+			log.Printf("hub: node %d proxy raw traffic: %v", nodeID, err)
+			ok = false
+			errMsg = err.Error()
+		}
+		if ok {
+			if err := db.AddNodeDailyRawTraffic(tx, nodeID, rawAdd); err != nil {
 				log.Printf("hub: node %d proxy daily raw: %v", nodeID, err)
+				ok = false
+				errMsg = err.Error()
+			}
+		}
+	}
+	if ok {
+		for uid, delta := range userAdds {
+			if _, err := tx.Exec(`UPDATE users SET traffic_used_bytes = traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
+				log.Printf("hub: user %d proxy traffic add: %v", uid, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+			if err := db.AddUserDailyTraffic(tx, uid, delta); err != nil {
+				log.Printf("hub: user %d proxy daily traffic: %v", uid, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+		}
+	}
+	if ok {
+		for uid, delta := range totalUserAdds {
+			if _, err := tx.Exec(`UPDATE users SET total_traffic_used_bytes = total_traffic_used_bytes + ? WHERE id=?`, delta, uid); err != nil {
+				log.Printf("hub: user %d proxy total traffic: %v", uid, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+		}
+	}
+	if ok {
+		for ruleID, delta := range ruleExitAdds {
+			if _, err := tx.Exec(`UPDATE rules SET exit_bytes = exit_bytes + ? WHERE id=?`, delta, ruleID); err != nil {
+				log.Printf("hub: rule %d proxy exit bytes: %v", ruleID, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+		}
+	}
+	if ok {
+		for un, delta := range userNodeAdds {
+			if _, err := tx.Exec(`UPDATE user_nodes SET traffic_used_bytes = traffic_used_bytes + ? WHERE user_id=? AND node_id=?`, delta, un.userID, un.nodeID); err != nil {
+				log.Printf("hub: user %d node %d proxy grant traffic: %v", un.userID, un.nodeID, err)
+				ok = false
+				errMsg = err.Error()
+				break
+			}
+		}
+	}
+	if ok {
+		now := time.Now().Unix()
+		for k, delta := range exitAdds {
+			if _, err := tx.Exec(`UPDATE user_landing_exits SET used_bytes = used_bytes + ?, updated_at = ? WHERE user_id=? AND host=? AND port=?`,
+				delta, now, k.UserID, k.Host, k.Port); err != nil {
+				log.Printf("hub: user %d exit %s:%d proxy ledger: %v", k.UserID, k.Host, k.Port, err)
 				ok = false
 				errMsg = err.Error()
 				break
@@ -1782,6 +1950,25 @@ func (h *Hub) applyProxyCounters(nodeID int64, samples []wsproto.ProxyCounterSam
 		if err := tx.Commit(); err != nil {
 			log.Printf("hub: node %d proxy_counters commit: %v", nodeID, err)
 			return false, "tx commit: " + err.Error()
+		}
+		if len(speedDeltas) > 0 {
+			h.speedCache.update(nodeID, speedDeltas)
+		}
+		if h.OnTrafficUpdate != nil && len(touched) > 0 {
+			pairs := make([]userNode, 0, len(touched))
+			for un := range touched {
+				pairs = append(pairs, un)
+			}
+			go func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						log.Printf("hub: OnTrafficUpdate panic: %v", rec)
+					}
+				}()
+				for _, un := range pairs {
+					h.OnTrafficUpdate(un.userID, un.nodeID)
+				}
+			}()
 		}
 		return true, ""
 	}

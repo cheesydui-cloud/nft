@@ -10,14 +10,16 @@ import (
 	"nft/internal/wsproto"
 )
 
+// ruleCoreInstanceBase is the agent instance-id band for rule-scoped protocol
+// planes. Real proxy_service_instances use ordinary SQLite rowids (small).
+const ruleCoreInstanceBase int64 = 2_000_000_000
+
 // ruleCoreInstanceID maps a panel rule id onto the agent core instance id space.
-// Real proxy_service_instances use ordinary SQLite rowids (small); rule-scoped
-// planes live in a high band so they never collide.
 func ruleCoreInstanceID(ruleID int64) int64 {
 	if ruleID <= 0 {
 		return 0
 	}
-	return 2_000_000_000 + ruleID
+	return ruleCoreInstanceBase + ruleID
 }
 
 // protocolEntryProtocols are proxy-service protocols that can own the rule
