@@ -75,8 +75,8 @@ function CertVaultPicker({ certSource, vaultCerts, certId, onSource, onPick, chi
 
 const TEMPLATES = [
 	  { protocol: 'vless', core: 'xray', title: 'VLESS', desc: 'REALITY / TLS / 多传输，默认 REALITY 抗封锁' },
-	  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box，双栈监听，客户端生态最广' },
-	  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '多路复用抗探测，默认 TCP（可选 UDP）' },
+	  { protocol: 'shadowsocks', core: 'sing-box', title: 'Shadowsocks', desc: 'SS2022 / sing-box（yyds 入站：:: + NTP + direct）' },
+	  { protocol: 'mieru', core: 'mieru', title: 'mieru', desc: '官方 mita：TCP、mtu 1400、HANDSHAKE_NO_WAIT' },
 	  { protocol: 'socks5', core: 'sing-box', title: 'SOCKS5', desc: '标准 SOCKS5 服务端 · sing-box · 可给规则/客户端当上游' },
 	  { protocol: 'anytls', core: 'sing-box', title: 'AnyTLS', desc: 'TLS 隧道 · sing-box ≥1.12（协议原版推荐实现）' },
 	  { protocol: 'naive', core: 'sing-box', title: 'NaiveProxy', desc: 'HTTP/2·3 代理 · sing-box 协议兼容（非 Caddy 原版前端）' },
@@ -123,26 +123,28 @@ const emptyVless = () => ({
 })
 
 const emptySS = () => ({
-  listen_port: 443,
-  share_host: '',
-  method: '2022-blake3-aes-128-gcm',
-  password: '',
-  listen: '::',
-  ntp: true,
-  multiplex: false,
-  tcp_fast_open: false,
-  sniffing: true,
-})
+	  listen_port: 18388,
+	  share_host: '',
+	  method: '2022-blake3-aes-128-gcm',
+	  password: '',
+	  listen: '::',
+	  ntp: true,
+	  multiplex: false,
+	  tcp_fast_open: false,
+	  sniffing: false,
+	})
 
-		const emptyMieru = () => ({
-			  listen_port: 8964,
-			  share_host: '',
-			  transports: ['TCP'],
-			  traffic_pattern: '',
-			  user_hint_is_mandatory: false,
-			  username: '',
-			  password: '',
-			})
+			const emptyMieru = () => ({
+				  listen_port: 8964,
+				  share_host: '',
+				  transports: ['TCP'],
+				  traffic_pattern: '',
+				  user_hint_is_mandatory: false,
+				  mtu: 1400,
+				  handshake_mode: 'HANDSHAKE_NO_WAIT',
+				  username: '',
+				  password: '',
+				})
 
 	const emptySocks5 = () => ({
 	  listen_port: 1080,
@@ -623,7 +625,7 @@ export default function ProxyServiceWizard() {
         return false
       }
     }
-    const fallbackPort = protocol === 'mieru' ? 8964 : 443
+    const fallbackPort = protocol === 'mieru' ? 8964 : protocol === 'shadowsocks' ? 18388 : 443
     const body = {
       name: name.trim(),
       protocol,
@@ -759,12 +761,14 @@ export default function ProxyServiceWizard() {
                 </div>
                 <div>
                   <label className="fl block mb-1">默认端口</label>
-                  <input className="input-field font-mono" type="number" value={config.listen_port || (protocol === 'mieru' ? 8964 : 443)}
-                    onChange={e => setCfg('listen_port', Number(e.target.value) || (protocol === 'mieru' ? 8964 : 443))} />
+                  <input className="input-field font-mono" type="number" value={config.listen_port || (protocol === 'mieru' ? 8964 : protocol === 'shadowsocks' ? 18388 : 443)}
+                    onChange={e => setCfg('listen_port', Number(e.target.value) || (protocol === 'mieru' ? 8964 : protocol === 'shadowsocks' ? 18388 : 443))} />
                   <p className="text-[11px] text-ink-mut mt-1">
                     {protocol === 'mieru'
                       ? '官方 mita 只接受 1025–65535，不要用 443'
-                      : '部署时预填，可在部署页修改'}
+                      : protocol === 'shadowsocks'
+                        ? '对齐 yyds：默认 18388，勿与 443/nginx 抢口'
+                        : '部署时预填，可在部署页修改'}
                   </p>
                 </div>
               </div>
@@ -1152,7 +1156,7 @@ export default function ProxyServiceWizard() {
 
               {protocol === 'shadowsocks' && (
                 <div className="border-t border-line pt-4 space-y-3">
-                  <FormSection title="加密与访问" hint="对齐生产 sing-box SS：SS2022 推荐，密码可自动生成。">
+                  <FormSection title="加密与访问" hint="对齐 yyds sing-box：SS2022-128 + 双栈 :: + NTP + direct 出站。">
                     <div>
                       <label className="fl block mb-1">加密 method</label>
                       <Select
@@ -1216,9 +1220,9 @@ export default function ProxyServiceWizard() {
 
                   <FormSection
                     title="高级"
-                    hint="NTP、嗅探、TFO、multiplex；默认已适合大多数场景。"
+                    hint="yyds 默认：NTP 开，嗅探/TFO/mux 关。一般不用改。"
                     collapsible
-                    defaultOpen={config.ntp === false || config.sniffing === false || !!config.tcp_fast_open || !!config.multiplex}
+                    defaultOpen={config.ntp === false || !!config.sniffing || !!config.tcp_fast_open || !!config.multiplex}
                   >
                     <label className="flex items-center gap-2 text-sm">
                       <input type="checkbox" checked={config.ntp !== false} onChange={e => setCfg('ntp', e.target.checked)} />
@@ -1275,10 +1279,24 @@ export default function ProxyServiceWizard() {
 
                   <FormSection
                     title="高级"
-                    hint="流量模式与用户提示；一般保持默认。"
+                    hint="官方默认 mtu=1400、HANDSHAKE_NO_WAIT。一般不用改。"
                     collapsible
-                    defaultOpen={!!config.traffic_pattern || !!config.user_hint_is_mandatory}
+                    defaultOpen={!!config.traffic_pattern || !!config.user_hint_is_mandatory || (Number(config.mtu) > 0 && Number(config.mtu) !== 1400)}
                   >
+                    <div>
+                      <label className="fl block mb-1">mtu（官方默认 1400，仅 UDP）</label>
+                      <input className="input-field font-mono" type="number" value={config.mtu || 1400}
+                        onChange={e => setCfg('mtu', Number(e.target.value) || 1400)} />
+                    </div>
+                    <div>
+                      <label className="fl block mb-1">handshake-mode</label>
+                      <Select value={config.handshake_mode || 'HANDSHAKE_NO_WAIT'}
+                        onChange={v => setCfg('handshake_mode', v)}
+                        options={[
+                          { value: 'HANDSHAKE_NO_WAIT', label: 'HANDSHAKE_NO_WAIT（官方推荐）' },
+                          { value: 'HANDSHAKE_STANDARD', label: 'HANDSHAKE_STANDARD' },
+                        ]} />
+                    </div>
                     <div>
                       <label className="fl block mb-1">traffic_pattern（可选）</label>
                       <input className="input-field font-mono" value={config.traffic_pattern || ''} onChange={e => setCfg('traffic_pattern', e.target.value)} />
@@ -1701,7 +1719,7 @@ export default function ProxyServiceWizard() {
               <ul className="text-sm text-ink-soft space-y-1.5 mb-4">
                 <li>服务：<strong>{name}</strong></li>
                 <li>协议 / 核心：{protocol} / {core}</li>
-                <li>端口：{config.listen_port || (protocol === 'mieru' ? 8964 : 443)}</li>
+                <li>端口：{config.listen_port || (protocol === 'mieru' ? 8964 : protocol === 'shadowsocks' ? 18388 : 443)}</li>
                 <li>节点数：{selected.size}</li>
               </ul>
               <p className="text-[12.5px] text-ink-mut mb-4">

@@ -169,9 +169,13 @@ func ValidateVLESSDeploy(c *VLESSConfig) error {
 	return nil
 }
 
+// DefaultSSListenPort matches the yyds sing-box installer range (10000–60000).
+// 443 collides with nginx / exclusive inbound eviction on the same VPS.
+const DefaultSSListenPort = 18388
+
 // SSConfig is Shadowsocks / SS2022 (sing-box) config.
-// Aligned with common production sing-box SS deploys (e.g. yyds install script):
-// dual-stack listen, optional NTP, multiplex / TFO / sniff.
+// Layout follows caigouzi121380/singbox-deploy (yyds): listen ::, SS2022,
+// NTP, one direct outbound. Sniff / mux / TFO stay off unless asked.
 type SSConfig struct {
 	ListenPort int    `json:"listen_port"`
 	ShareHost  string `json:"share_host"`
@@ -180,14 +184,13 @@ type SSConfig struct {
 	// Listen address for sing-box inbound. Empty → "::" (dual-stack, yyds-style).
 	// Use "0.0.0.0" for IPv4-only when the host has no IPv6.
 	Listen string `json:"listen,omitempty"`
-	// NTP keeps server clock accurate (LE/SS2022 less sensitive but good practice).
-	// nil / omitted → enabled by default in BuildSingBoxSSConfig.
+	// NTP keeps server clock accurate. nil / omitted → enabled (yyds default).
 	NTP *bool `json:"ntp,omitempty"`
-	// Multiplex enables sing-box inbound multiplex (smux).
+	// Multiplex enables sing-box inbound multiplex (smux). Off in yyds.
 	Multiplex bool `json:"multiplex,omitempty"`
-	// TCPFastOpen sets sockopt tcp_fast_open when supported.
+	// TCPFastOpen sets sockopt tcp_fast_open when supported. Off in yyds.
 	TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
-	// Sniffing enables inbound sniff (default true when nil).
+	// Sniffing: yyds inbound has none. nil / omitted → off.
 	Sniffing   *bool `json:"sniffing,omitempty"`
 	SubVisible bool  `json:"sub_visible"`
 }
@@ -266,16 +269,27 @@ func ValidateSSDeploy(c *SSConfig) error {
 // 443 is rejected by current mita apply ("ports must fall in 1025-65535").
 const DefaultMieruListenPort = 8964
 
-// MieruConfig matches the Weir mieru form.
+// Official mita / mierus:// defaults (enfein/mieru server-install + client-install).
+const (
+	DefaultMieruMTU           = 1400
+	DefaultMieruHandshakeMode = "HANDSHAKE_NO_WAIT"
+)
+
+// MieruConfig matches official mita server JSON + simple mierus:// fields.
 type MieruConfig struct {
 	ListenPort          int      `json:"listen_port"`
 	ShareHost           string   `json:"share_host"`
 	Transports          []string `json:"transports"`
 	TrafficPattern      string   `json:"traffic_pattern"`
 	UserHintIsMandatory bool     `json:"user_hint_is_mandatory"`
-	Username            string   `json:"username"`
-	Password            string   `json:"password"`
-	SubVisible          bool     `json:"sub_visible"`
+	// MTU is written to the mita server config and advertised on mierus://.
+	// Official default 1400; only used for UDP. 0 → 1400.
+	MTU int `json:"mtu,omitempty"`
+	// HandshakeMode is a client-share param (HANDSHAKE_STANDARD | HANDSHAKE_NO_WAIT).
+	HandshakeMode string `json:"handshake_mode,omitempty"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	SubVisible    bool   `json:"sub_visible"`
 }
 
 // ValidateMieruDeploy checks fields required to publish mieru/mita.
@@ -522,7 +536,7 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 			return nil, err
 		}
 		if c.ListenPort <= 0 {
-			c.ListenPort = 443
+			c.ListenPort = DefaultSSListenPort
 		}
 		c.Method = NormalizeSSMethod(c.Method)
 		if c.Password == "" {
@@ -547,6 +561,12 @@ func EnsureSecrets(protocol string, raw json.RawMessage) (json.RawMessage, error
 			// sit on UDP, which dies behind NAT while panel TCP
 			// probe still looks green. Operators can still tick UDP.
 			c.Transports = []string{"TCP"}
+		}
+		if c.MTU <= 0 {
+			c.MTU = DefaultMieruMTU
+		}
+		if strings.TrimSpace(c.HandshakeMode) == "" {
+			c.HandshakeMode = DefaultMieruHandshakeMode
 		}
 		if c.Username == "" {
 			c.Username = "u" + randomHex(4)
@@ -792,6 +812,21 @@ func BuildShareURI(protocol, name, shareHost string, listenPort int, raw json.Ra
 			q.WriteString(strconv.Itoa(listenPort))
 			q.WriteString("&protocol=TCP")
 		}
+		mtu := c.MTU
+		if mtu <= 0 {
+			mtu = DefaultMieruMTU
+		}
+		if mtu < 1280 {
+			mtu = 1280
+		}
+		q.WriteString("&mtu=")
+		q.WriteString(strconv.Itoa(mtu))
+		hs := strings.TrimSpace(c.HandshakeMode)
+		if hs == "" {
+			hs = DefaultMieruHandshakeMode
+		}
+		q.WriteString("&handshake-mode=")
+		q.WriteString(url.QueryEscape(hs))
 		if c.TrafficPattern != "" {
 			q.WriteString("&traffic-pattern=")
 			q.WriteString(url.QueryEscape(c.TrafficPattern))

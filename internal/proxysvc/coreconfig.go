@@ -222,34 +222,34 @@ func BuildXrayVLESSConfigOpts(listenPort int, raw json.RawMessage, socks *Outbou
 		}
 	}
 
-		outbounds, err := buildXrayOutbounds(socks)
-		if err != nil {
-			return nil, err
-		}
-		cfg := map[string]any{
-			"log": map[string]any{"loglevel": "warning"},
-			"inbounds": []any{
-				inbound,
-			},
-			"outbounds": outbounds,
-		}
-		// Pin inbound → sk5 when we built a non-default egress.
-		if socks != nil && (strings.TrimSpace(socks.ShareURI) != "" ||
-			strings.TrimSpace(socks.URI) != "" ||
-			(strings.TrimSpace(socks.RedirectHost) != "" && socks.RedirectPort > 0)) {
-			cfg["routing"] = map[string]any{
-				"domainStrategy": "AsIs",
-				"rules": []any{
-					map[string]any{
-						"type":        "field",
-						"inboundTag":  []string{"vless-in"},
-						"outboundTag": "sk5",
-					},
-				},
-			}
-		}
-		return json.MarshalIndent(cfg, "", "  ")
+	outbounds, err := buildXrayOutbounds(socks)
+	if err != nil {
+		return nil, err
 	}
+	cfg := map[string]any{
+		"log": map[string]any{"loglevel": "warning"},
+		"inbounds": []any{
+			inbound,
+		},
+		"outbounds": outbounds,
+	}
+	// Pin inbound → sk5 when we built a non-default egress.
+	if socks != nil && (strings.TrimSpace(socks.ShareURI) != "" ||
+		strings.TrimSpace(socks.URI) != "" ||
+		(strings.TrimSpace(socks.RedirectHost) != "" && socks.RedirectPort > 0)) {
+		cfg["routing"] = map[string]any{
+			"domainStrategy": "AsIs",
+			"rules": []any{
+				map[string]any{
+					"type":        "field",
+					"inboundTag":  []string{"vless-in"},
+					"outboundTag": "sk5",
+				},
+			},
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
 
 // buildXrayOutbounds returns freedom/blackhole, open SOCKS, share-protocol
 // outbound, or fixed redirect. Used by protocol-entry rule planes.
@@ -596,8 +596,8 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 			map[string]any{"type": "direct", "tag": "direct-out"},
 		},
 	}
-	// Sniff via route action (sing-box 1.11+). Default on when Sniffing nil.
-	sniffOn := true
+	// yyds inbound has no sniff. Only emit route sniff when explicitly on.
+	sniffOn := false
 	if c.Sniffing != nil {
 		sniffOn = *c.Sniffing
 	}
@@ -618,313 +618,313 @@ func BuildSingBoxSSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
 	if c.NTP != nil {
 		ntpOn = *c.NTP
 	}
-		if ntpOn {
-			cfg["ntp"] = map[string]any{
-				"enabled":     true,
-				"server":      "time.apple.com",
-				"server_port": 123,
-				"interval":    "30m",
-			}
-		}
-		return json.MarshalIndent(cfg, "", "  ")
-	}
-
-	// BuildSingBoxSocksConfig builds a standalone sing-box JSON for one SOCKS inbound.
-	func BuildSingBoxSocksConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
-		var c Socks5Config
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return nil, err
-		}
-		if listenPort <= 0 {
-			listenPort = c.ListenPort
-		}
-		if listenPort <= 0 || listenPort > 65535 {
-			return nil, fmt.Errorf("invalid listen port %d", listenPort)
-		}
-		if err := ValidateSocks5Deploy(&c); err != nil {
-			return nil, err
-		}
-		listen := strings.TrimSpace(c.Listen)
-		if listen == "" {
-			listen = "::"
-		}
-		inbound := map[string]any{
-			"type":        "socks",
-			"tag":         "socks-in",
-			"listen":      listen,
-			"listen_port": listenPort,
-		}
-		mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
-		if mode == "" {
-			mode = "password"
-		}
-		if mode == "password" {
-			inbound["users"] = []any{
-				map[string]any{
-					"username": c.Username,
-					"password": c.Password,
-				},
-			}
-		}
-		if c.TCPFastOpen {
-			inbound["tcp_fast_open"] = true
-		}
-		// UDP ASSOCIATE: sing-box socks supports udp via network field in newer versions;
-		// leave default (both) unless explicitly disabled via udp=false.
-		if c.UDP != nil && !*c.UDP {
-			inbound["network"] = "tcp"
-		}
-		cfg := map[string]any{
-			"log": map[string]any{"level": "info", "timestamp": true},
-			"inbounds": []any{
-				inbound,
-			},
-			"outbounds": []any{
-				map[string]any{"type": "direct", "tag": "direct-out"},
-			},
-		}
-		sniffOn := true
-		if c.Sniffing != nil {
-			sniffOn = *c.Sniffing
-		}
-		if sniffOn {
-			cfg["route"] = map[string]any{
-				"rules": []any{
-					map[string]any{
-						"inbound": []string{"socks-in"},
-						"action":  "sniff",
-					},
-				},
-				"final": "direct-out",
-			}
-		}
-		ntpOn := true
-		if c.NTP != nil {
-			ntpOn = *c.NTP
-		}
-		if ntpOn {
-			cfg["ntp"] = map[string]any{
-				"enabled":     true,
-				"server":      "time.apple.com",
-				"server_port": 123,
-				"interval":    "30m",
-			}
-		}
-		return json.MarshalIndent(cfg, "", "  ")
-	}
-
-	// BuildSingBoxAnyTLSConfig builds sing-box anytls inbound (TLS required).
-	func BuildSingBoxAnyTLSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
-		var c AnyTLSConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return nil, err
-		}
-		if listenPort <= 0 {
-			listenPort = c.ListenPort
-		}
-		if listenPort <= 0 || listenPort > 65535 {
-			return nil, fmt.Errorf("invalid listen port %d", listenPort)
-		}
-		if err := ValidateAnyTLSDeploy(&c); err != nil {
-			return nil, err
-		}
-		listen := strings.TrimSpace(c.Listen)
-		if listen == "" {
-			listen = "::"
-		}
-		userName := strings.TrimSpace(c.Username)
-		if userName == "" {
-			userName = "default"
-		}
-		inbound := map[string]any{
-			"type":        "anytls",
-			"tag":         "anytls-in",
-			"listen":      listen,
-			"listen_port": listenPort,
-			"users": []any{
-				map[string]any{
-					"name":     userName,
-					"password": c.Password,
-				},
-			},
-		}
-		if len(c.PaddingScheme) > 0 {
-			inbound["padding_scheme"] = c.PaddingScheme
-		}
-		if c.TCPFastOpen {
-			inbound["tcp_fast_open"] = true
-		}
-		tlsObj, err := singBoxInboundTLS(c.ServerName, c.ALPN, c.CertFile, c.KeyFile, c.CertPEM, c.KeyPEM)
-		if err != nil {
-			return nil, err
-		}
-		inbound["tls"] = tlsObj
-
-		cfg := map[string]any{
-			"log": map[string]any{"level": "info", "timestamp": true},
-			"inbounds": []any{
-				inbound,
-			},
-			"outbounds": []any{
-				map[string]any{"type": "direct", "tag": "direct-out"},
-			},
-		}
-		sniffOn := true
-		if c.Sniffing != nil {
-			sniffOn = *c.Sniffing
-		}
-		if sniffOn {
-			cfg["route"] = map[string]any{
-				"rules": []any{
-					map[string]any{
-						"inbound": []string{"anytls-in"},
-						"action":  "sniff",
-					},
-				},
-				"final": "direct-out",
-			}
-		}
-		ntpOn := true
-		if c.NTP != nil {
-			ntpOn = *c.NTP
-		}
-		if ntpOn {
-			cfg["ntp"] = map[string]any{
-				"enabled":     true,
-				"server":      "time.apple.com",
-				"server_port": 123,
-				"interval":    "30m",
-			}
-		}
-		return json.MarshalIndent(cfg, "", "  ")
-	}
-
-	// BuildSingBoxNaiveConfig builds sing-box naive inbound (TLS required).
-	// This is the sing-box protocol implementation, not the Caddy+forwardproxy original stack.
-	func BuildSingBoxNaiveConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
-		var c NaiveConfig
-		if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
-			return nil, err
-		}
-		if listenPort <= 0 {
-			listenPort = c.ListenPort
-		}
-		if listenPort <= 0 || listenPort > 65535 {
-			return nil, fmt.Errorf("invalid listen port %d", listenPort)
-		}
-		if err := ValidateNaiveDeploy(&c); err != nil {
-			return nil, err
-		}
-		listen := strings.TrimSpace(c.Listen)
-		if listen == "" {
-			listen = "::"
-		}
-		inbound := map[string]any{
-			"type":        "naive",
-			"tag":         "naive-in",
-			"listen":      listen,
-			"listen_port": listenPort,
-			"users": []any{
-				map[string]any{
-					"username": c.Username,
-					"password": c.Password,
-				},
-			},
-		}
-		netw := strings.ToLower(strings.TrimSpace(c.Network))
-		if netw == "tcp" || netw == "udp" {
-			inbound["network"] = netw
-		}
-		if qcc := strings.TrimSpace(c.QuicCongestionControl); qcc != "" {
-			inbound["quic_congestion_control"] = qcc
-		}
-		if c.TCPFastOpen {
-			inbound["tcp_fast_open"] = true
-		}
-		tlsObj, err := singBoxInboundTLS(c.ServerName, c.ALPN, c.CertFile, c.KeyFile, c.CertPEM, c.KeyPEM)
-		if err != nil {
-			return nil, err
-		}
-		inbound["tls"] = tlsObj
-
-		cfg := map[string]any{
-			"log": map[string]any{"level": "info", "timestamp": true},
-			"inbounds": []any{
-				inbound,
-			},
-			"outbounds": []any{
-				map[string]any{"type": "direct", "tag": "direct-out"},
-			},
-		}
-		sniffOn := true
-		if c.Sniffing != nil {
-			sniffOn = *c.Sniffing
-		}
-		if sniffOn {
-			cfg["route"] = map[string]any{
-				"rules": []any{
-					map[string]any{
-						"inbound": []string{"naive-in"},
-						"action":  "sniff",
-					},
-				},
-				"final": "direct-out",
-			}
-		}
-		ntpOn := true
-		if c.NTP != nil {
-			ntpOn = *c.NTP
-		}
-		if ntpOn {
-			cfg["ntp"] = map[string]any{
-				"enabled":     true,
-				"server":      "time.apple.com",
-				"server_port": 123,
-				"interval":    "30m",
-			}
-		}
-		return json.MarshalIndent(cfg, "", "  ")
-	}
-
-	// singBoxInboundTLS builds the TLS object for sing-box inbounds that require certificates.
-	// Prefers cert_file/key_file (agent-written paths); falls back to inline PEM when present.
-	func singBoxInboundTLS(serverName, alpn, certFile, keyFile, certPEM, keyPEM string) (map[string]any, error) {
-		serverName = strings.TrimSpace(serverName)
-		if serverName == "" {
-			return nil, fmt.Errorf("server_name required for TLS inbound")
-		}
-		tlsObj := map[string]any{
+	if ntpOn {
+		cfg["ntp"] = map[string]any{
 			"enabled":     true,
-			"server_name": serverName,
+			"server":      "time.apple.com",
+			"server_port": 123,
+			"interval":    "30m",
 		}
-		if a := strings.TrimSpace(alpn); a != "" {
-			parts := strings.Split(a, ",")
-			alpnList := make([]string, 0, len(parts))
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					alpnList = append(alpnList, p)
-				}
-			}
-			if len(alpnList) > 0 {
-				tlsObj["alpn"] = alpnList
-			}
-		}
-		cf := strings.TrimSpace(certFile)
-		kf := strings.TrimSpace(keyFile)
-		cp := strings.TrimSpace(certPEM)
-		kp := strings.TrimSpace(keyPEM)
-		if cf != "" && kf != "" {
-			tlsObj["certificate_path"] = cf
-			tlsObj["key_path"] = kf
-			return tlsObj, nil
-		}
-		if cp != "" && kp != "" {
-			// sing-box accepts certificate/key as string arrays of PEM lines, or path.
-			// Use path-less inline form: certificate + key as multi-line strings.
-			tlsObj["certificate"] = []string{cp}
-			tlsObj["key"] = []string{kp}
-			return tlsObj, nil
-		}
-		return nil, fmt.Errorf("TLS certificate/key missing")
 	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// BuildSingBoxSocksConfig builds a standalone sing-box JSON for one SOCKS inbound.
+func BuildSingBoxSocksConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
+	var c Socks5Config
+	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+		return nil, err
+	}
+	if listenPort <= 0 {
+		listenPort = c.ListenPort
+	}
+	if listenPort <= 0 || listenPort > 65535 {
+		return nil, fmt.Errorf("invalid listen port %d", listenPort)
+	}
+	if err := ValidateSocks5Deploy(&c); err != nil {
+		return nil, err
+	}
+	listen := strings.TrimSpace(c.Listen)
+	if listen == "" {
+		listen = "::"
+	}
+	inbound := map[string]any{
+		"type":        "socks",
+		"tag":         "socks-in",
+		"listen":      listen,
+		"listen_port": listenPort,
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
+	if mode == "" {
+		mode = "password"
+	}
+	if mode == "password" {
+		inbound["users"] = []any{
+			map[string]any{
+				"username": c.Username,
+				"password": c.Password,
+			},
+		}
+	}
+	if c.TCPFastOpen {
+		inbound["tcp_fast_open"] = true
+	}
+	// UDP ASSOCIATE: sing-box socks supports udp via network field in newer versions;
+	// leave default (both) unless explicitly disabled via udp=false.
+	if c.UDP != nil && !*c.UDP {
+		inbound["network"] = "tcp"
+	}
+	cfg := map[string]any{
+		"log": map[string]any{"level": "info", "timestamp": true},
+		"inbounds": []any{
+			inbound,
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct-out"},
+		},
+	}
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+	if sniffOn {
+		cfg["route"] = map[string]any{
+			"rules": []any{
+				map[string]any{
+					"inbound": []string{"socks-in"},
+					"action":  "sniff",
+				},
+			},
+			"final": "direct-out",
+		}
+	}
+	ntpOn := true
+	if c.NTP != nil {
+		ntpOn = *c.NTP
+	}
+	if ntpOn {
+		cfg["ntp"] = map[string]any{
+			"enabled":     true,
+			"server":      "time.apple.com",
+			"server_port": 123,
+			"interval":    "30m",
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// BuildSingBoxAnyTLSConfig builds sing-box anytls inbound (TLS required).
+func BuildSingBoxAnyTLSConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
+	var c AnyTLSConfig
+	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+		return nil, err
+	}
+	if listenPort <= 0 {
+		listenPort = c.ListenPort
+	}
+	if listenPort <= 0 || listenPort > 65535 {
+		return nil, fmt.Errorf("invalid listen port %d", listenPort)
+	}
+	if err := ValidateAnyTLSDeploy(&c); err != nil {
+		return nil, err
+	}
+	listen := strings.TrimSpace(c.Listen)
+	if listen == "" {
+		listen = "::"
+	}
+	userName := strings.TrimSpace(c.Username)
+	if userName == "" {
+		userName = "default"
+	}
+	inbound := map[string]any{
+		"type":        "anytls",
+		"tag":         "anytls-in",
+		"listen":      listen,
+		"listen_port": listenPort,
+		"users": []any{
+			map[string]any{
+				"name":     userName,
+				"password": c.Password,
+			},
+		},
+	}
+	if len(c.PaddingScheme) > 0 {
+		inbound["padding_scheme"] = c.PaddingScheme
+	}
+	if c.TCPFastOpen {
+		inbound["tcp_fast_open"] = true
+	}
+	tlsObj, err := singBoxInboundTLS(c.ServerName, c.ALPN, c.CertFile, c.KeyFile, c.CertPEM, c.KeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	inbound["tls"] = tlsObj
+
+	cfg := map[string]any{
+		"log": map[string]any{"level": "info", "timestamp": true},
+		"inbounds": []any{
+			inbound,
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct-out"},
+		},
+	}
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+	if sniffOn {
+		cfg["route"] = map[string]any{
+			"rules": []any{
+				map[string]any{
+					"inbound": []string{"anytls-in"},
+					"action":  "sniff",
+				},
+			},
+			"final": "direct-out",
+		}
+	}
+	ntpOn := true
+	if c.NTP != nil {
+		ntpOn = *c.NTP
+	}
+	if ntpOn {
+		cfg["ntp"] = map[string]any{
+			"enabled":     true,
+			"server":      "time.apple.com",
+			"server_port": 123,
+			"interval":    "30m",
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// BuildSingBoxNaiveConfig builds sing-box naive inbound (TLS required).
+// This is the sing-box protocol implementation, not the Caddy+forwardproxy original stack.
+func BuildSingBoxNaiveConfig(listenPort int, raw json.RawMessage) ([]byte, error) {
+	var c NaiveConfig
+	if err := json.Unmarshal(nonzeroJSON(raw), &c); err != nil {
+		return nil, err
+	}
+	if listenPort <= 0 {
+		listenPort = c.ListenPort
+	}
+	if listenPort <= 0 || listenPort > 65535 {
+		return nil, fmt.Errorf("invalid listen port %d", listenPort)
+	}
+	if err := ValidateNaiveDeploy(&c); err != nil {
+		return nil, err
+	}
+	listen := strings.TrimSpace(c.Listen)
+	if listen == "" {
+		listen = "::"
+	}
+	inbound := map[string]any{
+		"type":        "naive",
+		"tag":         "naive-in",
+		"listen":      listen,
+		"listen_port": listenPort,
+		"users": []any{
+			map[string]any{
+				"username": c.Username,
+				"password": c.Password,
+			},
+		},
+	}
+	netw := strings.ToLower(strings.TrimSpace(c.Network))
+	if netw == "tcp" || netw == "udp" {
+		inbound["network"] = netw
+	}
+	if qcc := strings.TrimSpace(c.QuicCongestionControl); qcc != "" {
+		inbound["quic_congestion_control"] = qcc
+	}
+	if c.TCPFastOpen {
+		inbound["tcp_fast_open"] = true
+	}
+	tlsObj, err := singBoxInboundTLS(c.ServerName, c.ALPN, c.CertFile, c.KeyFile, c.CertPEM, c.KeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	inbound["tls"] = tlsObj
+
+	cfg := map[string]any{
+		"log": map[string]any{"level": "info", "timestamp": true},
+		"inbounds": []any{
+			inbound,
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct-out"},
+		},
+	}
+	sniffOn := true
+	if c.Sniffing != nil {
+		sniffOn = *c.Sniffing
+	}
+	if sniffOn {
+		cfg["route"] = map[string]any{
+			"rules": []any{
+				map[string]any{
+					"inbound": []string{"naive-in"},
+					"action":  "sniff",
+				},
+			},
+			"final": "direct-out",
+		}
+	}
+	ntpOn := true
+	if c.NTP != nil {
+		ntpOn = *c.NTP
+	}
+	if ntpOn {
+		cfg["ntp"] = map[string]any{
+			"enabled":     true,
+			"server":      "time.apple.com",
+			"server_port": 123,
+			"interval":    "30m",
+		}
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// singBoxInboundTLS builds the TLS object for sing-box inbounds that require certificates.
+// Prefers cert_file/key_file (agent-written paths); falls back to inline PEM when present.
+func singBoxInboundTLS(serverName, alpn, certFile, keyFile, certPEM, keyPEM string) (map[string]any, error) {
+	serverName = strings.TrimSpace(serverName)
+	if serverName == "" {
+		return nil, fmt.Errorf("server_name required for TLS inbound")
+	}
+	tlsObj := map[string]any{
+		"enabled":     true,
+		"server_name": serverName,
+	}
+	if a := strings.TrimSpace(alpn); a != "" {
+		parts := strings.Split(a, ",")
+		alpnList := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				alpnList = append(alpnList, p)
+			}
+		}
+		if len(alpnList) > 0 {
+			tlsObj["alpn"] = alpnList
+		}
+	}
+	cf := strings.TrimSpace(certFile)
+	kf := strings.TrimSpace(keyFile)
+	cp := strings.TrimSpace(certPEM)
+	kp := strings.TrimSpace(keyPEM)
+	if cf != "" && kf != "" {
+		tlsObj["certificate_path"] = cf
+		tlsObj["key_path"] = kf
+		return tlsObj, nil
+	}
+	if cp != "" && kp != "" {
+		// sing-box accepts certificate/key as string arrays of PEM lines, or path.
+		// Use path-less inline form: certificate + key as multi-line strings.
+		tlsObj["certificate"] = []string{cp}
+		tlsObj["key"] = []string{kp}
+		return tlsObj, nil
+	}
+	return nil, fmt.Errorf("TLS certificate/key missing")
+}

@@ -80,6 +80,18 @@ func TestBuildShareURIMieruIPv6AndDefaultTCP(t *testing.T) {
 	}
 }
 
+func TestListenPortFromConfigDefaults(t *testing.T) {
+	if got := ListenPortFromConfig(nil); got != 443 {
+		t.Fatalf("empty = %d", got)
+	}
+	if got := ListenPortFromConfig(json.RawMessage(`{}`)); got != 443 {
+		t.Fatalf("obj = %d", got)
+	}
+	if got := ListenPortFromConfig(json.RawMessage(`{"listen_port":18388}`)); got != 18388 {
+		t.Fatalf("ss = %d", got)
+	}
+}
+
 func TestEnsureSecretsMieruDefaultsTCP(t *testing.T) {
 	raw, err := EnsureSecrets("mieru", json.RawMessage(`{}`))
 	if err != nil {
@@ -124,20 +136,26 @@ func TestEnsureSecretsAndBuildMieru(t *testing.T) {
 	if !strings.Contains(uri, portTok) {
 		t.Fatalf("missing port: %s", uri)
 	}
-		if !strings.Contains(uri, "protocol=TCP") {
-			t.Fatalf("missing TCP: %s", uri)
-		}
-		if strings.Contains(uri, "protocol=UDP") {
-			t.Fatalf("share must advertise TCP only even when server also binds UDP: %s", uri)
-		}
+	if !strings.Contains(uri, "protocol=TCP") {
+		t.Fatalf("missing TCP: %s", uri)
+	}
+	if strings.Contains(uri, "protocol=UDP") {
+		t.Fatalf("share must advertise TCP only even when server also binds UDP: %s", uri)
+	}
 	// Host must not embed :port in simple form (port is a query param).
 	if strings.Contains(uri, "9.9.9.9:"+strconv.Itoa(DefaultMieruListenPort)) {
 		t.Fatalf("host should not include listen port: %s", uri)
 	}
-		want := "profile=m1&" + portTok + "&protocol=TCP"
-		if !strings.Contains(uri, want) {
-			t.Fatalf("query order = %s, want substring %s", uri, want)
-		}
+	want := "profile=m1&" + portTok + "&protocol=TCP"
+	if !strings.Contains(uri, want) {
+		t.Fatalf("query order = %s, want substring %s", uri, want)
+	}
+	if !strings.Contains(uri, "mtu=1400") {
+		t.Fatalf("official share must include mtu: %s", uri)
+	}
+	if !strings.Contains(uri, "handshake-mode=HANDSHAKE_NO_WAIT") {
+		t.Fatalf("official share must include handshake-mode: %s", uri)
+	}
 }
 
 func TestValidateMieruDeployRejectsPrivilegedPort(t *testing.T) {

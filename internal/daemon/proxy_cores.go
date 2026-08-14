@@ -227,12 +227,25 @@ func deployMieru(req wsproto.ProxyServiceApply) wsproto.ProxyServiceApplyAck {
 		transports = []string{"TCP"}
 	}
 
+	mtu := cfg.MTU
+	if mtu <= 0 {
+		mtu = proxysvc.DefaultMieruMTU
+	}
+	if mtu < 1280 {
+		mtu = 1280
+	}
 	serverCfg := map[string]any{
 		"portBindings": mitaPortBindings(port, transports),
 		"users": []map[string]string{
 			{"name": cfg.Username, "password": cfg.Password},
 		},
 		"loggingLevel": "INFO",
+		"mtu":          mtu,
+	}
+	if cfg.UserHintIsMandatory {
+		serverCfg["advancedSettings"] = map[string]any{
+			"userHintIsMandatory": true,
+		}
 	}
 	if ds := proxysvc.EgressMitaDualStack(req.BlockEgressV4, req.BlockEgressV6); ds != "" {
 		serverCfg["dns"] = map[string]any{"dualStack": ds}
@@ -598,16 +611,20 @@ func mergeMitaInstanceConfigs(dir string) ([]byte, error) {
 	}
 	sort.Strings(matches)
 	type frag struct {
-		PortBindings []map[string]any    `json:"portBindings"`
-		Users        []map[string]string `json:"users"`
-		LoggingLevel string              `json:"loggingLevel"`
-		DNS          map[string]any      `json:"dns,omitempty"`
+		PortBindings     []map[string]any    `json:"portBindings"`
+		Users            []map[string]string `json:"users"`
+		LoggingLevel     string              `json:"loggingLevel"`
+		MTU              int                 `json:"mtu"`
+		DNS              map[string]any      `json:"dns,omitempty"`
+		AdvancedSettings map[string]any      `json:"advancedSettings,omitempty"`
 	}
 	var ports []map[string]any
 	seenPort := map[string]bool{}
 	users := map[string]string{}
 	userOrder := []string{}
 	logging := "INFO"
+	mtu := 0
+	var adv map[string]any
 	var dns map[string]any
 	for _, p := range matches {
 		base := filepath.Base(p)
@@ -643,6 +660,12 @@ func mergeMitaInstanceConfigs(dir string) ([]byte, error) {
 		if strings.TrimSpace(f.LoggingLevel) != "" {
 			logging = f.LoggingLevel
 		}
+		if f.MTU > mtu {
+			mtu = f.MTU
+		}
+		if len(f.AdvancedSettings) > 0 {
+			adv = f.AdvancedSettings
+		}
 		if len(f.DNS) > 0 {
 			dns = f.DNS
 		}
@@ -654,10 +677,17 @@ func mergeMitaInstanceConfigs(dir string) ([]byte, error) {
 	if len(ports) == 0 {
 		ports = []map[string]any{}
 	}
+	if mtu <= 0 {
+		mtu = proxysvc.DefaultMieruMTU
+	}
 	serverCfg := map[string]any{
 		"portBindings": ports,
 		"users":        outUsers,
 		"loggingLevel": logging,
+		"mtu":          mtu,
+	}
+	if len(adv) > 0 {
+		serverCfg["advancedSettings"] = adv
 	}
 	if len(dns) > 0 {
 		serverCfg["dns"] = dns

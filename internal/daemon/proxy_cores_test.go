@@ -26,6 +26,28 @@ func TestMitaPortBindings(t *testing.T) {
 	}
 }
 
+func TestMergeMitaInstanceConfigsKeepsOfficialMTU(t *testing.T) {
+	dir := t.TempDir()
+	raw := []byte(`{"portBindings":[{"port":8964,"protocol":"TCP"}],"users":[{"name":"u1","password":"p1"}],"loggingLevel":"INFO","mtu":1400}`)
+	if err := os.WriteFile(filepath.Join(dir, "instance-1.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := mergeMitaInstanceConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	if int(m["mtu"].(float64)) != 1400 {
+		t.Fatalf("mtu = %v, want 1400", m["mtu"])
+	}
+	if m["loggingLevel"] != "INFO" {
+		t.Fatalf("loggingLevel = %v", m["loggingLevel"])
+	}
+}
+
 func TestHandleProxyServiceApplyUnknown(t *testing.T) {
 	ack := handleProxyServiceApply(wsproto.ProxyServiceApply{Protocol: "wireguard"})
 	if ack.OK {
